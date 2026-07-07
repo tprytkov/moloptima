@@ -1,0 +1,74 @@
+from molecular_prioritization.bbb_predictor import BBBPrediction, UnavailableBBBPredictor
+from molecular_prioritization.descriptors import calculate_descriptors
+from molecular_prioritization.pipeline import prioritize_smiles
+from molecular_prioritization.prioritization import calculate_priority_score
+
+
+class FakeBBBPredictor:
+    def predict(self, smiles, valid_molecule):
+        if not valid_molecule:
+            return BBBPrediction(
+                bbb_prediction="unavailable",
+                bbb_probability=None,
+                bbb_model_status="not_run_invalid_molecule",
+                bbb_warning="BBB prediction skipped for invalid molecule.",
+            )
+        return BBBPrediction(
+            bbb_prediction="high",
+            bbb_probability=0.8,
+            bbb_model_status="model_available",
+            bbb_warning="",
+        )
+
+
+def test_calculate_priority_score_is_zero_for_invalid_molecule():
+    descriptors = calculate_descriptors("CCO")
+
+    assert calculate_priority_score(descriptors, is_valid=False) == 0.0
+
+
+def test_calculate_priority_score_is_bounded_for_valid_molecule():
+    descriptors = calculate_descriptors("CCO")
+
+    assert 0 <= calculate_priority_score(descriptors, is_valid=True) <= 1
+
+
+def test_prioritize_smiles_keeps_invalid_records_in_ranked_output():
+    records = [
+        {"molecule_id": "ethanol", "smiles": "CCO"},
+        {"molecule_id": "aspirin", "smiles": "CC(=O)Oc1ccccc1C(=O)O"},
+        {"molecule_id": "invalid", "smiles": "C1CC"},
+    ]
+
+    ranked = prioritize_smiles(records, bbb_predictor=UnavailableBBBPredictor("missing"))
+    invalid = next(row for row in ranked if row["molecule_id"] == "invalid")
+
+    assert len(ranked) == 3
+    assert invalid["valid_molecule"] is False
+    assert invalid["priority_score"] == 0.0
+    assert invalid["canonical_smiles"] is None
+    assert invalid["bbb_prediction"] == "unavailable"
+    assert ranked[0]["priority_score"] >= ranked[-1]["priority_score"]
+
+
+def test_prioritize_smiles_adds_bbb_prediction_columns_when_model_available():
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=FakeBBBPredictor(),
+    )
+
+    assert ranked[0]["bbb_prediction"] == "high"
+    assert ranked[0]["bbb_probability"] == 0.8
+    assert ranked[0]["bbb_model_status"] == "model_available"
+
+
+def test_prioritize_smiles_adds_bbb_placeholder_when_model_unavailable():
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+
+    assert ranked[0]["bbb_prediction"] == "unavailable"
+    assert ranked[0]["bbb_probability"] is None
+    assert ranked[0]["bbb_model_status"] == "model_unavailable"
+    assert ranked[0]["bbb_warning"] == "model cache missing"

@@ -1,0 +1,20 @@
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environment and secrets
+.env
+.env.*
+
+# MolOptima runtime files
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/job_outputs/*
+!backend/job_outputs/.gitkeep
+backend/job_metadata/*
+!backend/job_metadata/.gitkeep
+
+# Generated molecular prioritization outputs
+outputs/ranked_results/*
+!outputs/ranked_results/.gitkeep
