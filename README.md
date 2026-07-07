@@ -25,6 +25,9 @@ backend/
   main.py
   schemas.py
   services.py
+frontend/
+  src/
+  package.json
 data/
   demo_inputs/
 outputs/
@@ -51,6 +54,21 @@ Run the local API:
 
 ```bash
 uvicorn backend.main:app --reload
+```
+
+Run the frontend dashboard:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Build the frontend:
+
+```bash
+cd frontend
+npm run build
 ```
 
 The API exposes `GET /health`, `POST /api/molecules/upload`, `POST /api/jobs/prioritization`, and `GET /api/results/{job_id}`. Uploaded CSVs, ranked result files, and JSON job metadata are stored locally under `backend/`.
