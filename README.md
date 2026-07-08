@@ -2,7 +2,7 @@
 
 MolOptima is a Python-first scientific project for prioritizing small molecules after they have been generated or supplied by a user.
 
-This repository currently focuses on Phase 1: core molecular prioritization logic and a minimal local FastAPI backend. It intentionally does not include React, docking, patents, OMOP, Databricks, MLflow, Redis, Docker, cloud services, or downloaded model weights.
+This repository currently focuses on Phase 1: core molecular prioritization logic, a minimal local FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs and running prioritization jobs. It intentionally does not include docking, patents, OMOP, Databricks, MLflow, Redis, Docker, cloud services, or downloaded model weights.
 
 ## Current Scope
 
@@ -36,9 +36,80 @@ tests/
 docs/
 ```
 
-## Development
+## Run Full-Stack App Locally
 
-Use the conda environment that has RDKit, FastAPI, and pytest installed. From the repository root, run tests with:
+Use the conda environment that has RDKit, FastAPI, pytest, and the backend dependencies installed.
+
+From Anaconda Prompt:
+
+```bat
+conda activate molecule-intelligence
+cd MolOptima
+```
+
+Start the FastAPI backend from the repository root:
+
+```bat
+uvicorn backend.main:app --reload
+```
+
+In a second Anaconda Prompt, start the React/Vite frontend:
+
+```bat
+cd MolOptima
+cd frontend
+npm.cmd install
+npm.cmd run dev
+```
+
+Open the Vite URL shown in the terminal, typically:
+
+```text
+http://127.0.0.1:5173/
+```
+
+The frontend calls the backend at `http://localhost:8000`. The backend must be running before the upload/prioritization workflow will work.
+
+Run backend tests from the repository root:
+
+```bat
+conda activate molecule-intelligence
+cd MolOptima
+python -m pytest
+```
+
+Run the frontend production build:
+
+```bat
+cd MolOptima
+cd frontend
+npm.cmd run build
+```
+
+## Current Capabilities
+
+- Upload a molecule CSV with `molecule_id` and `smiles` columns through the React/MUI frontend.
+- Store uploaded CSVs locally under `backend/uploads/`.
+- Start a synchronous Phase 1 prioritization job through the FastAPI backend.
+- Validate and canonicalize SMILES with RDKit.
+- Calculate basic descriptors, Lipinski-style flags, QED, BBB columns, and `priority_score`.
+- Fetch job results from `GET /api/results/{job_id}`.
+- Display job status, row count, output path, and a small preview table in the frontend.
+- Persist local JSON job metadata under `backend/job_metadata/`.
+
+## Not Yet Implemented
+
+- Docking or binding-score workflows.
+- BBB/ChemBERTa as a required model dependency. The BBB step is optional and uses local cached model files only when available.
+- Retrosynthesis or synthetic-accessibility model integration beyond the current basic descriptors.
+- Patent search, patent similarity, or freedom-to-operate analysis.
+- OMOP, clinical context, clinical-trial mapping, or patient-level clinical/RWE workflows.
+- Redis/RQ, Celery, or any background worker queue.
+- Cloud, Databricks, AWS, Docker, MLflow, or managed deployment features.
+
+## Development Commands
+
+Run all Python tests from the repository root:
 
 ```bash
 python -m pytest
@@ -56,21 +127,21 @@ Run the local API:
 uvicorn backend.main:app --reload
 ```
 
-Run the frontend dashboard:
+Run the frontend dashboard from `frontend/`:
 
 ```bash
 cd frontend
-npm install
-npm run dev
+npm.cmd install
+npm.cmd run dev
 ```
 
-The frontend includes pages for uploading a molecule CSV and starting a Phase 1 prioritization job against the local FastAPI backend. Start the backend first with `uvicorn backend.main:app --reload`, then open the Vite URL shown by `npm run dev`.
+The frontend includes pages for uploading a molecule CSV and starting a Phase 1 prioritization job against the local FastAPI backend. Start the backend first with `uvicorn backend.main:app --reload`, then open the Vite URL shown by `npm.cmd run dev`.
 
 Build the frontend:
 
 ```bash
 cd frontend
-npm run build
+npm.cmd run build
 ```
 
 The API exposes `GET /health`, `POST /api/molecules/upload`, `POST /api/jobs/prioritization`, and `GET /api/results/{job_id}`. Uploaded CSVs, ranked result files, and JSON job metadata are stored locally under `backend/`.
@@ -151,3 +222,48 @@ print(results.json()["results"])
 BBB prediction is optional and offline-first. By default MolOptima checks local Hugging Face cache roots such as `app_data/model_cache/huggingface` and the previous BERT app cache for `Yousuf7/ChemBERT-BBB-Permeability`. If the model is unavailable, the output still includes `bbb_prediction`, `bbb_probability`, `bbb_model_status`, and `bbb_warning` columns without crashing.
 
 To point at a local cache, set `MOLOPTIMA_BBB_MODEL_CACHE`. MolOptima does not download model files automatically unless `MOLOPTIMA_ALLOW_MODEL_DOWNLOAD=1` is explicitly set.
+
+## Troubleshooting
+
+### PowerShell blocks npm.ps1
+
+On this Windows machine, PowerShell may reject `npm` with a script execution policy error. Use `npm.cmd` instead:
+
+```bat
+cd MolOptima
+cd frontend
+npm.cmd install
+npm.cmd run dev
+npm.cmd run build
+```
+
+### Backend must run before frontend workflow
+
+The frontend can load without the backend, but upload and prioritization requests require FastAPI to be running:
+
+```bat
+conda activate molecule-intelligence
+cd MolOptima
+uvicorn backend.main:app --reload
+```
+
+Check backend health:
+
+```bat
+curl http://127.0.0.1:8000/health
+```
+
+Expected response:
+
+```json
+{"status":"ok","service":"moloptima-backend"}
+```
+
+### CORS localhost configuration
+
+The backend currently allows local Vite origins:
+
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+
+If the frontend runs on a different port, update the local CORS origins in `backend/main.py` or run Vite on port `5173`.
