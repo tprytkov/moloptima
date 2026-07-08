@@ -147,6 +147,23 @@ def test_model_source_status_endpoints(tmp_path: Path, monkeypatch):
     }
 
 
+def test_model_source_status_endpoint_reports_cached_bbb_model(tmp_path: Path, monkeypatch):
+    configure_temp_app_data(tmp_path, monkeypatch)
+    cache_root = tmp_path / "app_data" / "model_cache" / "huggingface"
+    services.model_sources.cache_candidates(
+        cache_root,
+        services.model_sources.CHEMBERTA_BBB_MODEL_ID,
+    )[0].mkdir(parents=True)
+    client = TestClient(app)
+
+    response = client.get("/api/model-sources/status")
+
+    assert response.status_code == 200
+    model = response.json()["model_manifest"]["models"]["bbb_chemberta"]
+    assert model["cached"] is True
+    assert model["status"] == "cached"
+
+
 def test_upload_rejects_missing_required_columns(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(services, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(services, "UPLOAD_DIR", tmp_path / "backend" / "uploads")

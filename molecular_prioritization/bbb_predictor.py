@@ -155,7 +155,18 @@ def configured_cache_dir() -> Path:
     """Return the explicit or app-managed Hugging Face cache root."""
 
     env_cache = os.environ.get(MODEL_CACHE_ENV, "").strip()
-    return Path(env_cache).expanduser() if env_cache else APP_MODEL_CACHE_DIR
+    cache_dir = Path(env_cache).expanduser() if env_cache else APP_MODEL_CACHE_DIR
+    return normalize_cache_root(cache_dir, CHEMBERTA_BBB_MODEL_ID)
+
+
+def normalize_cache_root(path: Path, model_id: str) -> Path:
+    """Return the Hugging Face cache root even when given a model cache folder."""
+
+    safe_id = model_id.replace("/", "--")
+    flat_id = model_id.replace("/", "_")
+    if path.name in {f"models--{safe_id}", flat_id}:
+        return path.parent
+    return path
 
 
 def first_available_cache_dir(cache_dirs: list[Path], model_id: str) -> Path | None:
