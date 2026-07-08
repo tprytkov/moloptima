@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   AppBar,
   Box,
+  Button,
   Chip,
+  CircularProgress,
   CssBaseline,
   Divider,
   Drawer,
@@ -12,6 +15,11 @@ import {
   ListItemText,
   Paper,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   ThemeProvider,
   Toolbar,
   Typography,
@@ -26,6 +34,7 @@ import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
 
 const drawerWidth = 256;
+const apiBaseUrl = 'http://localhost:8000';
 
 const navigationItems = [
   { label: 'Dashboard', icon: AssessmentOutlinedIcon },
@@ -91,7 +100,82 @@ const theme = createTheme({
 
 function App() {
   const [activeItem, setActiveItem] = useState('Dashboard');
+  const [uploadState, setUploadState] = useState({
+    selectedFile: null,
+    upload: null,
+    loading: false,
+    error: '',
+  });
+  const [prioritizationState, setPrioritizationState] = useState({
+    job: null,
+    result: null,
+    loading: false,
+    error: '',
+  });
   const health = useBackendHealth();
+
+  async function handleUpload() {
+    if (!uploadState.selectedFile) {
+      setUploadState((current) => ({ ...current, error: 'Select a CSV file before uploading.' }));
+      return;
+    }
+
+    setUploadState((current) => ({ ...current, loading: true, error: '' }));
+    setPrioritizationState({ job: null, result: null, loading: false, error: '' });
+
+    const formData = new FormData();
+    formData.append('file', uploadState.selectedFile);
+
+    try {
+      const payload = await apiRequest('/api/molecules/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      setUploadState((current) => ({
+        ...current,
+        upload: payload,
+        loading: false,
+        error: '',
+      }));
+      setActiveItem('Molecular Prioritization');
+    } catch (error) {
+      setUploadState((current) => ({
+        ...current,
+        upload: null,
+        loading: false,
+        error: readableError(error),
+      }));
+    }
+  }
+
+  async function handleStartPrioritization() {
+    const uploadId = uploadState.upload?.upload_id;
+    if (!uploadId) {
+      setPrioritizationState((current) => ({
+        ...current,
+        error: 'Upload a molecule CSV before starting prioritization.',
+      }));
+      return;
+    }
+
+    setPrioritizationState({ job: null, result: null, loading: true, error: '' });
+
+    try {
+      const job = await apiRequest('/api/jobs/prioritization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upload_id: uploadId }),
+      });
+      const result = await apiRequest(`/api/results/${job.job_id}`);
+      setPrioritizationState({ job, result, loading: false, error: '' });
+    } catch (error) {
+      setPrioritizationState((current) => ({
+        ...current,
+        loading: false,
+        error: readableError(error),
+      }));
+    }
+  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -101,7 +185,15 @@ function App() {
         <Box component="main" sx={{ flexGrow: 1, minWidth: 0 }}>
           <AppHeader />
           <Box sx={{ px: { xs: 2, md: 4 }, py: 3, maxWidth: 1180 }}>
-            <DashboardPage health={health} activeItem={activeItem} />
+            <ActivePage
+              activeItem={activeItem}
+              health={health}
+              uploadState={uploadState}
+              setUploadState={setUploadState}
+              prioritizationState={prioritizationState}
+              onUpload={handleUpload}
+              onStartPrioritization={handleStartPrioritization}
+            />
           </Box>
         </Box>
       </Box>
@@ -199,9 +291,40 @@ function AppHeader() {
   );
 }
 
+function ActivePage({
+  activeItem,
+  health,
+  uploadState,
+  setUploadState,
+  prioritizationState,
+  onUpload,
+  onStartPrioritization,
+}) {
+  if (activeItem === 'Upload Molecules') {
+    return (
+      <UploadMoleculesPage
+        uploadState={uploadState}
+        setUploadState={setUploadState}
+        onUpload={onUpload}
+      />
+    );
+  }
+
+  if (activeItem === 'Molecular Prioritization') {
+    return (
+      <PrioritizationPage
+        uploadState={uploadState}
+        prioritizationState={prioritizationState}
+        onStartPrioritization={onStartPrioritization}
+      />
+    );
+  }
+
+  return <DashboardPage health={health} activeItem={activeItem} />;
+}
+
 function DashboardPage({ health, activeItem }) {
   const isDashboard = activeItem === 'Dashboard';
-
   return (
     <Stack spacing={3}>
       <Paper elevation={0} sx={{ p: { xs: 2.5, md: 3 }, border: '1px solid', borderColor: 'divider' }}>
@@ -276,6 +399,227 @@ function DashboardPage({ health, activeItem }) {
   );
 }
 
+function UploadMoleculesPage({ uploadState, setUploadState, onUpload }) {
+  return (
+    <Stack spacing={3}>
+      <PageIntro
+        title="Upload Molecules"
+        description="Select a CSV file with molecule_id and smiles columns. The backend stores the upload locally and returns an upload identifier for prioritization."
+      />
+
+      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2.5}>
+          <Stack spacing={1}>
+            <Typography variant="h2">Molecule CSV</Typography>
+            <Typography color="text.secondary">
+              Upload only small demo or public-safe molecule tables for this Phase 1 workflow.
+            </Typography>
+          </Stack>
+
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+            <Button variant="outlined" component="label" startIcon={<UploadFileOutlinedIcon />}>
+              Select CSV
+              <input
+                hidden
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setUploadState((current) => ({
+                    ...current,
+                    selectedFile: file,
+                    error: '',
+                  }));
+                }}
+              />
+            </Button>
+            <Typography color="text.secondary">
+              {uploadState.selectedFile?.name ?? 'No file selected'}
+            </Typography>
+          </Stack>
+
+          {uploadState.error && <Alert severity="error">{uploadState.error}</Alert>}
+          {uploadState.upload && (
+            <Alert severity="success">
+              Uploaded {uploadState.upload.filename} with upload_id {uploadState.upload.upload_id}
+            </Alert>
+          )}
+
+          <Box>
+            <Button
+              variant="contained"
+              onClick={onUpload}
+              disabled={uploadState.loading}
+              startIcon={uploadState.loading ? <CircularProgress size={18} color="inherit" /> : null}
+            >
+              {uploadState.loading ? 'Uploading' : 'Upload molecules'}
+            </Button>
+          </Box>
+
+          {uploadState.upload && (
+            <MetadataPanel
+              rows={[
+                ['Status', uploadState.upload.status],
+                ['Upload ID', uploadState.upload.upload_id],
+                ['Rows', uploadState.upload.rows],
+                ['Stored path', uploadState.upload.path],
+              ]}
+            />
+          )}
+        </Stack>
+      </Paper>
+    </Stack>
+  );
+}
+
+function PrioritizationPage({ uploadState, prioritizationState, onStartPrioritization }) {
+  const resultRows = prioritizationState.result?.results ?? [];
+
+  return (
+    <Stack spacing={3}>
+      <PageIntro
+        title="Molecular Prioritization"
+        description="Start the Phase 1 backend pipeline for the uploaded molecule CSV and inspect the returned job metadata and top ranked records."
+      />
+
+      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2.5}>
+          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
+            <Stack spacing={0.75}>
+              <Typography variant="h2">Prioritization Job</Typography>
+              <Typography color="text.secondary">
+                {uploadState.upload
+                  ? `Ready to run upload_id ${uploadState.upload.upload_id}`
+                  : 'Upload a molecule CSV before starting a prioritization job.'}
+              </Typography>
+            </Stack>
+            <Button
+              variant="contained"
+              onClick={onStartPrioritization}
+              disabled={!uploadState.upload || prioritizationState.loading}
+              startIcon={prioritizationState.loading ? <CircularProgress size={18} color="inherit" /> : null}
+            >
+              {prioritizationState.loading ? 'Running' : 'Start prioritization'}
+            </Button>
+          </Stack>
+
+          {prioritizationState.error && <Alert severity="error">{prioritizationState.error}</Alert>}
+
+          {prioritizationState.job && (
+            <MetadataPanel
+              rows={[
+                ['Status', prioritizationState.job.status],
+                ['Job ID', prioritizationState.job.job_id],
+                ['Rows', prioritizationState.job.row_count],
+                ['Output file', prioritizationState.job.output_file],
+                ['Completed at', prioritizationState.job.completed_at ?? ''],
+              ]}
+            />
+          )}
+        </Stack>
+      </Paper>
+
+      {prioritizationState.result && (
+        <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+          <Stack spacing={2}>
+            <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1}>
+              <Typography variant="h2">Result Preview</Typography>
+              <Chip
+                label={`${prioritizationState.result.row_count} rows`}
+                color={prioritizationState.result.status === 'completed' ? 'success' : 'warning'}
+                variant="outlined"
+              />
+            </Stack>
+            <Typography color="text.secondary">
+              Result file: {prioritizationState.result.output_file}
+            </Typography>
+            {resultRows.length > 0 ? (
+              <ResultPreview rows={resultRows.slice(0, 5)} />
+            ) : (
+              <Alert severity="info">No result rows were returned for this job.</Alert>
+            )}
+          </Stack>
+        </Paper>
+      )}
+    </Stack>
+  );
+}
+
+function PageIntro({ title, description }) {
+  return (
+    <Paper elevation={0} sx={{ p: { xs: 2.5, md: 3 }, border: '1px solid', borderColor: 'divider' }}>
+      <Stack spacing={1.25} sx={{ maxWidth: 780 }}>
+        <Typography component="h1" variant="h1">
+          {title}
+        </Typography>
+        <Typography color="text.secondary">{description}</Typography>
+      </Stack>
+    </Paper>
+  );
+}
+
+function MetadataPanel({ rows }) {
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
+        gap: 1.5,
+      }}
+    >
+      {rows.map(([label, value]) => (
+        <Box
+          key={label}
+          sx={{
+            p: 1.5,
+            borderRadius: 1,
+            bgcolor: '#f7fafc',
+            border: '1px solid',
+            borderColor: 'divider',
+            minWidth: 0,
+          }}
+        >
+          <Typography variant="caption" color="text.secondary">
+            {label}
+          </Typography>
+          <Typography sx={{ fontWeight: 650, overflowWrap: 'anywhere' }}>{String(value ?? '')}</Typography>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+function ResultPreview({ rows }) {
+  return (
+    <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+      <Table size="small" aria-label="Prioritization result preview">
+        <TableHead>
+          <TableRow>
+            <TableCell>Molecule</TableCell>
+            <TableCell>Valid</TableCell>
+            <TableCell>Score</TableCell>
+            <TableCell>BBB</TableCell>
+            <TableCell>Canonical SMILES</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={`${row.molecule_id}-${row.canonical_smiles}`}>
+              <TableCell>{row.molecule_id}</TableCell>
+              <TableCell>{row.valid_molecule}</TableCell>
+              <TableCell>{row.priority_score}</TableCell>
+              <TableCell>{row.bbb_prediction ?? 'unavailable'}</TableCell>
+              <TableCell sx={{ fontFamily: 'ui-monospace, Consolas, monospace', maxWidth: 420 }}>
+                {row.canonical_smiles || row.input_smiles}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Box>
+  );
+}
+
 function HealthChip({ health }) {
   const color = health.status === 'online' ? 'success' : health.status === 'checking' ? 'default' : 'warning';
   return <Chip icon={<CloudQueueOutlinedIcon />} label={health.label} color={color} variant="outlined" />;
@@ -293,7 +637,7 @@ function useBackendHealth() {
 
     async function checkHealth() {
       try {
-        const response = await fetch('http://localhost:8000/health');
+        const response = await fetch(`${apiBaseUrl}/health`);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
@@ -323,6 +667,23 @@ function useBackendHealth() {
   }, []);
 
   return useMemo(() => state, [state]);
+}
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(`${apiBaseUrl}${path}`, options);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.detail || `HTTP ${response.status}`;
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+  }
+  return payload;
+}
+
+function readableError(error) {
+  if (error instanceof TypeError) {
+    return 'Could not reach the FastAPI backend at http://localhost:8000.';
+  }
+  return error instanceof Error ? error.message : 'Request failed.';
 }
 
 export default App;

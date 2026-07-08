@@ -64,6 +64,8 @@ npm install
 npm run dev
 ```
 
+The frontend includes pages for uploading a molecule CSV and starting a Phase 1 prioritization job against the local FastAPI backend. Start the backend first with `uvicorn backend.main:app --reload`, then open the Vite URL shown by `npm run dev`.
+
 Build the frontend:
 
 ```bash
