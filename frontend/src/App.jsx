@@ -4,6 +4,8 @@ import {
   AppBar,
   Box,
   Button,
+  Card,
+  CardContent,
   Chip,
   CircularProgress,
   CssBaseline,
@@ -525,6 +527,13 @@ function UploadMoleculesPage({ uploadState, setUploadState, onUpload }) {
 
 function PrioritizationPage({ uploadState, prioritizationState, onStartPrioritization }) {
   const resultRows = prioritizationState.result?.results ?? [];
+  const [selectedCompoundKey, setSelectedCompoundKey] = useState(null);
+  const selectedCompound =
+    resultRows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? null;
+
+  useEffect(() => {
+    setSelectedCompoundKey(null);
+  }, [prioritizationState.result?.output_file]);
 
   return (
     <Stack spacing={3}>
@@ -585,13 +594,19 @@ function PrioritizationPage({ uploadState, prioritizationState, onStartPrioritiz
               Result file: {prioritizationState.result.output_file}
             </Typography>
             {resultRows.length > 0 ? (
-              <ResultPreview rows={resultRows.slice(0, 5)} />
+              <ResultPreview
+                rows={resultRows.slice(0, 5)}
+                selectedCompoundKey={selectedCompoundKey}
+                onSelectCompound={setSelectedCompoundKey}
+              />
             ) : (
               <Alert severity="info">No result rows were returned for this job.</Alert>
             )}
           </Stack>
         </Paper>
       )}
+
+      {selectedCompound && <CompoundDetailPanel compound={selectedCompound} />}
     </Stack>
   );
 }
@@ -640,7 +655,7 @@ function MetadataPanel({ rows }) {
   );
 }
 
-function ResultPreview({ rows }) {
+function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   const hasSyntheticAccessibility = rows.some(
     (row) => row.sa_score !== undefined || row.synthetic_feasibility_category !== undefined,
   );
@@ -660,18 +675,122 @@ function ResultPreview({ rows }) {
           </TableRow>
         </TableHead>
         <TableBody>
-          {rows.map((row) => (
-            <TableRow key={`${row.molecule_id}-${row.canonical_smiles}`}>
-              <TableCell>{row.molecule_id}</TableCell>
-              <TableCell>{row.valid_molecule}</TableCell>
-              <TableCell>{row.priority_score}</TableCell>
-              {hasSyntheticAccessibility && <TableCell>{row.sa_score ?? 'not available'}</TableCell>}
-              {hasSyntheticAccessibility && (
-                <TableCell>{row.synthetic_feasibility_category ?? 'not available'}</TableCell>
-              )}
-              <TableCell>{row.bbb_prediction ?? 'unavailable'}</TableCell>
-              <TableCell sx={{ fontFamily: 'ui-monospace, Consolas, monospace', maxWidth: 420 }}>
-                {row.canonical_smiles || row.input_smiles}
+          {rows.map((row, index) => {
+            const rowKey = compoundRowKey(row, index);
+            return (
+              <TableRow
+                hover
+                key={rowKey}
+                selected={selectedCompoundKey === rowKey}
+                onClick={() => onSelectCompound(rowKey)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelectCompound(rowKey);
+                  }
+                }}
+                tabIndex={0}
+                sx={{ cursor: 'pointer' }}
+              >
+                <TableCell>{row.molecule_id}</TableCell>
+                <TableCell>{row.valid_molecule}</TableCell>
+                <TableCell>{row.priority_score}</TableCell>
+                {hasSyntheticAccessibility && <TableCell>{row.sa_score ?? 'not available'}</TableCell>}
+                {hasSyntheticAccessibility && (
+                  <TableCell>{row.synthetic_feasibility_category ?? 'not available'}</TableCell>
+                )}
+                <TableCell>{row.bbb_prediction ?? 'unavailable'}</TableCell>
+                <TableCell sx={{ fontFamily: 'ui-monospace, Consolas, monospace', maxWidth: 420 }}>
+                  {row.canonical_smiles || row.input_smiles}
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </Box>
+  );
+}
+
+function CompoundDetailPanel({ compound }) {
+  return (
+    <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
+      <CardContent sx={{ p: 3, '&:last-child': { pb: 3 } }}>
+        <Stack spacing={2.5}>
+          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+            <Stack spacing={0.5}>
+              <Typography variant="h2">Compound Detail</Typography>
+              <Typography color="text.secondary">
+                {formatDetailValue(compound.molecule_id)}
+              </Typography>
+            </Stack>
+            <Chip
+              label={compound.valid_molecule === false ? 'Invalid molecule' : 'Valid molecule'}
+              color={compound.valid_molecule === false ? 'warning' : 'success'}
+              variant="outlined"
+            />
+          </Stack>
+
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
+              gap: 2,
+            }}
+          >
+            <DetailTable
+              title="Identity and Score"
+              rows={[
+                ['Molecule ID', compound.molecule_id],
+                ['Input SMILES', compound.input_smiles],
+                ['Canonical SMILES', compound.canonical_smiles],
+                ['Valid molecule', compound.valid_molecule],
+                ['Priority score', compound.priority_score],
+              ]}
+            />
+            <DetailTable
+              title="Model Outputs"
+              rows={[
+                ['BBB prediction', compound.bbb_prediction],
+                ['BBB probability', compound.bbb_probability],
+                ['BBB model status', compound.bbb_model_status],
+                ['SA score', compound.sa_score],
+                ['Synthetic feasibility category', compound.synthetic_feasibility_category],
+                ['Synthetic feasibility status', compound.synthetic_feasibility_status],
+              ]}
+            />
+            <DetailTable
+              title="Descriptors"
+              rows={[
+                ['MW', compound.mw],
+                ['TPSA', compound.tpsa],
+                ['HBA', compound.hba],
+                ['HBD', compound.hbd],
+                ['Rotatable bonds', compound.rotatable_bonds],
+                ['QED', compound.qed],
+                ['Lipinski pass/fail', formatPassFail(compound.lipinski_pass)],
+              ]}
+            />
+          </Box>
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DetailTable({ title, rows }) {
+  return (
+    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+      <Box sx={{ px: 2, py: 1.25, bgcolor: '#f7fafc', borderBottom: '1px solid', borderColor: 'divider' }}>
+        <Typography variant="h2">{title}</Typography>
+      </Box>
+      <Table size="small" aria-label={`${title} compound detail`}>
+        <TableBody>
+          {rows.map(([label, value]) => (
+            <TableRow key={label}>
+              <TableCell sx={{ width: '42%', color: 'text.secondary' }}>{label}</TableCell>
+              <TableCell sx={{ fontWeight: 650, overflowWrap: 'anywhere' }}>
+                {formatDetailValue(value)}
               </TableCell>
             </TableRow>
           ))}
@@ -679,6 +798,30 @@ function ResultPreview({ rows }) {
       </Table>
     </Box>
   );
+}
+
+function compoundRowKey(row, index) {
+  return `${row.molecule_id ?? 'molecule'}-${row.canonical_smiles ?? row.input_smiles ?? index}-${index}`;
+}
+
+function formatPassFail(value) {
+  if (value === true) {
+    return 'Pass';
+  }
+  if (value === false) {
+    return 'Fail';
+  }
+  return value;
+}
+
+function formatDetailValue(value) {
+  if (value === null || value === undefined || value === '') {
+    return 'Not available';
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'True' : 'False';
+  }
+  return String(value);
 }
 
 function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRefreshSourceStatus }) {
