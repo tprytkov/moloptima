@@ -88,6 +88,36 @@ def test_prioritize_smiles_adds_synthetic_accessibility_columns_for_valid_molecu
     assert ranked[0]["synthetic_feasibility_status"] == "heuristic_synthetic_accessibility"
 
 
+def test_prioritize_smiles_preserves_valid_precomputed_docking_score():
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO", "docking_score": "-7.25"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+
+    assert ranked[0]["docking_score"] == -7.25
+    assert ranked[0]["docking_status"] == "provided"
+
+
+def test_prioritize_smiles_marks_missing_docking_score_as_not_provided():
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+
+    assert ranked[0]["docking_score"] is None
+    assert ranked[0]["docking_status"] == "not_provided"
+
+
+def test_prioritize_smiles_marks_invalid_docking_score():
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO", "docking_score": "not-a-number"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+
+    assert ranked[0]["docking_score"] is None
+    assert ranked[0]["docking_status"] == "invalid_docking_score"
+
+
 def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_path):
     input_path = tmp_path / "empty.csv"
     output_path = tmp_path / "ranked.csv"
@@ -100,3 +130,19 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "sa_score" in header
     assert "synthetic_feasibility_category" in header
     assert "synthetic_feasibility_status" in header
+    assert "docking_score" in header
+    assert "docking_status" in header
+
+
+def test_prioritize_csv_writes_precomputed_docking_columns(tmp_path):
+    input_path = tmp_path / "molecules.csv"
+    output_path = tmp_path / "ranked.csv"
+    input_path.write_text("molecule_id,smiles,docking_score\nethanol,CCO,-6.5\n", encoding="utf-8")
+
+    ranked = prioritize_csv(input_path, output_path)
+    output_text = output_path.read_text(encoding="utf-8")
+
+    assert ranked[0]["docking_score"] == -6.5
+    assert ranked[0]["docking_status"] == "provided"
+    assert "docking_score" in output_text
+    assert "docking_status" in output_text

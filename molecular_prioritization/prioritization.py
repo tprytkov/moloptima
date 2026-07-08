@@ -6,6 +6,7 @@ from dataclasses import asdict
 
 from molecular_prioritization.bbb_predictor import BBBPrediction
 from molecular_prioritization.descriptors import MolecularDescriptors
+from molecular_prioritization.docking import DockingResult
 from molecular_prioritization.synthetic_accessibility import SyntheticAccessibilityResult
 
 
@@ -49,6 +50,7 @@ def build_priority_record(
     descriptors: MolecularDescriptors | None,
     bbb_prediction: BBBPrediction | None = None,
     synthetic_accessibility: SyntheticAccessibilityResult | None = None,
+    docking: DockingResult | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     """Build one row for a ranked molecular prioritization result."""
@@ -80,6 +82,10 @@ def build_priority_record(
         synthetic_feasibility_category="not_available",
         synthetic_feasibility_status="not_run",
     )
+    docking_values = docking or DockingResult(
+        docking_score=None,
+        docking_status="not_provided",
+    )
 
     return {
         "molecule_id": molecule_id,
@@ -88,6 +94,8 @@ def build_priority_record(
         "valid_molecule": valid_molecule,
         "priority_score": priority_score,
         "error": error,
+        "docking_score": docking_values.docking_score,
+        "docking_status": docking_values.docking_status,
         "sa_score": synthetic_accessibility_values.sa_score,
         "synthetic_feasibility_category": (
             synthetic_accessibility_values.synthetic_feasibility_category

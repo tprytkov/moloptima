@@ -8,6 +8,7 @@ from pathlib import Path
 
 from molecular_prioritization.bbb_predictor import load_bbb_predictor
 from molecular_prioritization.descriptors import calculate_descriptors
+from molecular_prioritization.docking import parse_precomputed_docking_score
 from molecular_prioritization.prioritization import build_priority_record
 from molecular_prioritization.standardize import standardize_smiles
 from molecular_prioritization.synthetic_accessibility import heuristic_synthetic_accessibility
@@ -40,6 +41,7 @@ def prioritize_smiles(
             standardized.canonical_smiles,
             standardized.valid_molecule,
         )
+        docking = parse_precomputed_docking_score(record)
 
         ranked_records.append(
             build_priority_record(
@@ -50,6 +52,7 @@ def prioritize_smiles(
                 descriptors=descriptors,
                 bbb_prediction=bbb_prediction,
                 synthetic_accessibility=synthetic_accessibility,
+                docking=docking,
                 error=standardized.error,
             )
         )
@@ -83,6 +86,8 @@ def prioritize_csv(input_path: str | Path, output_path: str | Path) -> list[dict
             "valid_molecule",
             "priority_score",
             "error",
+            "docking_score",
+            "docking_status",
             "sa_score",
             "synthetic_feasibility_category",
             "synthetic_feasibility_status",

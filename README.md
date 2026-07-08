@@ -2,13 +2,14 @@
 
 MolOptima is a Python-first scientific project for prioritizing small molecules after they have been generated or supplied by a user.
 
-This repository currently focuses on Phase 1: core molecular prioritization logic, a minimal local FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs and running prioritization jobs. It intentionally does not include docking, patents, OMOP, Databricks, MLflow, Redis, Docker, cloud services, or downloaded model weights.
+This repository currently focuses on Phase 1: core molecular prioritization logic, a minimal local FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs and running prioritization jobs. It intentionally does not include docking execution, patents, OMOP, Databricks, MLflow, Redis, Docker, cloud services, or downloaded model weights.
 
 ## Current Scope
 
 - Validate and canonicalize SMILES input with RDKit.
 - Calculate Phase 1 RDKit descriptors and Lipinski-style flags.
 - Rank molecules with a simple, transparent first-pass score.
+- Preserve optional precomputed docking scores from input CSVs without running docking software.
 - Add informational heuristic synthetic accessibility fields without changing the priority score.
 - Optionally add cached ChemBERTa BBB predictions when local model files are available.
 
@@ -98,7 +99,7 @@ npm.cmd run build
 - Store uploaded CSVs locally under `backend/uploads/`.
 - Start a synchronous Phase 1 prioritization job through the FastAPI backend.
 - Validate and canonicalize SMILES with RDKit.
-- Calculate basic descriptors, Lipinski-style flags, QED, BBB columns, heuristic synthetic accessibility fields, and `priority_score`.
+- Calculate basic descriptors, Lipinski-style flags, QED, BBB columns, optional precomputed docking columns, heuristic synthetic accessibility fields, and `priority_score`.
 - Fetch job results from `GET /api/results/{job_id}`.
 - Display job status, row count, output path, and a small preview table in the frontend.
 - Persist local JSON job metadata under `backend/job_metadata/`.
@@ -107,7 +108,7 @@ npm.cmd run build
 
 ## Not Yet Implemented
 
-- Docking or binding-score workflows.
+- Docking execution, receptor preparation, or binding-score workflows beyond preserving precomputed `docking_score` values.
 - BBB/ChemBERTa as a required model dependency. The BBB step is optional and uses local cached model files only when available.
 - Retrosynthesis or synthetic-accessibility model integration beyond the current transparent heuristic.
 - Patent search, patent similarity, or freedom-to-operate analysis.
@@ -234,6 +235,8 @@ BBB prediction is optional and offline-first. By default MolOptima checks the ap
 To point at a local cache, set `MOLOPTIMA_BBB_MODEL_CACHE`. MolOptima does not download model files automatically unless `MOLOPTIMA_ALLOW_MODEL_DOWNLOAD=1` is explicitly set.
 
 Synthetic accessibility is currently informational. MolOptima writes `sa_score`, `synthetic_feasibility_category`, and `synthetic_feasibility_status` using a transparent RDKit-based `heuristic_synthetic_accessibility` calculation. It is not a retrosynthesis model and does not change `priority_score`.
+
+Docking is currently input-only. If an uploaded CSV includes `docking_score`, MolOptima preserves it as a numeric output column and writes `docking_status` as `provided`, `not_provided`, or `invalid_docking_score`. It does not run AutoDock/Vina, require receptor files, or change `priority_score` based on docking scores.
 
 ## Model and Data Sources
 

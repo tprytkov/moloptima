@@ -659,6 +659,9 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   const hasSyntheticAccessibility = rows.some(
     (row) => row.sa_score !== undefined || row.synthetic_feasibility_category !== undefined,
   );
+  const hasDockingScore = rows.some(
+    (row) => row.docking_score !== undefined && row.docking_status !== 'not_provided',
+  );
 
   return (
     <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -668,6 +671,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>Molecule</TableCell>
             <TableCell>Valid</TableCell>
             <TableCell>Score</TableCell>
+            {hasDockingScore && <TableCell>Docking score</TableCell>}
             {hasSyntheticAccessibility && <TableCell>SA score</TableCell>}
             {hasSyntheticAccessibility && <TableCell>Synthesis</TableCell>}
             <TableCell>BBB</TableCell>
@@ -695,6 +699,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{row.molecule_id}</TableCell>
                 <TableCell>{row.valid_molecule}</TableCell>
                 <TableCell>{row.priority_score}</TableCell>
+                {hasDockingScore && <TableCell>{row.docking_score ?? 'not available'}</TableCell>}
                 {hasSyntheticAccessibility && <TableCell>{row.sa_score ?? 'not available'}</TableCell>}
                 {hasSyntheticAccessibility && (
                   <TableCell>{row.synthetic_feasibility_category ?? 'not available'}</TableCell>
@@ -746,6 +751,8 @@ function CompoundDetailPanel({ compound }) {
                 ['Canonical SMILES', compound.canonical_smiles],
                 ['Valid molecule', compound.valid_molecule],
                 ['Priority score', compound.priority_score],
+                ['Docking score', compound.docking_score],
+                ['Docking status', compound.docking_status],
               ]}
             />
             <DetailTable
