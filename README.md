@@ -32,6 +32,11 @@ data/
   demo_inputs/
 outputs/
   ranked_results/
+app_data/
+  model_cache/
+    huggingface/
+  public_lookup_cache/
+  manifests/
 tests/
 docs/
 ```
@@ -96,6 +101,8 @@ npm.cmd run build
 - Fetch job results from `GET /api/results/{job_id}`.
 - Display job status, row count, output path, and a small preview table in the frontend.
 - Persist local JSON job metadata under `backend/job_metadata/`.
+- Show model and public-data source status in the Settings page.
+- Write app-managed model, public-data, and run manifests under `app_data/manifests/`.
 
 ## Not Yet Implemented
 
@@ -152,6 +159,8 @@ Runtime files are intentionally ignored by Git:
 - `backend/job_outputs/`
 - `backend/job_metadata/`
 - `outputs/ranked_results/`
+- `app_data/model_cache/`
+- `app_data/public_lookup_cache/`
 
 Each runtime folder keeps a `.gitkeep` placeholder so the folder structure is available after cloning.
 
@@ -219,9 +228,38 @@ results.raise_for_status()
 print(results.json()["results"])
 ```
 
-BBB prediction is optional and offline-first. By default MolOptima checks local Hugging Face cache roots such as `app_data/model_cache/huggingface` and the previous BERT app cache for `Yousuf7/ChemBERT-BBB-Permeability`. If the model is unavailable, the output still includes `bbb_prediction`, `bbb_probability`, `bbb_model_status`, and `bbb_warning` columns without crashing.
+BBB prediction is optional and offline-first. By default MolOptima checks the app-managed Hugging Face cache root `app_data/model_cache/huggingface` for `Yousuf7/ChemBERT-BBB-Permeability`. If the model is unavailable, the output still includes `bbb_prediction`, `bbb_probability`, `bbb_model_status`, and `bbb_warning` columns without crashing.
 
 To point at a local cache, set `MOLOPTIMA_BBB_MODEL_CACHE`. MolOptima does not download model files automatically unless `MOLOPTIMA_ALLOW_MODEL_DOWNLOAD=1` is explicitly set.
+
+## Model and Data Sources
+
+MolOptima uses an app-managed cache by default:
+
+```text
+app_data/model_cache/huggingface
+```
+
+To check whether the BBB/ChemBERTa model is cached, look for:
+
+```text
+app_data/model_cache/huggingface/models--Yousuf7--ChemBERT-BBB-Permeability
+```
+
+The Settings page includes a Model and Data Sources section with explicit buttons for:
+
+- Check local model cache
+- Refresh source status
+
+Normal rendering does not download large model files. Set `MOLOPTIMA_ALLOW_MODEL_DOWNLOAD=1` only when you intentionally want model download behavior from the Python loader.
+
+Manifests are stored in:
+
+- `app_data/manifests/model_manifest.json`
+- `app_data/manifests/public_data_manifest.json`
+- `app_data/manifests/run_manifest.json`
+
+The public-data manifest currently records PubChem, ChEMBL, and SureChEMBL as planned inactive sources.
 
 ## Troubleshooting
 

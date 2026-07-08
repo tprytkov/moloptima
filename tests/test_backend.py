@@ -8,6 +8,39 @@ from backend import services
 from backend.main import app
 
 
+def configure_temp_app_data(tmp_path: Path, monkeypatch):
+    app_data = tmp_path / "app_data"
+    monkeypatch.setattr(services.model_sources, "APP_DATA_DIR", app_data)
+    monkeypatch.setattr(services.model_sources, "MODEL_CACHE_DIR", app_data / "model_cache")
+    monkeypatch.setattr(
+        services.model_sources,
+        "HUGGINGFACE_CACHE_DIR",
+        app_data / "model_cache" / "huggingface",
+    )
+    monkeypatch.setattr(
+        services.model_sources,
+        "PUBLIC_LOOKUP_CACHE_DIR",
+        app_data / "public_lookup_cache",
+    )
+    monkeypatch.setattr(services.model_sources, "MANIFEST_DIR", app_data / "manifests")
+    monkeypatch.setattr(
+        services.model_sources,
+        "MODEL_MANIFEST_PATH",
+        app_data / "manifests" / "model_manifest.json",
+    )
+    monkeypatch.setattr(
+        services.model_sources,
+        "PUBLIC_DATA_MANIFEST_PATH",
+        app_data / "manifests" / "public_data_manifest.json",
+    )
+    monkeypatch.setattr(
+        services.model_sources,
+        "RUN_MANIFEST_PATH",
+        app_data / "manifests" / "run_manifest.json",
+    )
+    monkeypatch.setenv("MOLOPTIMA_BBB_MODEL_CACHE", str(app_data / "model_cache" / "huggingface"))
+
+
 def test_health_endpoint():
     client = TestClient(app)
 
@@ -22,6 +55,7 @@ def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(services, "UPLOAD_DIR", tmp_path / "backend" / "uploads")
     monkeypatch.setattr(services, "JOB_OUTPUT_DIR", tmp_path / "backend" / "job_outputs")
     monkeypatch.setattr(services, "JOB_METADATA_DIR", tmp_path / "backend" / "job_metadata")
+    configure_temp_app_data(tmp_path, monkeypatch)
 
     def fake_prioritize_csv(input_path, output_path):
         rows = [
@@ -33,6 +67,8 @@ def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
                 "priority_score": 0.75,
                 "bbb_prediction": "unavailable",
                 "bbb_probability": None,
+                "bbb_model_status": "model_unavailable",
+                "bbb_warning": "model missing",
             }
         ]
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -83,6 +119,32 @@ def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
     assert result_payload["job_id"] == job_payload["job_id"]
     assert result_payload["status"] == "completed"
     assert result_payload["results"][0]["molecule_id"] == "mol_1"
+
+    run_manifest = json.loads(
+        services.model_sources.RUN_MANIFEST_PATH.read_text(encoding="utf-8")
+    )
+    latest_run = run_manifest["runs"][job_payload["job_id"]]
+    assert latest_run["actual_bbb_model_status"] == "model_unavailable"
+    assert latest_run["fallback_placeholder_used"] is True
+    assert latest_run["bbb_model_status_values"] == ["model_unavailable"]
+
+
+def test_model_source_status_endpoints(tmp_path: Path, monkeypatch):
+    configure_temp_app_data(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    check_response = client.get("/api/model-sources/status")
+    refresh_response = client.post("/api/model-sources/refresh")
+
+    assert check_response.status_code == 200
+    assert refresh_response.status_code == 200
+    check_payload = check_response.json()
+    assert "bbb_chemberta" in check_payload["model_manifest"]["models"]
+    assert set(refresh_response.json()["public_data_manifest"]["sources"]) == {
+        "PubChem",
+        "ChEMBL",
+        "SureChEMBL",
+    }
 
 
 def test_upload_rejects_missing_required_columns(tmp_path: Path, monkeypatch):

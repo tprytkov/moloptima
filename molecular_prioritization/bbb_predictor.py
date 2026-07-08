@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+APP_MODEL_CACHE_DIR = PROJECT_ROOT / "app_data" / "model_cache" / "huggingface"
 CHEMBERTA_BBB_MODEL_ID = "Yousuf7/ChemBERT-BBB-Permeability"
 ALLOW_DOWNLOAD_ENV = "MOLOPTIMA_ALLOW_MODEL_DOWNLOAD"
 MODEL_CACHE_ENV = "MOLOPTIMA_BBB_MODEL_CACHE"
@@ -146,13 +148,14 @@ def load_bbb_predictor() -> CachedChembertaBBBPredictor | UnavailableBBBPredicto
 def default_cache_dirs() -> list[Path]:
     """Return local Hugging Face cache roots checked for the BBB model."""
 
-    env_cache = os.environ.get(MODEL_CACHE_ENV)
-    candidates = [
-        Path(env_cache) if env_cache else None,
-        Path("app_data/model_cache/huggingface"),
-        Path.cwd().parent / "BERT" / "app_data" / "model_cache" / "huggingface",
-    ]
-    return [path for path in candidates if path is not None]
+    return [configured_cache_dir()]
+
+
+def configured_cache_dir() -> Path:
+    """Return the explicit or app-managed Hugging Face cache root."""
+
+    env_cache = os.environ.get(MODEL_CACHE_ENV, "").strip()
+    return Path(env_cache).expanduser() if env_cache else APP_MODEL_CACHE_DIR
 
 
 def first_available_cache_dir(cache_dirs: list[Path], model_id: str) -> Path | None:

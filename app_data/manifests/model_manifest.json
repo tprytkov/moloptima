@@ -1,0 +1,18 @@
+{
+  "cache_root": "app_data/model_cache/huggingface",
+  "last_checked": "",
+  "models": {
+    "bbb_chemberta": {
+      "backend": "transformers",
+      "cache_path": "app_data/model_cache/huggingface/models--Yousuf7--ChemBERT-BBB-Permeability",
+      "cached": false,
+      "error_message": "",
+      "last_checked": "",
+      "last_loaded": "",
+      "model_id": "Yousuf7/ChemBERT-BBB-Permeability",
+      "model_label": "BBB/ChemBERTa",
+      "model_type": "bbb_prediction",
+      "status": "not_checked"
+    }
+  }
+}

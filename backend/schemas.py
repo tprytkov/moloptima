@@ -46,3 +46,9 @@ class ResultResponse(BaseModel):
     error_message: str = ""
     row_count: int
     results: list[dict[str, Any]]
+
+
+class SourceStatusResponse(BaseModel):
+    model_manifest: dict[str, Any]
+    public_data_manifest: dict[str, Any]
+    run_manifest: dict[str, Any]

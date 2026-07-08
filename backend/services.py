@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException, UploadFile, status
 
+from molecular_prioritization import model_sources
 from molecular_prioritization.pipeline import prioritize_csv
 
 
@@ -95,6 +96,11 @@ def run_prioritization_job(upload_id: str) -> dict[str, object]:
             "completed_at": utc_timestamp(),
             "row_count": len(rows),
         }
+    )
+    model_sources.update_run_manifest(
+        job_id=job_id,
+        output_file=metadata["output_file"],
+        rows=rows,
     )
     write_job_metadata(metadata)
     return metadata
@@ -191,3 +197,15 @@ def relative_path(path: Path) -> str:
         return path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
     except ValueError:
         return path.name
+
+
+def check_model_and_source_status() -> dict[str, object]:
+    """Return current app-managed model and public source status."""
+
+    return model_sources.current_status_payload()
+
+
+def refresh_public_source_status() -> dict[str, object]:
+    """Refresh planned public data source status without external lookups."""
+
+    return model_sources.refresh_source_status_payload()

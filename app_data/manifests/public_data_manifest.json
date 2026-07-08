@@ -1,0 +1,29 @@
+{
+  "last_checked": "",
+  "sources": {
+    "ChEMBL": {
+      "cache_path": "app_data/public_lookup_cache",
+      "error_message": "",
+      "last_checked": "",
+      "last_successful_lookup": "",
+      "source_name": "ChEMBL",
+      "status": "planned_inactive"
+    },
+    "PubChem": {
+      "cache_path": "app_data/public_lookup_cache",
+      "error_message": "",
+      "last_checked": "",
+      "last_successful_lookup": "",
+      "source_name": "PubChem",
+      "status": "planned_inactive"
+    },
+    "SureChEMBL": {
+      "cache_path": "app_data/public_lookup_cache",
+      "error_message": "",
+      "last_checked": "",
+      "last_successful_lookup": "",
+      "source_name": "SureChEMBL",
+      "status": "planned_inactive"
+    }
+  }
+}

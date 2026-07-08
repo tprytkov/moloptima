@@ -11,6 +11,7 @@ from backend.schemas import (
     JobResponse,
     PrioritizationRequest,
     ResultResponse,
+    SourceStatusResponse,
     UploadResponse,
 )
 
@@ -47,3 +48,13 @@ def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
 @app.get("/api/results/{job_id}", response_model=ResultResponse)
 def get_results(job_id: str) -> ResultResponse:
     return ResultResponse(**services.get_result(job_id))
+
+
+@app.get("/api/model-sources/status", response_model=SourceStatusResponse)
+def get_model_source_status() -> SourceStatusResponse:
+    return SourceStatusResponse(**services.check_model_and_source_status())
+
+
+@app.post("/api/model-sources/refresh", response_model=SourceStatusResponse)
+def refresh_model_source_status() -> SourceStatusResponse:
+    return SourceStatusResponse(**services.refresh_public_source_status())

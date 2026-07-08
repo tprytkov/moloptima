@@ -112,6 +112,11 @@ function App() {
     loading: false,
     error: '',
   });
+  const [sourceStatusState, setSourceStatusState] = useState({
+    payload: null,
+    loading: false,
+    error: '',
+  });
   const health = useBackendHealth();
 
   async function handleUpload() {
@@ -167,9 +172,39 @@ function App() {
         body: JSON.stringify({ upload_id: uploadId }),
       });
       const result = await apiRequest(`/api/results/${job.job_id}`);
+      const sourceStatus = await apiRequest('/api/model-sources/status');
       setPrioritizationState({ job, result, loading: false, error: '' });
+      setSourceStatusState({ payload: sourceStatus, loading: false, error: '' });
     } catch (error) {
       setPrioritizationState((current) => ({
+        ...current,
+        loading: false,
+        error: readableError(error),
+      }));
+    }
+  }
+
+  async function handleCheckLocalModelCache() {
+    setSourceStatusState((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const payload = await apiRequest('/api/model-sources/status');
+      setSourceStatusState({ payload, loading: false, error: '' });
+    } catch (error) {
+      setSourceStatusState((current) => ({
+        ...current,
+        loading: false,
+        error: readableError(error),
+      }));
+    }
+  }
+
+  async function handleRefreshSourceStatus() {
+    setSourceStatusState((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const payload = await apiRequest('/api/model-sources/refresh', { method: 'POST' });
+      setSourceStatusState({ payload, loading: false, error: '' });
+    } catch (error) {
+      setSourceStatusState((current) => ({
         ...current,
         loading: false,
         error: readableError(error),
@@ -191,8 +226,11 @@ function App() {
               uploadState={uploadState}
               setUploadState={setUploadState}
               prioritizationState={prioritizationState}
+              sourceStatusState={sourceStatusState}
               onUpload={handleUpload}
               onStartPrioritization={handleStartPrioritization}
+              onCheckLocalModelCache={handleCheckLocalModelCache}
+              onRefreshSourceStatus={handleRefreshSourceStatus}
             />
           </Box>
         </Box>
@@ -297,8 +335,11 @@ function ActivePage({
   uploadState,
   setUploadState,
   prioritizationState,
+  sourceStatusState,
   onUpload,
   onStartPrioritization,
+  onCheckLocalModelCache,
+  onRefreshSourceStatus,
 }) {
   if (activeItem === 'Upload Molecules') {
     return (
@@ -316,6 +357,16 @@ function ActivePage({
         uploadState={uploadState}
         prioritizationState={prioritizationState}
         onStartPrioritization={onStartPrioritization}
+      />
+    );
+  }
+
+  if (activeItem === 'Settings') {
+    return (
+      <ModelDataSourcesPage
+        sourceStatusState={sourceStatusState}
+        onCheckLocalModelCache={onCheckLocalModelCache}
+        onRefreshSourceStatus={onRefreshSourceStatus}
       />
     );
   }
@@ -617,6 +668,117 @@ function ResultPreview({ rows }) {
         </TableBody>
       </Table>
     </Box>
+  );
+}
+
+function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRefreshSourceStatus }) {
+  const payload = sourceStatusState.payload ?? {};
+  const modelManifest = payload.model_manifest ?? {};
+  const publicManifest = payload.public_data_manifest ?? {};
+  const runManifest = payload.run_manifest ?? {};
+  const bbbModel = modelManifest.models?.bbb_chemberta ?? {};
+  const latestRunId = runManifest.latest_run;
+  const latestRun = latestRunId ? runManifest.runs?.[latestRunId] : null;
+  const cached = Boolean(bbbModel.cached);
+  const modelAvailable = latestRun?.actual_bbb_model_status === 'model_available';
+  const placeholderUsed = Boolean(latestRun?.fallback_placeholder_used);
+  const sources = Object.values(publicManifest.sources ?? {});
+
+  return (
+    <Stack spacing={3}>
+      <PageIntro
+        title="Model and Data Sources"
+        description="Inspect the app-managed BBB model cache, latest run model status, and planned public lookup source state."
+      />
+
+      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2.5}>
+          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
+            <Stack spacing={0.75}>
+              <Typography variant="h2">Local Model Cache</Typography>
+              <Typography color="text.secondary">
+                Model status is recorded in output CSVs and run manifests.
+              </Typography>
+            </Stack>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
+              <Button variant="outlined" onClick={onCheckLocalModelCache} disabled={sourceStatusState.loading}>
+                Check local model cache
+              </Button>
+              <Button variant="outlined" onClick={onRefreshSourceStatus} disabled={sourceStatusState.loading}>
+                Refresh source status
+              </Button>
+            </Stack>
+          </Stack>
+
+          {sourceStatusState.loading && <Alert severity="info">Refreshing local status...</Alert>}
+          {sourceStatusState.error && <Alert severity="error">{sourceStatusState.error}</Alert>}
+
+          {cached ? (
+            <Alert severity="success">BBB/ChemBERTa model is configured and cached.</Alert>
+          ) : (
+            <Alert severity="warning">BBB/ChemBERTa model is not cached or unavailable.</Alert>
+          )}
+
+          {latestRun && modelAvailable && (
+            <Alert severity="success">This run used the local BBB/ChemBERTa model.</Alert>
+          )}
+          {latestRun && placeholderUsed && (
+            <Alert severity="info">
+              This run used placeholder BBB fields because the model was unavailable.
+            </Alert>
+          )}
+
+          <MetadataPanel
+            rows={[
+              ['BBB model cache path', modelManifest.cache_root ?? bbbModel.cache_path ?? ''],
+              ['Cached status', cached ? 'cached' : 'not cached'],
+              ['Model status from latest check', bbbModel.status ?? 'not checked'],
+              ['Actual model used or placeholder mode', latestRun?.actual_bbb_model_status ?? 'not run'],
+              ['Latest run timestamp', latestRun?.timestamp ?? ''],
+              ['Output file', latestRun?.output_file ?? ''],
+              ['Rows', latestRun?.row_count ?? ''],
+            ]}
+          />
+        </Stack>
+      </Paper>
+
+      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2}>
+          <Typography variant="h2">Public Lookup Sources</Typography>
+          <Alert severity="info">
+            PubChem, ChEMBL, and SureChEMBL are planned, not active, in this MolOptima build.
+          </Alert>
+          {sources.length > 0 ? (
+            <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+              <Table size="small" aria-label="Public lookup source status">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Source</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell>Last checked</TableCell>
+                    <TableCell>Last successful lookup</TableCell>
+                    <TableCell>Cache path</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {sources.map((source) => (
+                    <TableRow key={source.source_name}>
+                      <TableCell>{source.source_name}</TableCell>
+                      <TableCell>{source.status}</TableCell>
+                      <TableCell>{source.last_checked}</TableCell>
+                      <TableCell>{source.last_successful_lookup || 'not active'}</TableCell>
+                      <TableCell>{source.cache_path}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+          ) : (
+            <Alert severity="info">Click Refresh source status to populate planned public source status.</Alert>
+          )}
+        </Stack>
+      </Paper>
+    </Stack>
   );
 }
 

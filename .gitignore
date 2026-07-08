@@ -15,6 +15,18 @@ backend/job_outputs/*
 backend/job_metadata/*
 !backend/job_metadata/.gitkeep
 
+# App-managed local caches and manifests
+app_data/model_cache/*
+!app_data/model_cache/.gitkeep
+!app_data/model_cache/huggingface/
+app_data/model_cache/huggingface/*
+!app_data/model_cache/huggingface/.gitkeep
+app_data/public_lookup_cache/*
+!app_data/public_lookup_cache/.gitkeep
+app_data/manifests/run_manifest_*.json
+app_data/manifests/*_local.json
+app_data/manifests/*.tmp
+
 # Generated molecular prioritization outputs
 outputs/ranked_results/*
 !outputs/ranked_results/.gitkeep
