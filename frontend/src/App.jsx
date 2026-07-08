@@ -373,11 +373,13 @@ function ActivePage({
     );
   }
 
-  return <DashboardPage health={health} activeItem={activeItem} />;
+  return <DashboardPage health={health} activeItem={activeItem} prioritizationState={prioritizationState} />;
 }
 
-function DashboardPage({ health, activeItem }) {
+function DashboardPage({ health, activeItem, prioritizationState }) {
   const isDashboard = activeItem === 'Dashboard';
+  const latestRunSummary = buildLatestRunSummary(prioritizationState);
+
   return (
     <Stack spacing={3}>
       <Paper elevation={0} sx={{ p: { xs: 2.5, md: 3 }, border: '1px solid', borderColor: 'divider' }}>
@@ -440,6 +442,67 @@ function DashboardPage({ health, activeItem }) {
         </Paper>
       </Box>
 
+      {isDashboard && (
+        <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+          <Stack spacing={2.5}>
+            <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+              <Stack spacing={0.75}>
+                <Typography variant="h2">Latest Prioritization Run</Typography>
+                <Typography color="text.secondary">
+                  {latestRunSummary
+                    ? `Completed ${formatDetailValue(latestRunSummary.completedAt)}`
+                    : 'Run molecular prioritization to populate dashboard metrics.'}
+                </Typography>
+              </Stack>
+              {latestRunSummary && (
+                <Chip
+                  label={`${latestRunSummary.totalMolecules} molecules`}
+                  color="secondary"
+                  variant="outlined"
+                />
+              )}
+            </Stack>
+
+            {latestRunSummary ? (
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(3, minmax(0, 1fr))' },
+                  gap: 1.5,
+                }}
+              >
+                <RunSummaryCard label="Total molecules" value={latestRunSummary.totalMolecules} />
+                <RunSummaryCard label="Valid molecules" value={latestRunSummary.validMolecules} />
+                <RunSummaryCard
+                  label="High-priority molecules"
+                  value={latestRunSummary.highPriorityMolecules}
+                  detail="Score >= 0.75"
+                />
+                <RunSummaryCard
+                  label="BBB model"
+                  value={latestRunSummary.bbbModelSummary}
+                  detail={latestRunSummary.bbbModelDetail}
+                />
+                <RunSummaryCard
+                  label="Docking scores"
+                  value={latestRunSummary.dockingSummary}
+                  detail={latestRunSummary.dockingDetail}
+                />
+                <RunSummaryCard
+                  label="Synthetic feasibility"
+                  value={latestRunSummary.syntheticSummary}
+                  detail={latestRunSummary.syntheticDetail}
+                />
+              </Box>
+            ) : (
+              <Alert severity="info">
+                No prioritization run is available in this session yet.
+              </Alert>
+            )}
+          </Stack>
+        </Paper>
+      )}
+
       {!isDashboard && (
         <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
           <Typography variant="h2">{activeItem}</Typography>
@@ -450,6 +513,80 @@ function DashboardPage({ health, activeItem }) {
       )}
     </Stack>
   );
+}
+
+function RunSummaryCard({ label, value, detail }) {
+  return (
+    <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', height: '100%' }}>
+      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+        <Stack spacing={0.75}>
+          <Typography variant="caption" color="text.secondary">
+            {label}
+          </Typography>
+          <Typography variant="h2" sx={{ overflowWrap: 'anywhere' }}>
+            {formatDetailValue(value)}
+          </Typography>
+          {detail && (
+            <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
+              {detail}
+            </Typography>
+          )}
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+function buildLatestRunSummary(prioritizationState) {
+  const result = prioritizationState.result;
+  const rows = result?.results ?? [];
+
+  if (!result || rows.length === 0) {
+    return null;
+  }
+
+  const totalMolecules = Number(result.row_count ?? rows.length);
+  const validMolecules = rows.filter((row) => row.valid_molecule === true).length;
+  const highPriorityMolecules = rows.filter((row) => Number(row.priority_score ?? 0) >= 0.75).length;
+  const bbbAvailable = rows.filter((row) => row.bbb_model_status === 'model_available').length;
+  const bbbUnavailable = rows.length - bbbAvailable;
+  const dockingProvided = rows.filter((row) => row.docking_status === 'provided').length;
+  const dockingInvalid = rows.filter((row) => row.docking_status === 'invalid_docking_score').length;
+  const dockingNotProvided = rows.length - dockingProvided - dockingInvalid;
+  const syntheticCounts = countValues(
+    rows
+      .map((row) => row.synthetic_feasibility_category)
+      .filter((category) => category && category !== 'not_available'),
+  );
+  const syntheticSummary = formatCounts(syntheticCounts) || 'Not available';
+  const syntheticDetail =
+    syntheticSummary === 'Not available' ? 'No synthetic feasibility categories in latest result' : '';
+
+  return {
+    totalMolecules,
+    validMolecules,
+    highPriorityMolecules,
+    completedAt: prioritizationState.job?.completed_at ?? '',
+    bbbModelSummary: bbbAvailable > 0 ? 'Available' : 'Unavailable',
+    bbbModelDetail: `${bbbAvailable} available, ${bbbUnavailable} unavailable`,
+    dockingSummary: `${dockingProvided} provided`,
+    dockingDetail: `${dockingNotProvided} not provided, ${dockingInvalid} invalid`,
+    syntheticSummary,
+    syntheticDetail,
+  };
+}
+
+function countValues(values) {
+  return values.reduce((counts, value) => {
+    counts[value] = (counts[value] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function formatCounts(counts) {
+  return Object.entries(counts)
+    .map(([label, count]) => `${label}: ${count}`)
+    .join(', ');
 }
 
 function UploadMoleculesPage({ uploadState, setUploadState, onUpload }) {
