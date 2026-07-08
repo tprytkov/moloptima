@@ -10,6 +10,7 @@ from molecular_prioritization.bbb_predictor import load_bbb_predictor
 from molecular_prioritization.descriptors import calculate_descriptors
 from molecular_prioritization.prioritization import build_priority_record
 from molecular_prioritization.standardize import standardize_smiles
+from molecular_prioritization.synthetic_accessibility import heuristic_synthetic_accessibility
 
 
 def prioritize_smiles(
@@ -35,6 +36,10 @@ def prioritize_smiles(
             standardized.canonical_smiles,
             standardized.valid_molecule,
         )
+        synthetic_accessibility = heuristic_synthetic_accessibility(
+            standardized.canonical_smiles,
+            standardized.valid_molecule,
+        )
 
         ranked_records.append(
             build_priority_record(
@@ -44,6 +49,7 @@ def prioritize_smiles(
                 valid_molecule=standardized.valid_molecule,
                 descriptors=descriptors,
                 bbb_prediction=bbb_prediction,
+                synthetic_accessibility=synthetic_accessibility,
                 error=standardized.error,
             )
         )
@@ -77,6 +83,9 @@ def prioritize_csv(input_path: str | Path, output_path: str | Path) -> list[dict
             "valid_molecule",
             "priority_score",
             "error",
+            "sa_score",
+            "synthetic_feasibility_category",
+            "synthetic_feasibility_status",
             "bbb_prediction",
             "bbb_probability",
             "bbb_model_status",

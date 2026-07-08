@@ -641,6 +641,10 @@ function MetadataPanel({ rows }) {
 }
 
 function ResultPreview({ rows }) {
+  const hasSyntheticAccessibility = rows.some(
+    (row) => row.sa_score !== undefined || row.synthetic_feasibility_category !== undefined,
+  );
+
   return (
     <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
       <Table size="small" aria-label="Prioritization result preview">
@@ -649,6 +653,8 @@ function ResultPreview({ rows }) {
             <TableCell>Molecule</TableCell>
             <TableCell>Valid</TableCell>
             <TableCell>Score</TableCell>
+            {hasSyntheticAccessibility && <TableCell>SA score</TableCell>}
+            {hasSyntheticAccessibility && <TableCell>Synthesis</TableCell>}
             <TableCell>BBB</TableCell>
             <TableCell>Canonical SMILES</TableCell>
           </TableRow>
@@ -659,6 +665,10 @@ function ResultPreview({ rows }) {
               <TableCell>{row.molecule_id}</TableCell>
               <TableCell>{row.valid_molecule}</TableCell>
               <TableCell>{row.priority_score}</TableCell>
+              {hasSyntheticAccessibility && <TableCell>{row.sa_score ?? 'not available'}</TableCell>}
+              {hasSyntheticAccessibility && (
+                <TableCell>{row.synthetic_feasibility_category ?? 'not available'}</TableCell>
+              )}
               <TableCell>{row.bbb_prediction ?? 'unavailable'}</TableCell>
               <TableCell sx={{ fontFamily: 'ui-monospace, Consolas, monospace', maxWidth: 420 }}>
                 {row.canonical_smiles || row.input_smiles}

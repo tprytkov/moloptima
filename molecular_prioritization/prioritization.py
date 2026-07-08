@@ -6,6 +6,7 @@ from dataclasses import asdict
 
 from molecular_prioritization.bbb_predictor import BBBPrediction
 from molecular_prioritization.descriptors import MolecularDescriptors
+from molecular_prioritization.synthetic_accessibility import SyntheticAccessibilityResult
 
 
 def calculate_priority_score(
@@ -47,6 +48,7 @@ def build_priority_record(
     valid_molecule: bool,
     descriptors: MolecularDescriptors | None,
     bbb_prediction: BBBPrediction | None = None,
+    synthetic_accessibility: SyntheticAccessibilityResult | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     """Build one row for a ranked molecular prioritization result."""
@@ -73,6 +75,11 @@ def build_priority_record(
         bbb_model_status="not_run",
         bbb_warning="BBB prediction was not run.",
     )
+    synthetic_accessibility_values = synthetic_accessibility or SyntheticAccessibilityResult(
+        sa_score=None,
+        synthetic_feasibility_category="not_available",
+        synthetic_feasibility_status="not_run",
+    )
 
     return {
         "molecule_id": molecule_id,
@@ -81,6 +88,11 @@ def build_priority_record(
         "valid_molecule": valid_molecule,
         "priority_score": priority_score,
         "error": error,
+        "sa_score": synthetic_accessibility_values.sa_score,
+        "synthetic_feasibility_category": (
+            synthetic_accessibility_values.synthetic_feasibility_category
+        ),
+        "synthetic_feasibility_status": synthetic_accessibility_values.synthetic_feasibility_status,
         "bbb_prediction": bbb_values.bbb_prediction,
         "bbb_probability": bbb_values.bbb_probability,
         "bbb_model_status": bbb_values.bbb_model_status,
