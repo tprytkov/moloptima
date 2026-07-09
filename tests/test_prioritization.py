@@ -2,7 +2,11 @@ from molecular_prioritization.bbb_predictor import BBBPrediction, UnavailableBBB
 from molecular_prioritization.descriptors import calculate_descriptors
 from molecular_prioritization.pipeline import prioritize_csv, prioritize_smiles
 from molecular_prioritization.prioritization import calculate_priority_score
-from biopharma_intelligence.public_lookup import ChEMBLBioactivityResult, PublicIdentityResult
+from biopharma_intelligence.public_lookup import (
+    ChEMBLBioactivityResult,
+    PatentContextResult,
+    PublicIdentityResult,
+)
 
 
 class FakeBBBPredictor:
@@ -88,6 +92,46 @@ class FakeChEMBLLookupClient:
         )
 
 
+class FakePatentLookupClient:
+    def __init__(self):
+        self.calls = []
+
+    def lookup_patent_context(
+        self,
+        smiles,
+        valid_molecule,
+        *,
+        pubchem_cid=None,
+        chembl_molecule_id=None,
+    ):
+        self.calls.append((smiles, valid_molecule, pubchem_cid, chembl_molecule_id))
+        if not valid_molecule:
+            return PatentContextResult(
+                patent_lookup_status="not_run_invalid_molecule",
+                patent_cache_status="not_used",
+                patent_public_evidence_match=False,
+                patent_source="SureChEMBL",
+                patent_record_count=None,
+                patent_top_record_id=None,
+                patent_top_record_title=None,
+                patent_top_record_url=None,
+                patent_query_identifier=None,
+                patent_warning="Patent-context lookup skipped for invalid molecule.",
+            )
+        return PatentContextResult(
+            patent_lookup_status="match_found",
+            patent_cache_status="fresh_lookup",
+            patent_public_evidence_match=True,
+            patent_source="SureChEMBL",
+            patent_record_count=7,
+            patent_top_record_id="WO-000000001-A1",
+            patent_top_record_title="Example public patent-associated record",
+            patent_top_record_url="https://www.surechembl.org/document/WO-000000001-A1",
+            patent_query_identifier="surechembl_chemical_id:1",
+            patent_warning="",
+        )
+
+
 def test_calculate_priority_score_is_zero_for_invalid_molecule():
     descriptors = calculate_descriptors("CCO")
 
@@ -126,6 +170,7 @@ def test_prioritize_smiles_keeps_invalid_records_in_ranked_output():
     assert invalid["similarity_check_status"] == "not_run_invalid_molecule"
     assert invalid["pubchem_lookup_status"] == "not_requested"
     assert invalid["chembl_lookup_status"] == "not_requested"
+    assert invalid["patent_lookup_status"] == "not_requested"
     assert ranked[0]["priority_score"] >= ranked[-1]["priority_score"]
 
 
@@ -190,12 +235,14 @@ def test_prioritize_smiles_marks_no_known_compound_identity_match():
 def test_prioritize_smiles_default_public_lookup_is_not_requested():
     client = FakePublicLookupClient()
     chembl_client = FakeChEMBLLookupClient()
+    patent_client = FakePatentLookupClient()
 
     ranked = prioritize_smiles(
         [{"molecule_id": "ethanol", "smiles": "CCO"}],
         bbb_predictor=UnavailableBBBPredictor("model cache missing"),
         public_lookup_client=client,
         chembl_lookup_client=chembl_client,
+        patent_lookup_client=patent_client,
     )
 
     assert ranked[0]["pubchem_exact_match"] is False
@@ -204,8 +251,12 @@ def test_prioritize_smiles_default_public_lookup_is_not_requested():
     assert ranked[0]["chembl_exact_match"] is False
     assert ranked[0]["chembl_lookup_status"] == "not_requested"
     assert ranked[0]["chembl_cache_status"] == "not_used"
+    assert ranked[0]["patent_public_evidence_match"] is False
+    assert ranked[0]["patent_lookup_status"] == "not_requested"
+    assert ranked[0]["patent_cache_status"] == "not_used"
     assert client.calls == []
     assert chembl_client.calls == []
+    assert patent_client.calls == []
 
 
 def test_prioritize_smiles_runs_public_lookup_when_requested():
@@ -266,6 +317,47 @@ def test_prioritize_smiles_pubchem_and_chembl_can_run_together():
     assert chembl_client.calls == [("CCO", True)]
 
 
+def test_prioritize_smiles_runs_patent_lookup_when_requested():
+    client = FakePatentLookupClient()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        enable_patent_lookup=True,
+        patent_lookup_client=client,
+    )
+
+    assert ranked[0]["pubchem_lookup_status"] == "not_requested"
+    assert ranked[0]["chembl_lookup_status"] == "not_requested"
+    assert ranked[0]["patent_public_evidence_match"] is True
+    assert ranked[0]["patent_lookup_status"] == "match_found"
+    assert ranked[0]["patent_cache_status"] == "fresh_lookup"
+    assert ranked[0]["patent_record_count"] == 7
+    assert client.calls == [("CCO", True, None, None)]
+
+
+def test_prioritize_smiles_all_public_sources_can_run_together():
+    pubchem_client = FakePublicLookupClient()
+    chembl_client = FakeChEMBLLookupClient()
+    patent_client = FakePatentLookupClient()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        enable_pubchem_lookup=True,
+        enable_chembl_lookup=True,
+        enable_patent_lookup=True,
+        public_lookup_client=pubchem_client,
+        chembl_lookup_client=chembl_client,
+        patent_lookup_client=patent_client,
+    )
+
+    assert ranked[0]["pubchem_lookup_status"] == "exact_match"
+    assert ranked[0]["chembl_lookup_status"] == "exact_match"
+    assert ranked[0]["patent_lookup_status"] == "match_found"
+    assert patent_client.calls == [("CCO", True, "702", "CHEMBL545")]
+
+
 def test_prioritize_smiles_public_lookup_skips_invalid_molecule_when_requested():
     client = FakePublicLookupClient()
 
@@ -294,6 +386,21 @@ def test_prioritize_smiles_chembl_lookup_skips_invalid_molecule_when_requested()
     assert ranked[0]["chembl_exact_match"] is False
     assert ranked[0]["chembl_lookup_status"] == "not_run_invalid_molecule"
     assert client.calls == [(None, False)]
+
+
+def test_prioritize_smiles_patent_lookup_skips_invalid_molecule_when_requested():
+    client = FakePatentLookupClient()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "invalid", "smiles": "C1CC"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        enable_patent_lookup=True,
+        patent_lookup_client=client,
+    )
+
+    assert ranked[0]["patent_public_evidence_match"] is False
+    assert ranked[0]["patent_lookup_status"] == "not_run_invalid_molecule"
+    assert client.calls == [(None, False, None, None)]
 
 
 def test_prioritize_smiles_adds_closest_known_compound_similarity():
@@ -383,6 +490,16 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "chembl_similarity_molecule_id" in header
     assert "chembl_similarity_pref_name" in header
     assert "chembl_similarity_status" in header
+    assert "patent_lookup_status" in header
+    assert "patent_cache_status" in header
+    assert "patent_public_evidence_match" in header
+    assert "patent_source" in header
+    assert "patent_record_count" in header
+    assert "patent_top_record_id" in header
+    assert "patent_top_record_title" in header
+    assert "patent_top_record_url" in header
+    assert "patent_query_identifier" in header
+    assert "patent_warning" in header
 
 
 def test_prioritize_csv_writes_precomputed_docking_columns(tmp_path):

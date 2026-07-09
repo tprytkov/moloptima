@@ -10,8 +10,10 @@ from biopharma_intelligence.identity import check_known_compound_identity
 from biopharma_intelligence.public_lookup import (
     ChEMBLClient,
     PubChemClient,
+    SureChEMBLPatentClient,
     chembl_not_requested_result,
     not_requested_result,
+    patent_not_requested_result,
 )
 from biopharma_intelligence.similarity import find_closest_known_compound
 from molecular_prioritization.bbb_predictor import load_bbb_predictor
@@ -29,8 +31,10 @@ def prioritize_smiles(
     enable_public_lookup: bool = False,
     enable_pubchem_lookup: bool | None = None,
     enable_chembl_lookup: bool = False,
+    enable_patent_lookup: bool = False,
     public_lookup_client: object | None = None,
     chembl_lookup_client: object | None = None,
+    patent_lookup_client: object | None = None,
 ) -> list[dict[str, object]]:
     """Prioritize molecule records with molecule_id and smiles fields."""
 
@@ -38,6 +42,7 @@ def prioritize_smiles(
     pubchem_lookup_enabled = enable_public_lookup if enable_pubchem_lookup is None else enable_pubchem_lookup
     active_public_lookup_client = public_lookup_client or PubChemClient()
     active_chembl_lookup_client = chembl_lookup_client or ChEMBLClient()
+    active_patent_lookup_client = patent_lookup_client or SureChEMBLPatentClient()
     ranked_records: list[dict[str, object]] = []
 
     for index, record in enumerate(records, start=1):
@@ -82,6 +87,19 @@ def prioritize_smiles(
             if enable_chembl_lookup
             else chembl_not_requested_result()
         )
+        patent_context_match = (
+            active_patent_lookup_client.lookup_patent_context(
+                standardized.canonical_smiles,
+                standardized.valid_molecule,
+                pubchem_cid=public_identity_match.pubchem_cid,
+                chembl_molecule_id=(
+                    chembl_bioactivity_match.chembl_molecule_id
+                    or chembl_bioactivity_match.chembl_similarity_molecule_id
+                ),
+            )
+            if enable_patent_lookup
+            else patent_not_requested_result()
+        )
 
         ranked_records.append(
             build_priority_record(
@@ -97,6 +115,7 @@ def prioritize_smiles(
                 similarity_match=similarity_match,
                 public_identity_match=public_identity_match,
                 chembl_bioactivity_match=chembl_bioactivity_match,
+                patent_context_match=patent_context_match,
                 error=standardized.error,
             )
         )
@@ -115,6 +134,7 @@ def prioritize_csv(
     enable_public_lookup: bool = False,
     enable_pubchem_lookup: bool | None = None,
     enable_chembl_lookup: bool = False,
+    enable_patent_lookup: bool = False,
 ) -> list[dict[str, object]]:
     """Read molecule records from CSV, write ranked results, and return rows."""
 
@@ -129,6 +149,7 @@ def prioritize_csv(
         enable_public_lookup=enable_public_lookup,
         enable_pubchem_lookup=enable_pubchem_lookup,
         enable_chembl_lookup=enable_chembl_lookup,
+        enable_patent_lookup=enable_patent_lookup,
     )
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -172,6 +193,16 @@ def prioritize_csv(
             "chembl_similarity_molecule_id",
             "chembl_similarity_pref_name",
             "chembl_similarity_status",
+            "patent_lookup_status",
+            "patent_cache_status",
+            "patent_public_evidence_match",
+            "patent_source",
+            "patent_record_count",
+            "patent_top_record_id",
+            "patent_top_record_title",
+            "patent_top_record_url",
+            "patent_query_identifier",
+            "patent_warning",
             "docking_score",
             "docking_status",
             "sa_score",
@@ -218,6 +249,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Opt in to ChEMBL public bioactivity lookup with local caching.",
     )
+    parser.add_argument(
+        "--enable-patent-lookup",
+        action="store_true",
+        help="Opt in to SureChEMBL public patent-context lookup with local caching.",
+    )
     return parser.parse_args()
 
 
@@ -229,6 +265,7 @@ def main() -> None:
         enable_public_lookup=args.enable_public_lookup,
         enable_pubchem_lookup=args.enable_pubchem_lookup or args.enable_public_lookup,
         enable_chembl_lookup=args.enable_chembl_lookup,
+        enable_patent_lookup=args.enable_patent_lookup,
     )
     warnings = sorted(
         {

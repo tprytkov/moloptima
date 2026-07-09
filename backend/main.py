@@ -49,6 +49,7 @@ def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
             enable_public_lookup=request.enable_public_lookup,
             enable_pubchem_lookup=request.enable_pubchem_lookup or request.enable_public_lookup,
             enable_chembl_lookup=request.enable_chembl_lookup,
+            enable_patent_lookup=request.enable_patent_lookup,
         )
     )
 

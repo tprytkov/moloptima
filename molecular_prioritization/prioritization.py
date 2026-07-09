@@ -7,9 +7,11 @@ from dataclasses import asdict
 from biopharma_intelligence.identity import IdentityMatchResult
 from biopharma_intelligence.public_lookup import (
     ChEMBLBioactivityResult,
+    PatentContextResult,
     PublicIdentityResult,
     chembl_not_requested_result,
     not_requested_result,
+    patent_not_requested_result,
 )
 from biopharma_intelligence.similarity import SimilarityMatchResult
 from molecular_prioritization.bbb_predictor import BBBPrediction
@@ -63,6 +65,7 @@ def build_priority_record(
     similarity_match: SimilarityMatchResult | None = None,
     public_identity_match: PublicIdentityResult | None = None,
     chembl_bioactivity_match: ChEMBLBioactivityResult | None = None,
+    patent_context_match: PatentContextResult | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     """Build one row for a ranked molecular prioritization result."""
@@ -114,6 +117,7 @@ def build_priority_record(
     )
     public_identity_values = public_identity_match or not_requested_result()
     chembl_bioactivity_values = chembl_bioactivity_match or chembl_not_requested_result()
+    patent_context_values = patent_context_match or patent_not_requested_result()
 
     return {
         "molecule_id": molecule_id,
@@ -156,6 +160,18 @@ def build_priority_record(
         ),
         "chembl_similarity_pref_name": chembl_bioactivity_values.chembl_similarity_pref_name,
         "chembl_similarity_status": chembl_bioactivity_values.chembl_similarity_status,
+        "patent_lookup_status": patent_context_values.patent_lookup_status,
+        "patent_cache_status": patent_context_values.patent_cache_status,
+        "patent_public_evidence_match": (
+            patent_context_values.patent_public_evidence_match
+        ),
+        "patent_source": patent_context_values.patent_source,
+        "patent_record_count": patent_context_values.patent_record_count,
+        "patent_top_record_id": patent_context_values.patent_top_record_id,
+        "patent_top_record_title": patent_context_values.patent_top_record_title,
+        "patent_top_record_url": patent_context_values.patent_top_record_url,
+        "patent_query_identifier": patent_context_values.patent_query_identifier,
+        "patent_warning": patent_context_values.patent_warning,
         "docking_score": docking_values.docking_score,
         "docking_status": docking_values.docking_status,
         "sa_score": synthetic_accessibility_values.sa_score,

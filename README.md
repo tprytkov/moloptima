@@ -2,7 +2,7 @@
 
 MolOptima is a full-stack scientific application for prioritizing AI-generated or user-provided small molecules and connecting top candidates to biopharma intelligence signals. It is a modular full-stack system that combines a Python/RDKit scoring pipeline, a FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs, running transparent Phase 1 prioritization, reviewing biopharma context, and exporting compound-level Markdown reports.
 
-The system is intentionally offline-first and public-safe. It does not run docking software, perform online lookup, search patents, use OMOP/clinical data, require cloud services, or download model weights during normal app rendering.
+The system is intentionally offline-first and public-safe. It does not run docking software, perform online lookup unless explicitly requested, use OMOP/clinical data, require cloud services, or download model weights during normal app rendering.
 
 ## Current Workflow
 
@@ -186,14 +186,14 @@ Manifests:
 - `app_data/manifests/public_data_manifest.json`
 - `app_data/manifests/run_manifest.json`
 
-The Settings page exposes model cache status, latest run model status, and public data-source status. PubChem exact identity lookup and ChEMBL public bioactivity context are available only when explicitly enabled for a run. They use app-managed caches at `app_data/public_lookup_cache/pubchem` and `app_data/public_lookup_cache/chembl`. SureChEMBL remains a planned inactive source in this version.
+The Settings page exposes model cache status, latest run model status, and public data-source status. PubChem exact identity lookup, ChEMBL public bioactivity context, and SureChEMBL patent-context evidence are available only when explicitly enabled for a run. They use app-managed caches at `app_data/public_lookup_cache/pubchem`, `app_data/public_lookup_cache/chembl`, and `app_data/public_lookup_cache/surechembl`.
 
 ## Limitations / Not Yet Implemented
 
 - No docking execution, receptor preparation, AutoDock/Vina workflow, or binding simulation.
-- PubChem support is limited to optional exact identity lookup; ChEMBL support is limited to optional public molecule/bioactivity context. These are not novelty, patentability, safety, efficacy, mechanism, clinical, or freedom-to-operate assessments.
-- No SureChEMBL or other public database lookup beyond the optional PubChem and ChEMBL checks.
-- No patent search, patent similarity, patentability analysis, or freedom-to-operate analysis.
+- PubChem support is limited to optional exact identity lookup; ChEMBL support is limited to optional public molecule/bioactivity context; SureChEMBL support is limited to optional public patent-associated evidence. These are research-screening signals only, not clinical, commercial, regulatory, or legal assessments.
+- No public database lookup beyond the optional PubChem, ChEMBL, and SureChEMBL checks.
+- No patent analysis, ownership inference, commercialization guidance, or legal-status assessment.
 - No OMOP, clinical context, clinical-trial mapping, RWE, patient-level data, or medical decision support.
 - No retrosynthesis model or learned synthetic-accessibility model.
 - No Redis/RQ, Celery, Databricks, MLflow, AWS, Docker, or cloud deployment features.
@@ -203,7 +203,7 @@ The Settings page exposes model cache status, latest run model status, and publi
 
 ## Computational-Screening Disclaimer
 
-MolOptima is for computational screening and scientific software workflow support only. Outputs are not clinical, legal, regulatory, patentability, safety, efficacy, or freedom-to-operate conclusions. Molecules prioritized by this app require independent scientific validation before any research, clinical, commercial, or legal use.
+MolOptima is for computational screening and scientific software workflow support only. Outputs are research signals, not clinical, legal, regulatory, safety, efficacy, ownership, or commercialization conclusions. Molecules prioritized by this app require independent scientific validation before any research, clinical, commercial, or legal use.
 
 ## Project Notes
 

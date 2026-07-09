@@ -142,6 +142,9 @@ def planned_public_source_statuses(
     chembl_status: str = "available_when_requested",
     chembl_last_successful_lookup: str = "",
     chembl_error_message: str = "",
+    surechembl_status: str = "available_when_requested",
+    surechembl_last_successful_lookup: str = "",
+    surechembl_error_message: str = "",
 ) -> dict[str, dict[str, object]]:
     timestamp = utc_timestamp()
     sources = {
@@ -171,6 +174,14 @@ def planned_public_source_statuses(
             "error_message": chembl_error_message,
         }
     )
+    sources["SureChEMBL"].update(
+        {
+            "status": surechembl_status,
+            "last_successful_lookup": surechembl_last_successful_lookup,
+            "cache_path": relative_path(PUBLIC_LOOKUP_CACHE_DIR / "surechembl"),
+            "error_message": surechembl_error_message,
+        }
+    )
     return sources
 
 
@@ -182,6 +193,9 @@ def update_public_data_manifest(
     chembl_status: str = "available_when_requested",
     chembl_last_successful_lookup: str = "",
     chembl_error_message: str = "",
+    surechembl_status: str = "available_when_requested",
+    surechembl_last_successful_lookup: str = "",
+    surechembl_error_message: str = "",
 ) -> dict[str, object]:
     payload = {
         "last_checked": utc_timestamp(),
@@ -192,6 +206,9 @@ def update_public_data_manifest(
             chembl_status=chembl_status,
             chembl_last_successful_lookup=chembl_last_successful_lookup,
             chembl_error_message=chembl_error_message,
+            surechembl_status=surechembl_status,
+            surechembl_last_successful_lookup=surechembl_last_successful_lookup,
+            surechembl_error_message=surechembl_error_message,
         ),
     }
     write_manifest(PUBLIC_DATA_MANIFEST_PATH, payload)
@@ -280,6 +297,38 @@ def summarize_chembl_source(rows: list[dict[str, object]]) -> dict[str, str]:
     }
 
 
+def summarize_patent_source(rows: list[dict[str, object]]) -> dict[str, str]:
+    statuses = row_status_values(rows, "patent_lookup_status")
+    if not statuses or statuses == ["not_requested"]:
+        return {
+            "status": "not_requested",
+            "last_successful_lookup": "",
+            "error_message": "",
+        }
+    if any(status in {"match_found", "no_match"} for status in statuses):
+        return {
+            "status": "lookup_completed",
+            "last_successful_lookup": utc_timestamp(),
+            "error_message": "",
+        }
+    if "lookup_failed" in statuses:
+        warnings = {
+            str(row.get("patent_warning", "")).strip()
+            for row in rows
+            if str(row.get("patent_warning", "")).strip()
+        }
+        return {
+            "status": "lookup_failed",
+            "last_successful_lookup": "",
+            "error_message": "; ".join(sorted(warnings)),
+        }
+    return {
+        "status": "not_requested",
+        "last_successful_lookup": "",
+        "error_message": "",
+    }
+
+
 def update_run_manifest(
     *,
     job_id: str,
@@ -291,9 +340,12 @@ def update_run_manifest(
     statuses = bbb_status_values(rows)
     pubchem_statuses = row_status_values(rows, "pubchem_lookup_status")
     chembl_statuses = row_status_values(rows, "chembl_lookup_status")
+    patent_statuses = row_status_values(rows, "patent_lookup_status")
     public_lookup_requested = any(
         status not in {"", "not_requested"} for status in pubchem_statuses
-    ) or any(status not in {"", "not_requested"} for status in chembl_statuses)
+    ) or any(status not in {"", "not_requested"} for status in chembl_statuses) or any(
+        status not in {"", "not_requested"} for status in patent_statuses
+    )
     model_available = "model_available" in statuses
     placeholder_used = any(status != "model_available" for status in statuses) or not model_available
     run = {
@@ -305,10 +357,11 @@ def update_run_manifest(
         "public_lookup_requested": public_lookup_requested,
         "pubchem_lookup_status_values": pubchem_statuses,
         "chembl_lookup_status_values": chembl_statuses,
+        "patent_lookup_status_values": patent_statuses,
         "public_lookup_source_statuses": {
             "PubChem": summarize_pubchem_source(rows),
             "ChEMBL": summarize_chembl_source(rows),
-            "SureChEMBL": {"status": "planned_inactive"},
+            "SureChEMBL": summarize_patent_source(rows),
         },
         "output_file": output_file,
         "row_count": len(rows),
@@ -328,6 +381,7 @@ def update_run_manifest(
     )
     pubchem_source = summarize_pubchem_source(rows)
     chembl_source = summarize_chembl_source(rows)
+    patent_source = summarize_patent_source(rows)
     update_public_data_manifest(
         pubchem_status=pubchem_source["status"],
         pubchem_last_successful_lookup=pubchem_source["last_successful_lookup"],
@@ -335,6 +389,9 @@ def update_run_manifest(
         chembl_status=chembl_source["status"],
         chembl_last_successful_lookup=chembl_source["last_successful_lookup"],
         chembl_error_message=chembl_source["error_message"],
+        surechembl_status=patent_source["status"],
+        surechembl_last_successful_lookup=patent_source["last_successful_lookup"],
+        surechembl_error_message=patent_source["error_message"],
     )
     return payload
 

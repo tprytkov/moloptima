@@ -25,6 +25,7 @@ class PrioritizationRequest(BaseModel):
     enable_public_lookup: bool = False
     enable_pubchem_lookup: bool = False
     enable_chembl_lookup: bool = False
+    enable_patent_lookup: bool = False
 
 
 class JobResponse(BaseModel):

@@ -130,6 +130,7 @@ function App() {
   });
   const [pubchemLookupEnabled, setPubchemLookupEnabled] = useState(false);
   const [chemblLookupEnabled, setChemblLookupEnabled] = useState(false);
+  const [patentLookupEnabled, setPatentLookupEnabled] = useState(false);
   const health = useBackendHealth();
 
   useEffect(() => {
@@ -223,6 +224,7 @@ function App() {
           upload_id: uploadId,
           enable_pubchem_lookup: pubchemLookupEnabled,
           enable_chembl_lookup: chemblLookupEnabled,
+          enable_patent_lookup: patentLookupEnabled,
         }),
       });
       const result = await apiRequest(`/api/results/${job.job_id}`);
@@ -289,6 +291,8 @@ function App() {
               setPubchemLookupEnabled={setPubchemLookupEnabled}
               chemblLookupEnabled={chemblLookupEnabled}
               setChemblLookupEnabled={setChemblLookupEnabled}
+              patentLookupEnabled={patentLookupEnabled}
+              setPatentLookupEnabled={setPatentLookupEnabled}
               onCheckLocalModelCache={handleCheckLocalModelCache}
               onRefreshSourceStatus={handleRefreshSourceStatus}
             />
@@ -403,6 +407,8 @@ function ActivePage({
   setPubchemLookupEnabled,
   chemblLookupEnabled,
   setChemblLookupEnabled,
+  patentLookupEnabled,
+  setPatentLookupEnabled,
   onCheckLocalModelCache,
   onRefreshSourceStatus,
 }) {
@@ -426,6 +432,8 @@ function ActivePage({
         setPubchemLookupEnabled={setPubchemLookupEnabled}
         chemblLookupEnabled={chemblLookupEnabled}
         setChemblLookupEnabled={setChemblLookupEnabled}
+        patentLookupEnabled={patentLookupEnabled}
+        setPatentLookupEnabled={setPatentLookupEnabled}
       />
     );
   }
@@ -675,6 +683,11 @@ function BiopharmaIntelligencePage({ latestRunState }) {
                 value={summary.chemblMatches}
                 detail={summary.chemblLookupDetail}
               />
+              <RunSummaryCard
+                label="Patent-context signals"
+                value={summary.patentSignals}
+                detail={summary.patentLookupDetail}
+              />
               <RunSummaryCard label="No exact matches" value={summary.noExactMatches} />
               <RunSummaryCard
                 label="Avg closest-known similarity"
@@ -727,6 +740,9 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>chembl_molecule_id</TableCell>
             <TableCell>chembl_activity_count</TableCell>
             <TableCell>chembl_target_summary</TableCell>
+            <TableCell>patent_lookup_status</TableCell>
+            <TableCell>patent_record_count</TableCell>
+            <TableCell>patent_top_record_id</TableCell>
             <TableCell>closest_known_compound_name</TableCell>
             <TableCell>closest_known_compound_similarity</TableCell>
             <TableCell>identity_check_status</TableCell>
@@ -761,6 +777,9 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.chembl_molecule_id || row.chembl_similarity_molecule_id)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_activity_count)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_target_summary)}</TableCell>
+                <TableCell>{formatDetailValue(row.patent_lookup_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.patent_record_count)}</TableCell>
+                <TableCell>{formatDetailValue(row.patent_top_record_id)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
                 <TableCell>{formatDetailValue(row.identity_check_status)}</TableCell>
@@ -801,6 +820,12 @@ function BiopharmaInterpretationPanel({ compound }) {
               ['Known public bioactivity records', compound.chembl_activity_count],
               ['Associated public targets', compound.chembl_target_count],
               ['ChEMBL target summary', compound.chembl_target_summary],
+              ['Patent-context signal', formatPatentSignal(compound)],
+              ['Patent lookup status', compound.patent_lookup_status],
+              ['Patent source', compound.patent_source],
+              ['Patent-linked public records', compound.patent_record_count],
+              ['Top patent record ID', compound.patent_top_record_id],
+              ['Top patent record title', compound.patent_top_record_title],
               ['Closest known compound', compound.closest_known_compound_name],
               ['Closest similarity', compound.closest_known_compound_similarity],
               ['Identity status', compound.identity_check_status],
@@ -824,6 +849,8 @@ function buildBiopharmaSummary(rows) {
     (row) => isTrueValue(row.chembl_exact_match) || isTrueValue(row.chembl_similarity_match),
   ).length;
   const chemblStatusCounts = countValues(rows.map((row) => row.chembl_lookup_status).filter(Boolean));
+  const patentSignals = rows.filter((row) => isTrueValue(row.patent_public_evidence_match)).length;
+  const patentStatusCounts = countValues(rows.map((row) => row.patent_lookup_status).filter(Boolean));
   const highSimilarityCompounds = similarities.filter((value) => value >= highSimilarityThreshold).length;
   const averageSimilarity =
     similarities.length > 0
@@ -836,6 +863,8 @@ function buildBiopharmaSummary(rows) {
     pubchemLookupDetail: formatCounts(pubchemStatusCounts) || 'Public lookup not run',
     chemblMatches,
     chemblLookupDetail: formatCounts(chemblStatusCounts) || 'ChEMBL lookup not run',
+    patentSignals,
+    patentLookupDetail: formatCounts(patentStatusCounts) || 'Patent-context lookup not run',
     noExactMatches: rows.length - exactMatches,
     averageClosestSimilarity: averageSimilarity === null ? 'Not available' : averageSimilarity.toFixed(3),
     highSimilarityCompounds,
@@ -872,7 +901,7 @@ function interpretBiopharmaCompound(compound) {
       color: 'success',
       message: `PubChem exact match: this molecule matched ${formatDetailValue(
         compound.pubchem_preferred_name,
-      )} with CID ${formatDetailValue(compound.pubchem_cid)}. This is a public identity signal, not a novelty or patentability conclusion.`,
+      )} with CID ${formatDetailValue(compound.pubchem_cid)}. This is a public identity signal only, not a legal conclusion.`,
     };
   }
 
@@ -883,6 +912,16 @@ function interpretBiopharmaCompound(compound) {
       message: `ChEMBL match: ${formatChEMBLMatch(
         compound,
       )}. This is a public database signal, not a clinical conclusion.`,
+    };
+  }
+
+  if (isTrueValue(compound.patent_public_evidence_match)) {
+    return {
+      label: 'Patent-context signal',
+      color: 'secondary',
+      message: `Public patent-associated evidence: ${formatPatentSignal(
+        compound,
+      )}. This is a research signal only, not a legal conclusion.`,
     };
   }
 
@@ -974,6 +1013,11 @@ function ReportsPage({ latestRunState }) {
                   detail={summary.chemblLookupDetail}
                 />
                 <RunSummaryCard
+                  label="Patent-context signals"
+                  value={summary.patentSignals}
+                  detail={summary.patentLookupDetail}
+                />
+                <RunSummaryCard
                   label="High-similarity compounds"
                   value={summary.highSimilarityCompounds}
                   detail={`Threshold >= ${highSimilarityThreshold.toFixed(2)}`}
@@ -1033,6 +1077,8 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>pubchem_lookup_status</TableCell>
             <TableCell>chembl_lookup_status</TableCell>
             <TableCell>chembl_activity_count</TableCell>
+            <TableCell>patent_lookup_status</TableCell>
+            <TableCell>patent_record_count</TableCell>
             <TableCell>closest_known_compound_similarity</TableCell>
             <TableCell>bbb_prediction</TableCell>
             <TableCell>Export</TableCell>
@@ -1063,6 +1109,8 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_activity_count)}</TableCell>
+                <TableCell>{formatDetailValue(row.patent_lookup_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.patent_record_count)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
                 <TableCell>{formatDetailValue(row.bbb_prediction)}</TableCell>
                 <TableCell>
@@ -1102,6 +1150,8 @@ function buildReportsSummary(latestRunState) {
       (row) => isTrueValue(row.chembl_exact_match) || isTrueValue(row.chembl_similarity_match),
     ).length,
     chemblLookupDetail: formatCounts(countValues(rows.map((row) => row.chembl_lookup_status).filter(Boolean))) || 'ChEMBL lookup not run',
+    patentSignals: rows.filter((row) => isTrueValue(row.patent_public_evidence_match)).length,
+    patentLookupDetail: formatCounts(countValues(rows.map((row) => row.patent_lookup_status).filter(Boolean))) || 'Patent-context lookup not run',
     highSimilarityCompounds: rows.filter((row) => {
       const similarity = numericValue(row.closest_known_compound_similarity);
       return similarity !== null && similarity >= highSimilarityThreshold;
@@ -1242,6 +1292,8 @@ function PrioritizationPage({
   setPubchemLookupEnabled,
   chemblLookupEnabled,
   setChemblLookupEnabled,
+  patentLookupEnabled,
+  setPatentLookupEnabled,
 }) {
   const resultRows = prioritizationState.result?.results ?? [];
   const [selectedCompoundKey, setSelectedCompoundKey] = useState(null);
@@ -1289,6 +1341,15 @@ function PrioritizationPage({
                 }
                 label="Enable ChEMBL public bioactivity context"
               />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={patentLookupEnabled}
+                    onChange={(event) => setPatentLookupEnabled(event.target.checked)}
+                  />
+                }
+                label="Enable patent-context signal"
+              />
               <Button
                 variant="contained"
                 onClick={onStartPrioritization}
@@ -1300,10 +1361,10 @@ function PrioritizationPage({
             </Stack>
           </Stack>
 
-          <Alert severity={pubchemLookupEnabled || chemblLookupEnabled ? 'warning' : 'info'}>
-            {pubchemLookupEnabled || chemblLookupEnabled
-              ? 'Selected public lookups may use the network. PubChem and ChEMBL results are cached locally and reported as public database signals only.'
-              : 'Public compound lookup is off. Output rows will mark PubChem and ChEMBL lookup as not_requested.'}
+          <Alert severity={pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled ? 'warning' : 'info'}>
+            {pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled
+              ? 'Selected public lookups may use the network. PubChem, ChEMBL, and patent-context results are cached locally and reported as research signals only.'
+              : 'Public compound lookup is off. Output rows will mark PubChem, ChEMBL, and patent-context lookup as not_requested.'}
           </Alert>
 
           {prioritizationState.error && <Alert severity="error">{prioritizationState.error}</Alert>}
@@ -1409,6 +1470,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   const hasSimilarityStatus = rows.some((row) => row.similarity_check_status !== undefined);
   const hasPublicIdentityStatus = rows.some((row) => row.pubchem_lookup_status !== undefined);
   const hasChEMBLStatus = rows.some((row) => row.chembl_lookup_status !== undefined);
+  const hasPatentStatus = rows.some((row) => row.patent_lookup_status !== undefined);
 
   return (
     <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -1421,6 +1483,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             {hasIdentityStatus && <TableCell>Identity</TableCell>}
             {hasPublicIdentityStatus && <TableCell>Public compound match</TableCell>}
             {hasChEMBLStatus && <TableCell>Public bioactivity context</TableCell>}
+            {hasPatentStatus && <TableCell>Patent-context signal</TableCell>}
             {hasSimilarityStatus && <TableCell>Closest known</TableCell>}
             {hasDockingScore && <TableCell>Docking score</TableCell>}
             {hasSyntheticAccessibility && <TableCell>SA score</TableCell>}
@@ -1458,6 +1521,9 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 )}
                 {hasChEMBLStatus && (
                   <TableCell>{formatChEMBLMatch(row)}</TableCell>
+                )}
+                {hasPatentStatus && (
+                  <TableCell>{formatPatentSignal(row)}</TableCell>
                 )}
                 {hasSimilarityStatus && (
                   <TableCell>
@@ -1550,6 +1616,17 @@ function CompoundDetailPanel({ compound }) {
                 ['ChEMBL similarity molecule ID', compound.chembl_similarity_molecule_id],
                 ['ChEMBL similarity preferred name', compound.chembl_similarity_pref_name],
                 ['ChEMBL similarity status', compound.chembl_similarity_status],
+                ['Patent-context signal', formatPatentSignal(compound)],
+                ['Patent lookup status', compound.patent_lookup_status],
+                ['Patent cache status', compound.patent_cache_status],
+                ['Public patent-associated evidence', compound.patent_public_evidence_match],
+                ['Patent source', compound.patent_source],
+                ['Patent-linked public records', compound.patent_record_count],
+                ['Top patent record ID', compound.patent_top_record_id],
+                ['Top patent record title', compound.patent_top_record_title],
+                ['Top patent record URL', compound.patent_top_record_url],
+                ['Patent query identifier', compound.patent_query_identifier],
+                ['Patent warning', compound.patent_warning],
                 ['Closest known compound', compound.closest_known_compound_name],
                 ['Closest known compound ID', compound.closest_known_compound_id],
                 ['Closest known compound similarity', compound.closest_known_compound_similarity],
@@ -1653,6 +1730,14 @@ function formatChEMBLMatch(row) {
     return `${row.chembl_similarity_pref_name || row.chembl_similarity_molecule_id || 'ChEMBL analog'}${score}`;
   }
   return row.chembl_lookup_status ?? 'not available';
+}
+
+function formatPatentSignal(row) {
+  if (isTrueValue(row.patent_public_evidence_match)) {
+    const count = row.patent_record_count ? `${row.patent_record_count} records` : 'public records';
+    return `${row.patent_source || 'Patent source'} (${count})`;
+  }
+  return row.patent_lookup_status ?? 'not available';
 }
 
 function downloadCompoundMarkdownReport(compound) {
@@ -1762,6 +1847,21 @@ function buildCompoundMarkdownReport(compound) {
       ['ChEMBL similarity status', compound.chembl_similarity_status],
     ]),
     '',
+    '## Public IP-context evidence',
+    markdownRows([
+      ['Patent-context signal', formatPatentSignal(compound)],
+      ['Patent lookup status', compound.patent_lookup_status],
+      ['Patent cache status', compound.patent_cache_status],
+      ['Public patent-associated evidence', compound.patent_public_evidence_match],
+      ['Patent source', compound.patent_source],
+      ['Patent-linked public records', compound.patent_record_count],
+      ['Top patent record ID', compound.patent_top_record_id],
+      ['Top patent record title', compound.patent_top_record_title],
+      ['Top patent record URL', compound.patent_top_record_url],
+      ['Patent query identifier', compound.patent_query_identifier],
+      ['Patent warning', compound.patent_warning],
+    ]),
+    '',
     '## Closest known compound similarity',
     markdownRows([
       ['Closest known compound', compound.closest_known_compound_name],
@@ -1772,7 +1872,7 @@ function buildCompoundMarkdownReport(compound) {
     ]),
     '',
     '## Notes/disclaimer',
-    'This report is for computational screening only. It is not a clinical, legal, regulatory, patentability, safety, efficacy, or freedom-to-operate conclusion.',
+    'This report is for computational screening only. It is not a clinical, legal, regulatory, safety, efficacy, ownership, commercialization, or other legal conclusion.',
     '',
   );
 
@@ -1907,8 +2007,8 @@ function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRef
         <Stack spacing={2}>
           <Typography variant="h2">Public Lookup Sources</Typography>
           <Alert severity="info">
-            PubChem exact identity and ChEMBL public bioactivity context are available only when explicitly enabled for a run.
-            SureChEMBL remains planned inactive in this MolOptima build.
+            PubChem exact identity, ChEMBL public bioactivity context, and SureChEMBL patent-context signals are available only when explicitly enabled for a run.
+            Patent-context output is a research signal only, not a legal conclusion.
           </Alert>
           {sources.length > 0 ? (
             <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>

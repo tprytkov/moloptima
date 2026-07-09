@@ -58,6 +58,7 @@ def run_prioritization_job(
     enable_public_lookup: bool = False,
     enable_pubchem_lookup: bool | None = None,
     enable_chembl_lookup: bool = False,
+    enable_patent_lookup: bool = False,
 ) -> dict[str, object]:
     """Run the existing molecular prioritization pipeline for one upload."""
 
@@ -77,9 +78,10 @@ def run_prioritization_job(
         "completed_at": None,
         "error_message": "",
         "row_count": 0,
-        "public_lookup_requested": pubchem_lookup_requested or enable_chembl_lookup,
+        "public_lookup_requested": pubchem_lookup_requested or enable_chembl_lookup or enable_patent_lookup,
         "pubchem_lookup_requested": pubchem_lookup_requested,
         "chembl_lookup_requested": enable_chembl_lookup,
+        "patent_lookup_requested": enable_patent_lookup,
     }
     write_job_metadata(metadata)
 
@@ -90,6 +92,7 @@ def run_prioritization_job(
             enable_public_lookup=enable_public_lookup,
             enable_pubchem_lookup=pubchem_lookup_requested,
             enable_chembl_lookup=enable_chembl_lookup,
+            enable_patent_lookup=enable_patent_lookup,
         )
     except Exception as exc:
         metadata.update(

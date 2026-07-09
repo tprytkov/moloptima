@@ -18,6 +18,7 @@ MolOptima is a local compound prioritization and biopharma intelligence platform
 - Offline known-compound exact identity and closest-reference similarity.
 - Optional PubChem exact identity lookup with local result caching.
 - Optional ChEMBL public bioactivity context with local result caching.
+- Optional SureChEMBL patent-context evidence with local result caching.
 - Optional cached BBB/ChemBERTa status and inference.
 - Input-only docking score preservation.
 - Informational synthetic feasibility fields.
@@ -31,7 +32,7 @@ MolOptima is a local compound prioritization and biopharma intelligence platform
 React/MUI frontend
   -> FastAPI backend
     -> molecular_prioritization pipeline
-    -> biopharma_intelligence local reference checks and optional PubChem/ChEMBL lookup
+    -> biopharma_intelligence local reference checks and optional PubChem/ChEMBL/SureChEMBL lookup
     -> local files: uploads, outputs, metadata, app_data manifests
 ```
 
@@ -61,4 +62,4 @@ npm.cmd run build
 
 ## Disclaimer
 
-MolOptima is a computational screening application. It does not provide clinical, legal, regulatory, patentability, safety, efficacy, or freedom-to-operate conclusions.
+MolOptima is a computational screening application. It provides research signals only and does not provide clinical, legal, regulatory, safety, efficacy, ownership, or commercialization conclusions.

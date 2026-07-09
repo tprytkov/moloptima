@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from biopharma_intelligence.public_lookup import ChEMBLClient, PubChemClient
+from biopharma_intelligence.public_lookup import ChEMBLClient, PubChemClient, SureChEMBLPatentClient
 
 
 class FakePubChemClient(PubChemClient):
@@ -31,6 +31,20 @@ class FakeChEMBLClient(ChEMBLClient):
         return self.result
 
 
+class FakeSureChEMBLPatentClient(SureChEMBLPatentClient):
+    def __init__(self, *, cache_dir: Path, result=None, error: Exception | None = None):
+        super().__init__(cache_dir=cache_dir)
+        self.result = result
+        self.error = error
+        self.fetch_count = 0
+
+    def _fetch_patent_result(self, identity_key, *, pubchem_cid, chembl_molecule_id):
+        self.fetch_count += 1
+        if self.error:
+            raise self.error
+        return self.result
+
+
 def chembl_result(**overrides):
     payload = {
         "chembl_exact_match": True,
@@ -50,6 +64,23 @@ def chembl_result(**overrides):
     }
     payload.update(overrides)
     return ChEMBLClient(cache_dir=Path("."))._result_from_payload({"result": payload})
+
+
+def patent_result(**overrides):
+    payload = {
+        "patent_lookup_status": "match_found",
+        "patent_cache_status": "fresh_lookup",
+        "patent_public_evidence_match": True,
+        "patent_source": "SureChEMBL",
+        "patent_record_count": 12,
+        "patent_top_record_id": "WO-000000001-A1",
+        "patent_top_record_title": "Example public patent-associated record",
+        "patent_top_record_url": "https://www.surechembl.org/document/WO-000000001-A1",
+        "patent_query_identifier": "surechembl_chemical_id:1",
+        "patent_warning": "",
+    }
+    payload.update(overrides)
+    return SureChEMBLPatentClient(cache_dir=Path("."))._result_from_payload({"result": payload})
 
 
 def test_pubchem_lookup_exact_match_writes_cache(tmp_path):
@@ -249,4 +280,85 @@ def test_chembl_lookup_failure_is_graceful_and_cached(tmp_path):
     assert "chembl unavailable" in result.chembl_warning
     assert cached_result.chembl_lookup_status == "lookup_failed"
     assert cached_result.chembl_cache_status == "cache_hit"
+    assert client.fetch_count == 1
+
+
+def test_patent_lookup_match_writes_cache(tmp_path):
+    client = FakeSureChEMBLPatentClient(
+        cache_dir=tmp_path / "surechembl",
+        result=patent_result(),
+    )
+
+    result = client.lookup_patent_context("CC(=O)Oc1ccccc1C(=O)O", True)
+
+    assert result.patent_public_evidence_match is True
+    assert result.patent_source == "SureChEMBL"
+    assert result.patent_lookup_status == "match_found"
+    assert result.patent_cache_status == "fresh_lookup"
+    assert result.patent_record_count == 12
+    assert client.fetch_count == 1
+    assert len(list((tmp_path / "surechembl").glob("*.json"))) == 1
+
+
+def test_patent_lookup_no_match_is_cached(tmp_path):
+    client = FakeSureChEMBLPatentClient(
+        cache_dir=tmp_path / "surechembl",
+        result=patent_result(
+            patent_lookup_status="no_match",
+            patent_public_evidence_match=False,
+            patent_record_count=0,
+            patent_top_record_id=None,
+            patent_top_record_title=None,
+            patent_top_record_url=None,
+        ),
+    )
+
+    result = client.lookup_patent_context("CCCC", True)
+
+    assert result.patent_public_evidence_match is False
+    assert result.patent_lookup_status == "no_match"
+    assert result.patent_cache_status == "fresh_lookup"
+    assert client.fetch_count == 1
+
+
+def test_patent_lookup_skips_invalid_molecule(tmp_path):
+    client = FakeSureChEMBLPatentClient(cache_dir=tmp_path / "surechembl")
+
+    result = client.lookup_patent_context(None, False)
+
+    assert result.patent_lookup_status == "not_run_invalid_molecule"
+    assert result.patent_cache_status == "not_used"
+    assert client.fetch_count == 0
+
+
+def test_patent_lookup_uses_cache_without_network(tmp_path):
+    client = FakeSureChEMBLPatentClient(
+        cache_dir=tmp_path / "surechembl",
+        result=patent_result(patent_record_count=3),
+    )
+
+    first_result = client.lookup_patent_context("CCO", True)
+    cached_result = client.lookup_patent_context("CCO", True)
+
+    assert first_result.patent_cache_status == "fresh_lookup"
+    assert cached_result.patent_cache_status == "cache_hit"
+    assert cached_result.patent_record_count == 3
+    assert client.fetch_count == 1
+
+
+def test_patent_lookup_failure_is_graceful_and_cached(tmp_path):
+    client = FakeSureChEMBLPatentClient(
+        cache_dir=tmp_path / "surechembl",
+        error=RuntimeError("surechembl unavailable"),
+    )
+
+    result = client.lookup_patent_context("CCO", True)
+    cached_result = client.lookup_patent_context("CCO", True)
+
+    assert result.patent_public_evidence_match is False
+    assert result.patent_lookup_status == "lookup_failed"
+    assert result.patent_cache_status == "cache_miss"
+    assert "surechembl unavailable" in result.patent_warning
+    assert cached_result.patent_lookup_status == "lookup_failed"
+    assert cached_result.patent_cache_status == "cache_hit"
     assert client.fetch_count == 1
