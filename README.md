@@ -9,6 +9,7 @@ This repository currently focuses on Phase 1: core molecular prioritization logi
 - Validate and canonicalize SMILES input with RDKit.
 - Calculate Phase 1 RDKit descriptors and Lipinski-style flags.
 - Rank molecules with a simple, transparent first-pass score.
+- Check exact known-compound identity against a small local reference table.
 - Preserve optional precomputed docking scores from input CSVs without running docking software.
 - Add informational heuristic synthetic accessibility fields without changing the priority score.
 - Optionally add cached ChemBERTa BBB predictions when local model files are available.
@@ -23,6 +24,9 @@ molecular_prioritization/
   prioritization.py
   pipeline.py
   bbb_predictor.py
+biopharma_intelligence/
+  __init__.py
+  identity.py
 backend/
   main.py
   schemas.py
@@ -32,6 +36,7 @@ frontend/
   package.json
 data/
   demo_inputs/
+  reference_compounds/
 outputs/
   ranked_results/
 app_data/
@@ -99,7 +104,7 @@ npm.cmd run build
 - Store uploaded CSVs locally under `backend/uploads/`.
 - Start a synchronous Phase 1 prioritization job through the FastAPI backend.
 - Validate and canonicalize SMILES with RDKit.
-- Calculate basic descriptors, Lipinski-style flags, QED, BBB columns, optional precomputed docking columns, heuristic synthetic accessibility fields, and `priority_score`.
+- Calculate basic descriptors, Lipinski-style flags, QED, BBB columns, local identity columns, optional precomputed docking columns, heuristic synthetic accessibility fields, and `priority_score`.
 - Fetch job results from `GET /api/results/{job_id}`.
 - Display job status, row count, output path, and a small preview table in the frontend.
 - Persist local JSON job metadata under `backend/job_metadata/`.
@@ -109,6 +114,7 @@ npm.cmd run build
 ## Not Yet Implemented
 
 - Docking execution, receptor preparation, or binding-score workflows beyond preserving precomputed `docking_score` values.
+- Online PubChem, ChEMBL, or SureChEMBL lookup. Current identity checks use only `data/reference_compounds/known_compounds.csv`.
 - BBB/ChemBERTa as a required model dependency. The BBB step is optional and uses local cached model files only when available.
 - Retrosynthesis or synthetic-accessibility model integration beyond the current transparent heuristic.
 - Patent search, patent similarity, or freedom-to-operate analysis.
@@ -237,6 +243,8 @@ To point at a local cache, set `MOLOPTIMA_BBB_MODEL_CACHE`. MolOptima does not d
 Synthetic accessibility is currently informational. MolOptima writes `sa_score`, `synthetic_feasibility_category`, and `synthetic_feasibility_status` using a transparent RDKit-based `heuristic_synthetic_accessibility` calculation. It is not a retrosynthesis model and does not change `priority_score`.
 
 Docking is currently input-only. If an uploaded CSV includes `docking_score`, MolOptima preserves it as a numeric output column and writes `docking_status` as `provided`, `not_provided`, or `invalid_docking_score`. It does not run AutoDock/Vina, require receptor files, or change `priority_score` based on docking scores.
+
+Biopharma Intelligence currently starts with offline exact identity matching. MolOptima checks canonicalized SMILES against `data/reference_compounds/known_compounds.csv` and writes `known_compound_match`, `known_compound_name`, `known_compound_source`, `known_compound_id`, and `identity_check_status`. This does not call PubChem, ChEMBL, SureChEMBL, patents, or any online service.
 
 ## Model and Data Sources
 

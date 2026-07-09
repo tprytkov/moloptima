@@ -6,6 +6,7 @@ import argparse
 import csv
 from pathlib import Path
 
+from biopharma_intelligence.identity import check_known_compound_identity
 from molecular_prioritization.bbb_predictor import load_bbb_predictor
 from molecular_prioritization.descriptors import calculate_descriptors
 from molecular_prioritization.docking import parse_precomputed_docking_score
@@ -42,6 +43,10 @@ def prioritize_smiles(
             standardized.valid_molecule,
         )
         docking = parse_precomputed_docking_score(record)
+        identity_match = check_known_compound_identity(
+            standardized.canonical_smiles,
+            standardized.valid_molecule,
+        )
 
         ranked_records.append(
             build_priority_record(
@@ -53,6 +58,7 @@ def prioritize_smiles(
                 bbb_prediction=bbb_prediction,
                 synthetic_accessibility=synthetic_accessibility,
                 docking=docking,
+                identity_match=identity_match,
                 error=standardized.error,
             )
         )
@@ -86,6 +92,11 @@ def prioritize_csv(input_path: str | Path, output_path: str | Path) -> list[dict
             "valid_molecule",
             "priority_score",
             "error",
+            "known_compound_match",
+            "known_compound_name",
+            "known_compound_source",
+            "known_compound_id",
+            "identity_check_status",
             "docking_score",
             "docking_status",
             "sa_score",

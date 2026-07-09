@@ -1,0 +1,9 @@
+compound_id,name,source,smiles
+LOCAL_REF_0001,Aspirin,local_reference,CC(=O)Oc1ccccc1C(=O)O
+LOCAL_REF_0002,Caffeine,local_reference,Cn1cnc2c1c(=O)n(C)c(=O)n2C
+LOCAL_REF_0003,Benzene,local_reference,c1ccccc1
+LOCAL_REF_0004,Ethanol,local_reference,CCO
+LOCAL_REF_0005,Ibuprofen,local_reference,CC(C)Cc1ccc(C(C)C(=O)O)cc1
+LOCAL_REF_0006,Donepezil,local_reference,COC1=C(OC)C=C2C(=O)C(CC3CCN(CC4=CC=CC=C4)CC3)CC2=C1
+LOCAL_REF_0007,Memantine,local_reference,CC12CC3CC(C)(C1)CC(N)(C3)C2
+LOCAL_REF_0008,Galantamine,local_reference,O(c2c1O[C@H]4C[C@@H](O)/C=C\[C@@]43c1c(cc2)CN(C)CC3)C

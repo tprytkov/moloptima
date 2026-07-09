@@ -51,6 +51,9 @@ def test_prioritize_smiles_keeps_invalid_records_in_ranked_output():
     assert invalid["sa_score"] is None
     assert invalid["synthetic_feasibility_category"] == "not_available"
     assert invalid["synthetic_feasibility_status"] == "not_run_invalid_molecule"
+    assert invalid["known_compound_match"] is False
+    assert invalid["known_compound_name"] is None
+    assert invalid["identity_check_status"] == "not_run_invalid_molecule"
     assert ranked[0]["priority_score"] >= ranked[-1]["priority_score"]
 
 
@@ -86,6 +89,30 @@ def test_prioritize_smiles_adds_synthetic_accessibility_columns_for_valid_molecu
     assert ranked[0]["sa_score"] is not None
     assert ranked[0]["synthetic_feasibility_category"] in {"easy", "moderate", "difficult"}
     assert ranked[0]["synthetic_feasibility_status"] == "heuristic_synthetic_accessibility"
+
+
+def test_prioritize_smiles_adds_exact_known_compound_identity_match():
+    ranked = prioritize_smiles(
+        [{"molecule_id": "aspirin", "smiles": "CC(=O)Oc1ccccc1C(=O)O"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+
+    assert ranked[0]["known_compound_match"] is True
+    assert ranked[0]["known_compound_name"] == "Aspirin"
+    assert ranked[0]["known_compound_source"] == "local_reference"
+    assert ranked[0]["known_compound_id"] == "LOCAL_REF_0001"
+    assert ranked[0]["identity_check_status"] == "exact_match"
+
+
+def test_prioritize_smiles_marks_no_known_compound_identity_match():
+    ranked = prioritize_smiles(
+        [{"molecule_id": "butane", "smiles": "CCCC"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+
+    assert ranked[0]["known_compound_match"] is False
+    assert ranked[0]["known_compound_name"] is None
+    assert ranked[0]["identity_check_status"] == "no_exact_match"
 
 
 def test_prioritize_smiles_preserves_valid_precomputed_docking_score():
@@ -132,6 +159,11 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "synthetic_feasibility_status" in header
     assert "docking_score" in header
     assert "docking_status" in header
+    assert "known_compound_match" in header
+    assert "known_compound_name" in header
+    assert "known_compound_source" in header
+    assert "known_compound_id" in header
+    assert "identity_check_status" in header
 
 
 def test_prioritize_csv_writes_precomputed_docking_columns(tmp_path):

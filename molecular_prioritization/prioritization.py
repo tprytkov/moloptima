@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+from biopharma_intelligence.identity import IdentityMatchResult
 from molecular_prioritization.bbb_predictor import BBBPrediction
 from molecular_prioritization.descriptors import MolecularDescriptors
 from molecular_prioritization.docking import DockingResult
@@ -51,6 +52,7 @@ def build_priority_record(
     bbb_prediction: BBBPrediction | None = None,
     synthetic_accessibility: SyntheticAccessibilityResult | None = None,
     docking: DockingResult | None = None,
+    identity_match: IdentityMatchResult | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     """Build one row for a ranked molecular prioritization result."""
@@ -86,6 +88,13 @@ def build_priority_record(
         docking_score=None,
         docking_status="not_provided",
     )
+    identity_values = identity_match or IdentityMatchResult(
+        known_compound_match=False,
+        known_compound_name=None,
+        known_compound_source=None,
+        known_compound_id=None,
+        identity_check_status="not_run",
+    )
 
     return {
         "molecule_id": molecule_id,
@@ -94,6 +103,11 @@ def build_priority_record(
         "valid_molecule": valid_molecule,
         "priority_score": priority_score,
         "error": error,
+        "known_compound_match": identity_values.known_compound_match,
+        "known_compound_name": identity_values.known_compound_name,
+        "known_compound_source": identity_values.known_compound_source,
+        "known_compound_id": identity_values.known_compound_id,
+        "identity_check_status": identity_values.identity_check_status,
         "docking_score": docking_values.docking_score,
         "docking_status": docking_values.docking_status,
         "sa_score": synthetic_accessibility_values.sa_score,

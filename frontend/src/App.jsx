@@ -849,6 +849,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   const hasDockingScore = rows.some(
     (row) => row.docking_score !== undefined && row.docking_status !== 'not_provided',
   );
+  const hasIdentityStatus = rows.some((row) => row.identity_check_status !== undefined);
 
   return (
     <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -858,6 +859,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>Molecule</TableCell>
             <TableCell>Valid</TableCell>
             <TableCell>Score</TableCell>
+            {hasIdentityStatus && <TableCell>Identity</TableCell>}
             {hasDockingScore && <TableCell>Docking score</TableCell>}
             {hasSyntheticAccessibility && <TableCell>SA score</TableCell>}
             {hasSyntheticAccessibility && <TableCell>Synthesis</TableCell>}
@@ -886,6 +888,9 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{row.molecule_id}</TableCell>
                 <TableCell>{row.valid_molecule}</TableCell>
                 <TableCell>{row.priority_score}</TableCell>
+                {hasIdentityStatus && (
+                  <TableCell>{row.known_compound_match === true ? row.known_compound_name : row.identity_check_status}</TableCell>
+                )}
                 {hasDockingScore && <TableCell>{row.docking_score ?? 'not available'}</TableCell>}
                 {hasSyntheticAccessibility && <TableCell>{row.sa_score ?? 'not available'}</TableCell>}
                 {hasSyntheticAccessibility && (
@@ -938,6 +943,11 @@ function CompoundDetailPanel({ compound }) {
                 ['Canonical SMILES', compound.canonical_smiles],
                 ['Valid molecule', compound.valid_molecule],
                 ['Priority score', compound.priority_score],
+                ['Known compound match', compound.known_compound_match],
+                ['Known compound name', compound.known_compound_name],
+                ['Known compound source', compound.known_compound_source],
+                ['Known compound ID', compound.known_compound_id],
+                ['Identity check status', compound.identity_check_status],
                 ['Docking score', compound.docking_score],
                 ['Docking status', compound.docking_status],
               ]}
