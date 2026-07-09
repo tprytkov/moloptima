@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from biopharma_intelligence.identity import IdentityMatchResult
+from biopharma_intelligence.similarity import SimilarityMatchResult
 from molecular_prioritization.bbb_predictor import BBBPrediction
 from molecular_prioritization.descriptors import MolecularDescriptors
 from molecular_prioritization.docking import DockingResult
@@ -53,6 +54,7 @@ def build_priority_record(
     synthetic_accessibility: SyntheticAccessibilityResult | None = None,
     docking: DockingResult | None = None,
     identity_match: IdentityMatchResult | None = None,
+    similarity_match: SimilarityMatchResult | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     """Build one row for a ranked molecular prioritization result."""
@@ -95,6 +97,13 @@ def build_priority_record(
         known_compound_id=None,
         identity_check_status="not_run",
     )
+    similarity_values = similarity_match or SimilarityMatchResult(
+        closest_known_compound_name=None,
+        closest_known_compound_id=None,
+        closest_known_compound_similarity=None,
+        closest_known_compound_source=None,
+        similarity_check_status="not_run",
+    )
 
     return {
         "molecule_id": molecule_id,
@@ -108,6 +117,13 @@ def build_priority_record(
         "known_compound_source": identity_values.known_compound_source,
         "known_compound_id": identity_values.known_compound_id,
         "identity_check_status": identity_values.identity_check_status,
+        "closest_known_compound_name": similarity_values.closest_known_compound_name,
+        "closest_known_compound_id": similarity_values.closest_known_compound_id,
+        "closest_known_compound_similarity": (
+            similarity_values.closest_known_compound_similarity
+        ),
+        "closest_known_compound_source": similarity_values.closest_known_compound_source,
+        "similarity_check_status": similarity_values.similarity_check_status,
         "docking_score": docking_values.docking_score,
         "docking_status": docking_values.docking_status,
         "sa_score": synthetic_accessibility_values.sa_score,

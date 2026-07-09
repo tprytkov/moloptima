@@ -7,6 +7,7 @@ import csv
 from pathlib import Path
 
 from biopharma_intelligence.identity import check_known_compound_identity
+from biopharma_intelligence.similarity import find_closest_known_compound
 from molecular_prioritization.bbb_predictor import load_bbb_predictor
 from molecular_prioritization.descriptors import calculate_descriptors
 from molecular_prioritization.docking import parse_precomputed_docking_score
@@ -47,6 +48,10 @@ def prioritize_smiles(
             standardized.canonical_smiles,
             standardized.valid_molecule,
         )
+        similarity_match = find_closest_known_compound(
+            standardized.canonical_smiles,
+            standardized.valid_molecule,
+        )
 
         ranked_records.append(
             build_priority_record(
@@ -59,6 +64,7 @@ def prioritize_smiles(
                 synthetic_accessibility=synthetic_accessibility,
                 docking=docking,
                 identity_match=identity_match,
+                similarity_match=similarity_match,
                 error=standardized.error,
             )
         )
@@ -97,6 +103,11 @@ def prioritize_csv(input_path: str | Path, output_path: str | Path) -> list[dict
             "known_compound_source",
             "known_compound_id",
             "identity_check_status",
+            "closest_known_compound_name",
+            "closest_known_compound_id",
+            "closest_known_compound_similarity",
+            "closest_known_compound_source",
+            "similarity_check_status",
             "docking_score",
             "docking_status",
             "sa_score",

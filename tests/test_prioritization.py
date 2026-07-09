@@ -54,6 +54,9 @@ def test_prioritize_smiles_keeps_invalid_records_in_ranked_output():
     assert invalid["known_compound_match"] is False
     assert invalid["known_compound_name"] is None
     assert invalid["identity_check_status"] == "not_run_invalid_molecule"
+    assert invalid["closest_known_compound_name"] is None
+    assert invalid["closest_known_compound_similarity"] is None
+    assert invalid["similarity_check_status"] == "not_run_invalid_molecule"
     assert ranked[0]["priority_score"] >= ranked[-1]["priority_score"]
 
 
@@ -115,6 +118,19 @@ def test_prioritize_smiles_marks_no_known_compound_identity_match():
     assert ranked[0]["identity_check_status"] == "no_exact_match"
 
 
+def test_prioritize_smiles_adds_closest_known_compound_similarity():
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+
+    assert ranked[0]["closest_known_compound_name"] == "Ethanol"
+    assert ranked[0]["closest_known_compound_id"] == "LOCAL_REF_0004"
+    assert ranked[0]["closest_known_compound_similarity"] == 1.0
+    assert ranked[0]["closest_known_compound_source"] == "local_reference"
+    assert ranked[0]["similarity_check_status"] == "closest_match_found"
+
+
 def test_prioritize_smiles_preserves_valid_precomputed_docking_score():
     ranked = prioritize_smiles(
         [{"molecule_id": "ethanol", "smiles": "CCO", "docking_score": "-7.25"}],
@@ -164,6 +180,11 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "known_compound_source" in header
     assert "known_compound_id" in header
     assert "identity_check_status" in header
+    assert "closest_known_compound_name" in header
+    assert "closest_known_compound_id" in header
+    assert "closest_known_compound_similarity" in header
+    assert "closest_known_compound_source" in header
+    assert "similarity_check_status" in header
 
 
 def test_prioritize_csv_writes_precomputed_docking_columns(tmp_path):

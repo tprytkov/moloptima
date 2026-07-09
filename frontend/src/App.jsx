@@ -850,6 +850,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
     (row) => row.docking_score !== undefined && row.docking_status !== 'not_provided',
   );
   const hasIdentityStatus = rows.some((row) => row.identity_check_status !== undefined);
+  const hasSimilarityStatus = rows.some((row) => row.similarity_check_status !== undefined);
 
   return (
     <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -860,6 +861,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>Valid</TableCell>
             <TableCell>Score</TableCell>
             {hasIdentityStatus && <TableCell>Identity</TableCell>}
+            {hasSimilarityStatus && <TableCell>Closest known</TableCell>}
             {hasDockingScore && <TableCell>Docking score</TableCell>}
             {hasSyntheticAccessibility && <TableCell>SA score</TableCell>}
             {hasSyntheticAccessibility && <TableCell>Synthesis</TableCell>}
@@ -890,6 +892,11 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{row.priority_score}</TableCell>
                 {hasIdentityStatus && (
                   <TableCell>{row.known_compound_match === true ? row.known_compound_name : row.identity_check_status}</TableCell>
+                )}
+                {hasSimilarityStatus && (
+                  <TableCell>
+                    {formatClosestKnownCompound(row)}
+                  </TableCell>
                 )}
                 {hasDockingScore && <TableCell>{row.docking_score ?? 'not available'}</TableCell>}
                 {hasSyntheticAccessibility && <TableCell>{row.sa_score ?? 'not available'}</TableCell>}
@@ -948,6 +955,11 @@ function CompoundDetailPanel({ compound }) {
                 ['Known compound source', compound.known_compound_source],
                 ['Known compound ID', compound.known_compound_id],
                 ['Identity check status', compound.identity_check_status],
+                ['Closest known compound', compound.closest_known_compound_name],
+                ['Closest known compound ID', compound.closest_known_compound_id],
+                ['Closest known compound similarity', compound.closest_known_compound_similarity],
+                ['Closest known compound source', compound.closest_known_compound_source],
+                ['Similarity check status', compound.similarity_check_status],
                 ['Docking score', compound.docking_score],
                 ['Docking status', compound.docking_status],
               ]}
@@ -1016,6 +1028,17 @@ function formatPassFail(value) {
     return 'Fail';
   }
   return value;
+}
+
+function formatClosestKnownCompound(row) {
+  if (!row.closest_known_compound_name) {
+    return row.similarity_check_status ?? 'not available';
+  }
+  const similarity = row.closest_known_compound_similarity;
+  if (similarity === null || similarity === undefined || similarity === '') {
+    return row.closest_known_compound_name;
+  }
+  return `${row.closest_known_compound_name} (${similarity})`;
 }
 
 function formatDetailValue(value) {
