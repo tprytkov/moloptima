@@ -134,9 +134,14 @@ def update_model_manifest(record: ModelManifestRecord | None = None) -> dict[str
     return payload
 
 
-def planned_public_source_statuses() -> dict[str, dict[str, object]]:
+def planned_public_source_statuses(
+    *,
+    pubchem_status: str = "available_when_requested",
+    pubchem_last_successful_lookup: str = "",
+    pubchem_error_message: str = "",
+) -> dict[str, dict[str, object]]:
     timestamp = utc_timestamp()
-    return {
+    sources = {
         source: {
             "source_name": source,
             "status": "planned_inactive",
@@ -147,12 +152,30 @@ def planned_public_source_statuses() -> dict[str, dict[str, object]]:
         }
         for source in PUBLIC_SOURCES
     }
+    sources["PubChem"].update(
+        {
+            "status": pubchem_status,
+            "last_successful_lookup": pubchem_last_successful_lookup,
+            "cache_path": relative_path(PUBLIC_LOOKUP_CACHE_DIR / "pubchem"),
+            "error_message": pubchem_error_message,
+        }
+    )
+    return sources
 
 
-def update_public_data_manifest() -> dict[str, object]:
+def update_public_data_manifest(
+    *,
+    pubchem_status: str = "available_when_requested",
+    pubchem_last_successful_lookup: str = "",
+    pubchem_error_message: str = "",
+) -> dict[str, object]:
     payload = {
         "last_checked": utc_timestamp(),
-        "sources": planned_public_source_statuses(),
+        "sources": planned_public_source_statuses(
+            pubchem_status=pubchem_status,
+            pubchem_last_successful_lookup=pubchem_last_successful_lookup,
+            pubchem_error_message=pubchem_error_message,
+        ),
     }
     write_manifest(PUBLIC_DATA_MANIFEST_PATH, payload)
     return payload
@@ -167,6 +190,47 @@ def bbb_status_values(rows: Iterable[dict[str, object]]) -> list[str]:
     return sorted(values)
 
 
+def row_status_values(rows: Iterable[dict[str, object]], column: str) -> list[str]:
+    values = {
+        str(row.get(column, "")).strip()
+        for row in rows
+        if str(row.get(column, "")).strip()
+    }
+    return sorted(values)
+
+
+def summarize_pubchem_source(rows: list[dict[str, object]]) -> dict[str, str]:
+    statuses = row_status_values(rows, "pubchem_lookup_status")
+    if not statuses or statuses == ["not_requested"]:
+        return {
+            "status": "not_requested",
+            "last_successful_lookup": "",
+            "error_message": "",
+        }
+    if "exact_match" in statuses or "no_exact_match" in statuses:
+        return {
+            "status": "lookup_completed",
+            "last_successful_lookup": utc_timestamp(),
+            "error_message": "",
+        }
+    if "lookup_failed" in statuses:
+        warnings = {
+            str(row.get("pubchem_warning", "")).strip()
+            for row in rows
+            if str(row.get("pubchem_warning", "")).strip()
+        }
+        return {
+            "status": "lookup_failed",
+            "last_successful_lookup": "",
+            "error_message": "; ".join(sorted(warnings)),
+        }
+    return {
+        "status": "not_requested",
+        "last_successful_lookup": "",
+        "error_message": "",
+    }
+
+
 def update_run_manifest(
     *,
     job_id: str,
@@ -176,6 +240,10 @@ def update_run_manifest(
     existing = read_manifest(RUN_MANIFEST_PATH)
     runs = existing.get("runs") if isinstance(existing.get("runs"), dict) else {}
     statuses = bbb_status_values(rows)
+    pubchem_statuses = row_status_values(rows, "pubchem_lookup_status")
+    public_lookup_requested = any(
+        status not in {"", "not_requested"} for status in pubchem_statuses
+    )
     model_available = "model_available" in statuses
     placeholder_used = any(status != "model_available" for status in statuses) or not model_available
     run = {
@@ -184,6 +252,13 @@ def update_run_manifest(
         "actual_bbb_model_status": "model_available" if model_available else "model_unavailable",
         "bbb_model_status_values": statuses,
         "fallback_placeholder_used": placeholder_used,
+        "public_lookup_requested": public_lookup_requested,
+        "pubchem_lookup_status_values": pubchem_statuses,
+        "public_lookup_source_statuses": {
+            "PubChem": summarize_pubchem_source(rows),
+            "ChEMBL": {"status": "planned_inactive"},
+            "SureChEMBL": {"status": "planned_inactive"},
+        },
         "output_file": output_file,
         "row_count": len(rows),
     }
@@ -200,7 +275,12 @@ def update_run_manifest(
             error_message="" if model_available else "BBB/ChemBERTa model was unavailable for latest run.",
         )
     )
-    update_public_data_manifest()
+    pubchem_source = summarize_pubchem_source(rows)
+    update_public_data_manifest(
+        pubchem_status=pubchem_source["status"],
+        pubchem_last_successful_lookup=pubchem_source["last_successful_lookup"],
+        pubchem_error_message=pubchem_source["error_message"],
+    )
     return payload
 
 

@@ -2,6 +2,7 @@ from molecular_prioritization.bbb_predictor import BBBPrediction, UnavailableBBB
 from molecular_prioritization.descriptors import calculate_descriptors
 from molecular_prioritization.pipeline import prioritize_csv, prioritize_smiles
 from molecular_prioritization.prioritization import calculate_priority_score
+from biopharma_intelligence.public_lookup import PublicIdentityResult
 
 
 class FakeBBBPredictor:
@@ -18,6 +19,31 @@ class FakeBBBPredictor:
             bbb_probability=0.8,
             bbb_model_status="model_available",
             bbb_warning="",
+        )
+
+
+class FakePublicLookupClient:
+    def __init__(self):
+        self.calls = []
+
+    def lookup_exact_identity(self, smiles, valid_molecule):
+        self.calls.append((smiles, valid_molecule))
+        if not valid_molecule:
+            return PublicIdentityResult(
+                pubchem_exact_match=False,
+                pubchem_cid=None,
+                pubchem_preferred_name=None,
+                pubchem_lookup_status="not_run_invalid_molecule",
+                pubchem_cache_status="not_used",
+                pubchem_warning="Public lookup skipped for invalid molecule.",
+            )
+        return PublicIdentityResult(
+            pubchem_exact_match=True,
+            pubchem_cid="702",
+            pubchem_preferred_name="Ethanol",
+            pubchem_lookup_status="exact_match",
+            pubchem_cache_status="fresh_lookup",
+            pubchem_warning="",
         )
 
 
@@ -57,6 +83,7 @@ def test_prioritize_smiles_keeps_invalid_records_in_ranked_output():
     assert invalid["closest_known_compound_name"] is None
     assert invalid["closest_known_compound_similarity"] is None
     assert invalid["similarity_check_status"] == "not_run_invalid_molecule"
+    assert invalid["pubchem_lookup_status"] == "not_requested"
     assert ranked[0]["priority_score"] >= ranked[-1]["priority_score"]
 
 
@@ -116,6 +143,54 @@ def test_prioritize_smiles_marks_no_known_compound_identity_match():
     assert ranked[0]["known_compound_match"] is False
     assert ranked[0]["known_compound_name"] is None
     assert ranked[0]["identity_check_status"] == "no_exact_match"
+
+
+def test_prioritize_smiles_default_public_lookup_is_not_requested():
+    client = FakePublicLookupClient()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        public_lookup_client=client,
+    )
+
+    assert ranked[0]["pubchem_exact_match"] is False
+    assert ranked[0]["pubchem_lookup_status"] == "not_requested"
+    assert ranked[0]["pubchem_cache_status"] == "not_used"
+    assert client.calls == []
+
+
+def test_prioritize_smiles_runs_public_lookup_when_requested():
+    client = FakePublicLookupClient()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        enable_public_lookup=True,
+        public_lookup_client=client,
+    )
+
+    assert ranked[0]["pubchem_exact_match"] is True
+    assert ranked[0]["pubchem_cid"] == "702"
+    assert ranked[0]["pubchem_preferred_name"] == "Ethanol"
+    assert ranked[0]["pubchem_lookup_status"] == "exact_match"
+    assert ranked[0]["pubchem_cache_status"] == "fresh_lookup"
+    assert client.calls == [("CCO", True)]
+
+
+def test_prioritize_smiles_public_lookup_skips_invalid_molecule_when_requested():
+    client = FakePublicLookupClient()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "invalid", "smiles": "C1CC"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        enable_public_lookup=True,
+        public_lookup_client=client,
+    )
+
+    assert ranked[0]["pubchem_exact_match"] is False
+    assert ranked[0]["pubchem_lookup_status"] == "not_run_invalid_molecule"
+    assert client.calls == [(None, False)]
 
 
 def test_prioritize_smiles_adds_closest_known_compound_similarity():
@@ -185,6 +260,12 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "closest_known_compound_similarity" in header
     assert "closest_known_compound_source" in header
     assert "similarity_check_status" in header
+    assert "pubchem_exact_match" in header
+    assert "pubchem_cid" in header
+    assert "pubchem_preferred_name" in header
+    assert "pubchem_lookup_status" in header
+    assert "pubchem_cache_status" in header
+    assert "pubchem_warning" in header
 
 
 def test_prioritize_csv_writes_precomputed_docking_columns(tmp_path):

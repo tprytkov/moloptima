@@ -22,6 +22,7 @@ class UploadResponse(BaseModel):
 
 class PrioritizationRequest(BaseModel):
     upload_id: str = Field(..., min_length=1)
+    enable_public_lookup: bool = False
 
 
 class JobResponse(BaseModel):

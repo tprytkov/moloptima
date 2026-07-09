@@ -52,7 +52,11 @@ def save_upload(file: UploadFile) -> dict[str, object]:
     }
 
 
-def run_prioritization_job(upload_id: str) -> dict[str, object]:
+def run_prioritization_job(
+    upload_id: str,
+    *,
+    enable_public_lookup: bool = False,
+) -> dict[str, object]:
     """Run the existing molecular prioritization pipeline for one upload."""
 
     input_path = find_upload_path(upload_id)
@@ -70,11 +74,16 @@ def run_prioritization_job(upload_id: str) -> dict[str, object]:
         "completed_at": None,
         "error_message": "",
         "row_count": 0,
+        "public_lookup_requested": enable_public_lookup,
     }
     write_job_metadata(metadata)
 
     try:
-        rows = prioritize_csv(input_path, output_path)
+        rows = prioritize_csv(
+            input_path,
+            output_path,
+            enable_public_lookup=enable_public_lookup,
+        )
     except Exception as exc:
         metadata.update(
             {

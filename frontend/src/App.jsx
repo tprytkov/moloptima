@@ -6,11 +6,13 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   CircularProgress,
   CssBaseline,
   Divider,
   Drawer,
+  FormControlLabel,
   List,
   ListItemButton,
   ListItemIcon,
@@ -126,6 +128,7 @@ function App() {
     loading: false,
     error: '',
   });
+  const [publicLookupEnabled, setPublicLookupEnabled] = useState(false);
   const health = useBackendHealth();
 
   useEffect(() => {
@@ -215,7 +218,7 @@ function App() {
       const job = await apiRequest('/api/jobs/prioritization', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ upload_id: uploadId }),
+        body: JSON.stringify({ upload_id: uploadId, enable_public_lookup: publicLookupEnabled }),
       });
       const result = await apiRequest(`/api/results/${job.job_id}`);
       const sourceStatus = await apiRequest('/api/model-sources/status');
@@ -277,6 +280,8 @@ function App() {
               sourceStatusState={sourceStatusState}
               onUpload={handleUpload}
               onStartPrioritization={handleStartPrioritization}
+              publicLookupEnabled={publicLookupEnabled}
+              setPublicLookupEnabled={setPublicLookupEnabled}
               onCheckLocalModelCache={handleCheckLocalModelCache}
               onRefreshSourceStatus={handleRefreshSourceStatus}
             />
@@ -387,6 +392,8 @@ function ActivePage({
   sourceStatusState,
   onUpload,
   onStartPrioritization,
+  publicLookupEnabled,
+  setPublicLookupEnabled,
   onCheckLocalModelCache,
   onRefreshSourceStatus,
 }) {
@@ -406,6 +413,8 @@ function ActivePage({
         uploadState={uploadState}
         prioritizationState={prioritizationState}
         onStartPrioritization={onStartPrioritization}
+        publicLookupEnabled={publicLookupEnabled}
+        setPublicLookupEnabled={setPublicLookupEnabled}
       />
     );
   }
@@ -609,7 +618,7 @@ function BiopharmaIntelligencePage({ latestRunState }) {
     <Stack spacing={3}>
       <PageIntro
         title="Biopharma Intelligence"
-        description="Summarize exact local-reference identity matches and closest known-compound similarity for the latest completed prioritization run."
+        description="Summarize exact identity checks, optional public compound matches, and closest known-compound similarity for the latest completed prioritization run."
       />
 
       <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
@@ -645,6 +654,11 @@ function BiopharmaIntelligencePage({ latestRunState }) {
               }}
             >
               <RunSummaryCard label="Exact known-compound matches" value={summary.exactMatches} />
+              <RunSummaryCard
+                label="PubChem exact matches"
+                value={summary.pubchemExactMatches}
+                detail={summary.pubchemLookupDetail}
+              />
               <RunSummaryCard label="No exact matches" value={summary.noExactMatches} />
               <RunSummaryCard
                 label="Avg closest-known similarity"
@@ -690,6 +704,9 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>molecule_id</TableCell>
             <TableCell>known_compound_match</TableCell>
             <TableCell>known_compound_name</TableCell>
+            <TableCell>pubchem_exact_match</TableCell>
+            <TableCell>pubchem_cid</TableCell>
+            <TableCell>pubchem_lookup_status</TableCell>
             <TableCell>closest_known_compound_name</TableCell>
             <TableCell>closest_known_compound_similarity</TableCell>
             <TableCell>identity_check_status</TableCell>
@@ -717,6 +734,9 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.molecule_id)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_match)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
+                <TableCell>{formatDetailValue(row.pubchem_exact_match)}</TableCell>
+                <TableCell>{formatDetailValue(row.pubchem_cid)}</TableCell>
+                <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
                 <TableCell>{formatDetailValue(row.identity_check_status)}</TableCell>
@@ -748,6 +768,9 @@ function BiopharmaInterpretationPanel({ compound }) {
           <MetadataPanel
             rows={[
               ['Exact known compound', compound.known_compound_name],
+              ['PubChem exact match', formatPubChemMatch(compound)],
+              ['PubChem lookup status', compound.pubchem_lookup_status],
+              ['PubChem cache status', compound.pubchem_cache_status],
               ['Closest known compound', compound.closest_known_compound_name],
               ['Closest similarity', compound.closest_known_compound_similarity],
               ['Identity status', compound.identity_check_status],
@@ -765,6 +788,8 @@ function buildBiopharmaSummary(rows) {
     .map((row) => numericValue(row.closest_known_compound_similarity))
     .filter((value) => value !== null);
   const exactMatches = rows.filter((row) => isTrueValue(row.known_compound_match)).length;
+  const pubchemExactMatches = rows.filter((row) => isTrueValue(row.pubchem_exact_match)).length;
+  const pubchemStatusCounts = countValues(rows.map((row) => row.pubchem_lookup_status).filter(Boolean));
   const highSimilarityCompounds = similarities.filter((value) => value >= highSimilarityThreshold).length;
   const averageSimilarity =
     similarities.length > 0
@@ -773,6 +798,8 @@ function buildBiopharmaSummary(rows) {
 
   return {
     exactMatches,
+    pubchemExactMatches,
+    pubchemLookupDetail: formatCounts(pubchemStatusCounts) || 'Public lookup not run',
     noExactMatches: rows.length - exactMatches,
     averageClosestSimilarity: averageSimilarity === null ? 'Not available' : averageSimilarity.toFixed(3),
     highSimilarityCompounds,
@@ -800,6 +827,16 @@ function interpretBiopharmaCompound(compound) {
       message: `Exact known compound: this molecule matches ${formatDetailValue(
         compound.known_compound_name,
       )} in the local reference table.`,
+    };
+  }
+
+  if (isTrueValue(compound.pubchem_exact_match)) {
+    return {
+      label: 'Public compound match',
+      color: 'success',
+      message: `PubChem exact match: this molecule matched ${formatDetailValue(
+        compound.pubchem_preferred_name,
+      )} with CID ${formatDetailValue(compound.pubchem_cid)}. This is a public identity signal, not a novelty or patentability conclusion.`,
     };
   }
 
@@ -881,6 +918,11 @@ function ReportsPage({ latestRunState }) {
                   value={summary.knownCompoundMatches}
                 />
                 <RunSummaryCard
+                  label="PubChem exact matches"
+                  value={summary.pubchemExactMatches}
+                  detail={summary.pubchemLookupDetail}
+                />
+                <RunSummaryCard
                   label="High-similarity compounds"
                   value={summary.highSimilarityCompounds}
                   detail={`Threshold >= ${highSimilarityThreshold.toFixed(2)}`}
@@ -937,6 +979,7 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>priority_score</TableCell>
             <TableCell>valid_molecule</TableCell>
             <TableCell>known_compound_name</TableCell>
+            <TableCell>pubchem_lookup_status</TableCell>
             <TableCell>closest_known_compound_similarity</TableCell>
             <TableCell>bbb_prediction</TableCell>
             <TableCell>Export</TableCell>
@@ -964,6 +1007,7 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.priority_score)}</TableCell>
                 <TableCell>{formatDetailValue(row.valid_molecule)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
+                <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
                 <TableCell>{formatDetailValue(row.bbb_prediction)}</TableCell>
                 <TableCell>
@@ -997,6 +1041,8 @@ function buildReportsSummary(latestRunState) {
     validMolecules: rows.filter((row) => isTrueValue(row.valid_molecule)).length,
     highPriorityMolecules: rows.filter((row) => Number(row.priority_score ?? 0) >= 0.75).length,
     knownCompoundMatches: rows.filter((row) => isTrueValue(row.known_compound_match)).length,
+    pubchemExactMatches: rows.filter((row) => isTrueValue(row.pubchem_exact_match)).length,
+    pubchemLookupDetail: formatCounts(countValues(rows.map((row) => row.pubchem_lookup_status).filter(Boolean))) || 'Public lookup not run',
     highSimilarityCompounds: rows.filter((row) => {
       const similarity = numericValue(row.closest_known_compound_similarity);
       return similarity !== null && similarity >= highSimilarityThreshold;
@@ -1129,7 +1175,13 @@ function UploadMoleculesPage({ uploadState, setUploadState, onUpload }) {
   );
 }
 
-function PrioritizationPage({ uploadState, prioritizationState, onStartPrioritization }) {
+function PrioritizationPage({
+  uploadState,
+  prioritizationState,
+  onStartPrioritization,
+  publicLookupEnabled,
+  setPublicLookupEnabled,
+}) {
   const resultRows = prioritizationState.result?.results ?? [];
   const [selectedCompoundKey, setSelectedCompoundKey] = useState(null);
   const selectedCompound =
@@ -1157,15 +1209,32 @@ function PrioritizationPage({ uploadState, prioritizationState, onStartPrioritiz
                   : 'Upload a molecule CSV before starting a prioritization job.'}
               </Typography>
             </Stack>
-            <Button
-              variant="contained"
-              onClick={onStartPrioritization}
-              disabled={!uploadState.upload || prioritizationState.loading}
-              startIcon={prioritizationState.loading ? <CircularProgress size={18} color="inherit" /> : null}
-            >
-              {prioritizationState.loading ? 'Running' : 'Start prioritization'}
-            </Button>
+            <Stack spacing={1.25} alignItems={{ xs: 'stretch', md: 'flex-end' }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={publicLookupEnabled}
+                    onChange={(event) => setPublicLookupEnabled(event.target.checked)}
+                  />
+                }
+                label="Enable PubChem exact identity check"
+              />
+              <Button
+                variant="contained"
+                onClick={onStartPrioritization}
+                disabled={!uploadState.upload || prioritizationState.loading}
+                startIcon={prioritizationState.loading ? <CircularProgress size={18} color="inherit" /> : null}
+              >
+                {prioritizationState.loading ? 'Running' : 'Start prioritization'}
+              </Button>
+            </Stack>
           </Stack>
+
+          <Alert severity={publicLookupEnabled ? 'warning' : 'info'}>
+            {publicLookupEnabled
+              ? 'PubChem exact identity lookup is enabled for this run and may use the network. Results are cached locally.'
+              : 'Public compound lookup is off. Output rows will mark PubChem lookup as not_requested.'}
+          </Alert>
 
           {prioritizationState.error && <Alert severity="error">{prioritizationState.error}</Alert>}
 
@@ -1268,6 +1337,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   );
   const hasIdentityStatus = rows.some((row) => row.identity_check_status !== undefined);
   const hasSimilarityStatus = rows.some((row) => row.similarity_check_status !== undefined);
+  const hasPublicIdentityStatus = rows.some((row) => row.pubchem_lookup_status !== undefined);
 
   return (
     <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -1278,6 +1348,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>Valid</TableCell>
             <TableCell>Score</TableCell>
             {hasIdentityStatus && <TableCell>Identity</TableCell>}
+            {hasPublicIdentityStatus && <TableCell>Public compound match</TableCell>}
             {hasSimilarityStatus && <TableCell>Closest known</TableCell>}
             {hasDockingScore && <TableCell>Docking score</TableCell>}
             {hasSyntheticAccessibility && <TableCell>SA score</TableCell>}
@@ -1309,6 +1380,9 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{row.priority_score}</TableCell>
                 {hasIdentityStatus && (
                   <TableCell>{row.known_compound_match === true ? row.known_compound_name : row.identity_check_status}</TableCell>
+                )}
+                {hasPublicIdentityStatus && (
+                  <TableCell>{formatPubChemMatch(row)}</TableCell>
                 )}
                 {hasSimilarityStatus && (
                   <TableCell>
@@ -1381,6 +1455,12 @@ function CompoundDetailPanel({ compound }) {
                 ['Known compound source', compound.known_compound_source],
                 ['Known compound ID', compound.known_compound_id],
                 ['Identity check status', compound.identity_check_status],
+                ['PubChem exact match', compound.pubchem_exact_match],
+                ['PubChem CID', compound.pubchem_cid],
+                ['PubChem preferred name', compound.pubchem_preferred_name],
+                ['PubChem lookup status', compound.pubchem_lookup_status],
+                ['PubChem cache status', compound.pubchem_cache_status],
+                ['PubChem warning', compound.pubchem_warning],
                 ['Closest known compound', compound.closest_known_compound_name],
                 ['Closest known compound ID', compound.closest_known_compound_id],
                 ['Closest known compound similarity', compound.closest_known_compound_similarity],
@@ -1467,6 +1547,14 @@ function formatClosestKnownCompound(row) {
   return `${row.closest_known_compound_name} (${similarity})`;
 }
 
+function formatPubChemMatch(row) {
+  if (isTrueValue(row.pubchem_exact_match)) {
+    const cid = row.pubchem_cid ? `CID ${row.pubchem_cid}` : 'PubChem';
+    return `${row.pubchem_preferred_name || 'PubChem exact match'} (${cid})`;
+  }
+  return row.pubchem_lookup_status ?? 'not available';
+}
+
 function downloadCompoundMarkdownReport(compound) {
   const markdown = buildCompoundMarkdownReport(compound);
   const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
@@ -1544,6 +1632,16 @@ function buildCompoundMarkdownReport(compound) {
       ['Known compound ID', compound.known_compound_id],
       ['Known compound source', compound.known_compound_source],
       ['Identity check status', compound.identity_check_status],
+    ]),
+    '',
+    '## Public compound match',
+    markdownRows([
+      ['PubChem exact match', compound.pubchem_exact_match],
+      ['PubChem CID', compound.pubchem_cid],
+      ['PubChem preferred name', compound.pubchem_preferred_name],
+      ['PubChem lookup status', compound.pubchem_lookup_status],
+      ['PubChem cache status', compound.pubchem_cache_status],
+      ['PubChem warning', compound.pubchem_warning],
     ]),
     '',
     '## Closest known compound similarity',
@@ -1691,7 +1789,8 @@ function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRef
         <Stack spacing={2}>
           <Typography variant="h2">Public Lookup Sources</Typography>
           <Alert severity="info">
-            PubChem, ChEMBL, and SureChEMBL are planned, not active, in this MolOptima build.
+            PubChem exact identity lookup is available only when explicitly enabled for a run.
+            ChEMBL and SureChEMBL remain planned inactive in this MolOptima build.
           </Alert>
           {sources.length > 0 ? (
             <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>

@@ -7,6 +7,7 @@ import csv
 from pathlib import Path
 
 from biopharma_intelligence.identity import check_known_compound_identity
+from biopharma_intelligence.public_lookup import PubChemClient, not_requested_result
 from biopharma_intelligence.similarity import find_closest_known_compound
 from molecular_prioritization.bbb_predictor import load_bbb_predictor
 from molecular_prioritization.descriptors import calculate_descriptors
@@ -20,10 +21,13 @@ def prioritize_smiles(
     records: list[dict[str, str]],
     *,
     bbb_predictor: object | None = None,
+    enable_public_lookup: bool = False,
+    public_lookup_client: object | None = None,
 ) -> list[dict[str, object]]:
     """Prioritize molecule records with molecule_id and smiles fields."""
 
     active_bbb_predictor = bbb_predictor or load_bbb_predictor()
+    active_public_lookup_client = public_lookup_client or PubChemClient()
     ranked_records: list[dict[str, object]] = []
 
     for index, record in enumerate(records, start=1):
@@ -52,6 +56,14 @@ def prioritize_smiles(
             standardized.canonical_smiles,
             standardized.valid_molecule,
         )
+        public_identity_match = (
+            active_public_lookup_client.lookup_exact_identity(
+                standardized.canonical_smiles,
+                standardized.valid_molecule,
+            )
+            if enable_public_lookup
+            else not_requested_result()
+        )
 
         ranked_records.append(
             build_priority_record(
@@ -65,6 +77,7 @@ def prioritize_smiles(
                 docking=docking,
                 identity_match=identity_match,
                 similarity_match=similarity_match,
+                public_identity_match=public_identity_match,
                 error=standardized.error,
             )
         )
@@ -76,7 +89,12 @@ def prioritize_smiles(
     )
 
 
-def prioritize_csv(input_path: str | Path, output_path: str | Path) -> list[dict[str, object]]:
+def prioritize_csv(
+    input_path: str | Path,
+    output_path: str | Path,
+    *,
+    enable_public_lookup: bool = False,
+) -> list[dict[str, object]]:
     """Read molecule records from CSV, write ranked results, and return rows."""
 
     input_file = Path(input_path)
@@ -85,7 +103,7 @@ def prioritize_csv(input_path: str | Path, output_path: str | Path) -> list[dict
     with input_file.open(newline="", encoding="utf-8") as handle:
         records = list(csv.DictReader(handle))
 
-    ranked_records = prioritize_smiles(records)
+    ranked_records = prioritize_smiles(records, enable_public_lookup=enable_public_lookup)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     if ranked_records:
@@ -108,6 +126,12 @@ def prioritize_csv(input_path: str | Path, output_path: str | Path) -> list[dict
             "closest_known_compound_similarity",
             "closest_known_compound_source",
             "similarity_check_status",
+            "pubchem_exact_match",
+            "pubchem_cid",
+            "pubchem_preferred_name",
+            "pubchem_lookup_status",
+            "pubchem_cache_status",
+            "pubchem_warning",
             "docking_score",
             "docking_status",
             "sa_score",
@@ -139,12 +163,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run MolOptima Phase 1 prioritization.")
     parser.add_argument("--input", required=True, help="CSV with molecule_id and smiles columns.")
     parser.add_argument("--output", required=True, help="Output ranked CSV path.")
+    parser.add_argument(
+        "--enable-public-lookup",
+        action="store_true",
+        help="Opt in to PubChem exact identity lookup with local caching.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    ranked_records = prioritize_csv(args.input, args.output)
+    ranked_records = prioritize_csv(
+        args.input,
+        args.output,
+        enable_public_lookup=args.enable_public_lookup,
+    )
     warnings = sorted(
         {
             str(row["bbb_warning"])

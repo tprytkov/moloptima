@@ -16,6 +16,7 @@ MolOptima is a local compound prioritization and biopharma intelligence platform
 - RDKit validation, canonicalization, descriptors, QED, and Lipinski-style fields.
 - Transparent first-pass priority scoring.
 - Offline known-compound exact identity and closest-reference similarity.
+- Optional PubChem exact identity lookup with local result caching.
 - Optional cached BBB/ChemBERTa status and inference.
 - Input-only docking score preservation.
 - Informational synthetic feasibility fields.
@@ -29,7 +30,7 @@ MolOptima is a local compound prioritization and biopharma intelligence platform
 React/MUI frontend
   -> FastAPI backend
     -> molecular_prioritization pipeline
-    -> biopharma_intelligence local reference checks
+    -> biopharma_intelligence local reference checks and optional PubChem lookup
     -> local files: uploads, outputs, metadata, app_data manifests
 ```
 

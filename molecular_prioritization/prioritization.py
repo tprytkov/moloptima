@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from biopharma_intelligence.identity import IdentityMatchResult
+from biopharma_intelligence.public_lookup import PublicIdentityResult, not_requested_result
 from biopharma_intelligence.similarity import SimilarityMatchResult
 from molecular_prioritization.bbb_predictor import BBBPrediction
 from molecular_prioritization.descriptors import MolecularDescriptors
@@ -55,6 +56,7 @@ def build_priority_record(
     docking: DockingResult | None = None,
     identity_match: IdentityMatchResult | None = None,
     similarity_match: SimilarityMatchResult | None = None,
+    public_identity_match: PublicIdentityResult | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     """Build one row for a ranked molecular prioritization result."""
@@ -104,6 +106,7 @@ def build_priority_record(
         closest_known_compound_source=None,
         similarity_check_status="not_run",
     )
+    public_identity_values = public_identity_match or not_requested_result()
 
     return {
         "molecule_id": molecule_id,
@@ -124,6 +127,12 @@ def build_priority_record(
         ),
         "closest_known_compound_source": similarity_values.closest_known_compound_source,
         "similarity_check_status": similarity_values.similarity_check_status,
+        "pubchem_exact_match": public_identity_values.pubchem_exact_match,
+        "pubchem_cid": public_identity_values.pubchem_cid,
+        "pubchem_preferred_name": public_identity_values.pubchem_preferred_name,
+        "pubchem_lookup_status": public_identity_values.pubchem_lookup_status,
+        "pubchem_cache_status": public_identity_values.pubchem_cache_status,
+        "pubchem_warning": public_identity_values.pubchem_warning,
         "docking_score": docking_values.docking_score,
         "docking_status": docking_values.docking_status,
         "sa_score": synthetic_accessibility_values.sa_score,

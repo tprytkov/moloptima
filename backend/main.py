@@ -43,7 +43,12 @@ def upload_molecules(file: UploadFile = File(...)) -> UploadResponse:
 
 @app.post("/api/jobs/prioritization", response_model=JobResponse)
 def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
-    return JobResponse(**services.run_prioritization_job(request.upload_id))
+    return JobResponse(
+        **services.run_prioritization_job(
+            request.upload_id,
+            enable_public_lookup=request.enable_public_lookup,
+        )
+    )
 
 
 @app.get("/api/jobs/latest", response_model=LatestJobResponse)
