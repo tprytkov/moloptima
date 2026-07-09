@@ -136,6 +136,21 @@ def get_result(job_id: str) -> dict[str, object]:
     }
 
 
+def get_latest_completed_job() -> dict[str, object]:
+    """Return the latest completed prioritization job with result rows when available."""
+
+    completed_jobs = [
+        metadata
+        for metadata in read_all_job_metadata()
+        if metadata.get("status") == "completed" and metadata.get("completed_at")
+    ]
+    if not completed_jobs:
+        return {"job": None}
+
+    latest_job = max(completed_jobs, key=lambda metadata: str(metadata.get("completed_at", "")))
+    return {"job": get_result(str(latest_job["job_id"]))}
+
+
 def validate_molecule_csv(path: Path) -> int:
     """Validate required CSV columns and return the row count."""
 
@@ -169,6 +184,22 @@ def read_job_metadata(job_id: str) -> dict[str, object] | None:
     except json.JSONDecodeError:
         return None
     return metadata if isinstance(metadata, dict) else None
+
+
+def read_all_job_metadata() -> list[dict[str, object]]:
+    if not JOB_METADATA_DIR.exists():
+        return []
+
+    metadata_items: list[dict[str, object]] = []
+    for metadata_path in sorted(JOB_METADATA_DIR.glob("*.json")):
+        try:
+            with metadata_path.open("r", encoding="utf-8") as handle:
+                metadata = json.load(handle)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(metadata, dict):
+            metadata_items.append(metadata)
+    return metadata_items
 
 
 def utc_timestamp() -> str:

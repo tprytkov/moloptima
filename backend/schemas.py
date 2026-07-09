@@ -48,6 +48,10 @@ class ResultResponse(BaseModel):
     results: list[dict[str, Any]]
 
 
+class LatestJobResponse(BaseModel):
+    job: ResultResponse | None = None
+
+
 class SourceStatusResponse(BaseModel):
     model_manifest: dict[str, Any]
     public_data_manifest: dict[str, Any]

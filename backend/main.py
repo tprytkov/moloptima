@@ -9,6 +9,7 @@ from backend import services
 from backend.schemas import (
     HealthResponse,
     JobResponse,
+    LatestJobResponse,
     PrioritizationRequest,
     ResultResponse,
     SourceStatusResponse,
@@ -43,6 +44,11 @@ def upload_molecules(file: UploadFile = File(...)) -> UploadResponse:
 @app.post("/api/jobs/prioritization", response_model=JobResponse)
 def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
     return JobResponse(**services.run_prioritization_job(request.upload_id))
+
+
+@app.get("/api/jobs/latest", response_model=LatestJobResponse)
+def get_latest_job() -> LatestJobResponse:
+    return LatestJobResponse(**services.get_latest_completed_job())
 
 
 @app.get("/api/results/{job_id}", response_model=ResultResponse)

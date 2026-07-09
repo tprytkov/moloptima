@@ -129,6 +129,95 @@ def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
     assert latest_run["bbb_model_status_values"] == ["model_unavailable"]
 
 
+def test_latest_job_endpoint_returns_latest_completed_job(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(services, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(services, "JOB_OUTPUT_DIR", tmp_path / "backend" / "job_outputs")
+    monkeypatch.setattr(services, "JOB_METADATA_DIR", tmp_path / "backend" / "job_metadata")
+
+    older_job_id = "older-job"
+    latest_job_id = "latest-job"
+    failed_job_id = "failed-job"
+    for job_id, molecule_id in [(older_job_id, "old_mol"), (latest_job_id, "latest_mol")]:
+        output_path = services.JOB_OUTPUT_DIR / job_id / "ranked_results.csv"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["molecule_id", "priority_score"])
+            writer.writeheader()
+            writer.writerow({"molecule_id": molecule_id, "priority_score": 0.8})
+
+    services.write_job_metadata(
+        {
+            "job_id": older_job_id,
+            "upload_id": "upload-1",
+            "status": "completed",
+            "input_file": "backend/uploads/upload-1/molecules.csv",
+            "output_file": f"backend/job_outputs/{older_job_id}/ranked_results.csv",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "completed_at": "2026-01-01T00:01:00+00:00",
+            "error_message": "",
+            "row_count": 1,
+        }
+    )
+    services.write_job_metadata(
+        {
+            "job_id": latest_job_id,
+            "upload_id": "upload-2",
+            "status": "completed",
+            "input_file": "backend/uploads/upload-2/molecules.csv",
+            "output_file": f"backend/job_outputs/{latest_job_id}/ranked_results.csv",
+            "created_at": "2026-01-02T00:00:00+00:00",
+            "completed_at": "2026-01-02T00:01:00+00:00",
+            "error_message": "",
+            "row_count": 1,
+        }
+    )
+    services.write_job_metadata(
+        {
+            "job_id": failed_job_id,
+            "upload_id": "upload-3",
+            "status": "failed",
+            "input_file": "backend/uploads/upload-3/molecules.csv",
+            "output_file": f"backend/job_outputs/{failed_job_id}/ranked_results.csv",
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "completed_at": "2026-01-03T00:01:00+00:00",
+            "error_message": "failed",
+            "row_count": 0,
+        }
+    )
+
+    client = TestClient(app)
+    response = client.get("/api/jobs/latest")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["job"]["job_id"] == latest_job_id
+    assert payload["job"]["status"] == "completed"
+    assert payload["job"]["results"][0]["molecule_id"] == "latest_mol"
+
+
+def test_latest_job_endpoint_returns_null_when_no_completed_job(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(services, "JOB_METADATA_DIR", tmp_path / "backend" / "job_metadata")
+    services.write_job_metadata(
+        {
+            "job_id": "failed-job",
+            "upload_id": "upload-1",
+            "status": "failed",
+            "input_file": "backend/uploads/upload-1/molecules.csv",
+            "output_file": "backend/job_outputs/failed-job/ranked_results.csv",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "completed_at": "2026-01-01T00:01:00+00:00",
+            "error_message": "failed",
+            "row_count": 0,
+        }
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/jobs/latest")
+
+    assert response.status_code == 200
+    assert response.json() == {"job": None}
+
+
 def test_model_source_status_endpoints(tmp_path: Path, monkeypatch):
     configure_temp_app_data(tmp_path, monkeypatch)
     client = TestClient(app)

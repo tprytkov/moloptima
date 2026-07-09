@@ -114,12 +114,55 @@ function App() {
     loading: false,
     error: '',
   });
+  const [latestRunState, setLatestRunState] = useState({
+    job: null,
+    result: null,
+    loading: true,
+    error: '',
+  });
   const [sourceStatusState, setSourceStatusState] = useState({
     payload: null,
     loading: false,
     error: '',
   });
   const health = useBackendHealth();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadLatestRun() {
+      try {
+        const payload = await apiRequest('/api/jobs/latest');
+        if (!isMounted) {
+          return;
+        }
+        if (payload.job) {
+          setLatestRunState({
+            job: latestJobMetadata(payload.job),
+            result: payload.job,
+            loading: false,
+            error: '',
+          });
+        } else {
+          setLatestRunState({ job: null, result: null, loading: false, error: '' });
+        }
+      } catch (error) {
+        if (isMounted) {
+          setLatestRunState({
+            job: null,
+            result: null,
+            loading: false,
+            error: readableError(error),
+          });
+        }
+      }
+    }
+
+    loadLatestRun();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   async function handleUpload() {
     if (!uploadState.selectedFile) {
@@ -176,6 +219,7 @@ function App() {
       const result = await apiRequest(`/api/results/${job.job_id}`);
       const sourceStatus = await apiRequest('/api/model-sources/status');
       setPrioritizationState({ job, result, loading: false, error: '' });
+      setLatestRunState({ job, result, loading: false, error: '' });
       setSourceStatusState({ payload: sourceStatus, loading: false, error: '' });
     } catch (error) {
       setPrioritizationState((current) => ({
@@ -228,6 +272,7 @@ function App() {
               uploadState={uploadState}
               setUploadState={setUploadState}
               prioritizationState={prioritizationState}
+              latestRunState={latestRunState}
               sourceStatusState={sourceStatusState}
               onUpload={handleUpload}
               onStartPrioritization={handleStartPrioritization}
@@ -337,6 +382,7 @@ function ActivePage({
   uploadState,
   setUploadState,
   prioritizationState,
+  latestRunState,
   sourceStatusState,
   onUpload,
   onStartPrioritization,
@@ -373,12 +419,12 @@ function ActivePage({
     );
   }
 
-  return <DashboardPage health={health} activeItem={activeItem} prioritizationState={prioritizationState} />;
+  return <DashboardPage health={health} activeItem={activeItem} latestRunState={latestRunState} />;
 }
 
-function DashboardPage({ health, activeItem, prioritizationState }) {
+function DashboardPage({ health, activeItem, latestRunState }) {
   const isDashboard = activeItem === 'Dashboard';
-  const latestRunSummary = buildLatestRunSummary(prioritizationState);
+  const latestRunSummary = buildLatestRunSummary(latestRunState);
 
   return (
     <Stack spacing={3}>
@@ -449,7 +495,9 @@ function DashboardPage({ health, activeItem, prioritizationState }) {
               <Stack spacing={0.75}>
                 <Typography variant="h2">Latest Prioritization Run</Typography>
                 <Typography color="text.secondary">
-                  {latestRunSummary
+                  {latestRunState.loading
+                    ? 'Loading latest completed prioritization run...'
+                    : latestRunSummary
                     ? `Completed ${formatDetailValue(latestRunSummary.completedAt)}`
                     : 'Run molecular prioritization to populate dashboard metrics.'}
                 </Typography>
@@ -462,6 +510,8 @@ function DashboardPage({ health, activeItem, prioritizationState }) {
                 />
               )}
             </Stack>
+
+            {latestRunState.error && <Alert severity="warning">{latestRunState.error}</Alert>}
 
             {latestRunSummary ? (
               <Box
@@ -494,7 +544,7 @@ function DashboardPage({ health, activeItem, prioritizationState }) {
                   detail={latestRunSummary.syntheticDetail}
                 />
               </Box>
-            ) : (
+            ) : !latestRunState.loading && (
               <Alert severity="info">
                 No prioritization run is available in this session yet.
               </Alert>
@@ -1136,6 +1186,11 @@ async function apiRequest(path, options = {}) {
     throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
   }
   return payload;
+}
+
+function latestJobMetadata(job) {
+  const { results, ...metadata } = job;
+  return metadata;
 }
 
 function readableError(error) {
