@@ -186,12 +186,12 @@ Manifests:
 - `app_data/manifests/public_data_manifest.json`
 - `app_data/manifests/run_manifest.json`
 
-The Settings page exposes model cache status, latest run model status, and public data-source status. PubChem exact identity lookup, ChEMBL public bioactivity context, and SureChEMBL patent-context evidence are available only when explicitly enabled for a run. They use app-managed caches at `app_data/public_lookup_cache/pubchem`, `app_data/public_lookup_cache/chembl`, and `app_data/public_lookup_cache/surechembl`.
+The Settings page exposes model cache status, latest run model status, and public data-source status. PubChem exact identity lookup, ChEMBL public bioactivity context, and SureChEMBL public patent-associated evidence signals are available only when explicitly enabled for a run. They use app-managed caches at `app_data/public_lookup_cache/pubchem`, `app_data/public_lookup_cache/chembl`, and `app_data/public_lookup_cache/surechembl`. SureChEMBL returned record counts may include broad or indirect public document associations for the structure/query.
 
 ## Limitations / Not Yet Implemented
 
 - No docking execution, receptor preparation, AutoDock/Vina workflow, or binding simulation.
-- PubChem support is limited to optional exact identity lookup; ChEMBL support is limited to optional public molecule/bioactivity context; SureChEMBL support is limited to optional public patent-associated evidence. These are research-screening signals only, not clinical, commercial, regulatory, or legal assessments.
+- PubChem support is limited to optional exact identity lookup; ChEMBL support is limited to optional public molecule/bioactivity context; SureChEMBL support is limited to optional public patent-associated evidence. These are research-screening signals only, not clinical, commercial, regulatory, or legal assessments. SureChEMBL record counts are returned-record counts for a structure/query, not conclusions about rights or applicability.
 - No public database lookup beyond the optional PubChem, ChEMBL, and SureChEMBL checks.
 - No patent analysis, ownership inference, commercialization guidance, or legal-status assessment.
 - No OMOP, clinical context, clinical-trial mapping, RWE, patient-level data, or medical decision support.

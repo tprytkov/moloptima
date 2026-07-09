@@ -741,7 +741,7 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>chembl_activity_count</TableCell>
             <TableCell>chembl_target_summary</TableCell>
             <TableCell>patent_lookup_status</TableCell>
-            <TableCell>patent_record_count</TableCell>
+            <TableCell>surechembl_returned_records</TableCell>
             <TableCell>patent_top_record_id</TableCell>
             <TableCell>closest_known_compound_name</TableCell>
             <TableCell>closest_known_compound_similarity</TableCell>
@@ -823,7 +823,7 @@ function BiopharmaInterpretationPanel({ compound }) {
               ['Patent-context signal', formatPatentSignal(compound)],
               ['Patent lookup status', compound.patent_lookup_status],
               ['Patent source', compound.patent_source],
-              ['Patent-linked public records', compound.patent_record_count],
+              ['SureChEMBL returned records for this structure/query', compound.patent_record_count],
               ['Top patent record ID', compound.patent_top_record_id],
               ['Top patent record title', compound.patent_top_record_title],
               ['Closest known compound', compound.closest_known_compound_name],
@@ -921,7 +921,7 @@ function interpretBiopharmaCompound(compound) {
       color: 'secondary',
       message: `Public patent-associated evidence: ${formatPatentSignal(
         compound,
-      )}. This is a research signal only, not a legal conclusion.`,
+      )}. Record counts may include broad or indirect public document associations. This is a public database signal only, not a legal conclusion.`,
     };
   }
 
@@ -1078,7 +1078,7 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>chembl_lookup_status</TableCell>
             <TableCell>chembl_activity_count</TableCell>
             <TableCell>patent_lookup_status</TableCell>
-            <TableCell>patent_record_count</TableCell>
+            <TableCell>surechembl_returned_records</TableCell>
             <TableCell>closest_known_compound_similarity</TableCell>
             <TableCell>bbb_prediction</TableCell>
             <TableCell>Export</TableCell>
@@ -1348,7 +1348,7 @@ function PrioritizationPage({
                     onChange={(event) => setPatentLookupEnabled(event.target.checked)}
                   />
                 }
-                label="Enable patent-context signal"
+                label="Enable SureChEMBL patent-context signal"
               />
               <Button
                 variant="contained"
@@ -1363,7 +1363,7 @@ function PrioritizationPage({
 
           <Alert severity={pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled ? 'warning' : 'info'}>
             {pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled
-              ? 'Selected public lookups may use the network. PubChem, ChEMBL, and patent-context results are cached locally and reported as research signals only.'
+              ? 'Selected public lookups may use the network. PubChem, ChEMBL, and SureChEMBL patent-context results are cached locally and reported as research signals only.'
               : 'Public compound lookup is off. Output rows will mark PubChem, ChEMBL, and patent-context lookup as not_requested.'}
           </Alert>
 
@@ -1621,7 +1621,7 @@ function CompoundDetailPanel({ compound }) {
                 ['Patent cache status', compound.patent_cache_status],
                 ['Public patent-associated evidence', compound.patent_public_evidence_match],
                 ['Patent source', compound.patent_source],
-                ['Patent-linked public records', compound.patent_record_count],
+                ['SureChEMBL returned records for this structure/query', compound.patent_record_count],
                 ['Top patent record ID', compound.patent_top_record_id],
                 ['Top patent record title', compound.patent_top_record_title],
                 ['Top patent record URL', compound.patent_top_record_url],
@@ -1734,8 +1734,8 @@ function formatChEMBLMatch(row) {
 
 function formatPatentSignal(row) {
   if (isTrueValue(row.patent_public_evidence_match)) {
-    const count = row.patent_record_count ? `${row.patent_record_count} records` : 'public records';
-    return `${row.patent_source || 'Patent source'} (${count})`;
+    const count = row.patent_record_count ? `${row.patent_record_count} returned records` : 'returned records';
+    return `${row.patent_source || 'SureChEMBL'} returned ${count} for this structure/query`;
   }
   return row.patent_lookup_status ?? 'not available';
 }
@@ -1854,7 +1854,8 @@ function buildCompoundMarkdownReport(compound) {
       ['Patent cache status', compound.patent_cache_status],
       ['Public patent-associated evidence', compound.patent_public_evidence_match],
       ['Patent source', compound.patent_source],
-      ['Patent-linked public records', compound.patent_record_count],
+      ['SureChEMBL returned records for this structure/query', compound.patent_record_count],
+      ['Record-count interpretation', 'Counts may include broad or indirect public document associations.'],
       ['Top patent record ID', compound.patent_top_record_id],
       ['Top patent record title', compound.patent_top_record_title],
       ['Top patent record URL', compound.patent_top_record_url],
@@ -2008,7 +2009,7 @@ function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRef
           <Typography variant="h2">Public Lookup Sources</Typography>
           <Alert severity="info">
             PubChem exact identity, ChEMBL public bioactivity context, and SureChEMBL patent-context signals are available only when explicitly enabled for a run.
-            Patent-context output is a research signal only, not a legal conclusion.
+            SureChEMBL returned records may include broad or indirect public document associations; patent-context output is a public database signal only, not a legal conclusion.
           </Alert>
           {sources.length > 0 ? (
             <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
