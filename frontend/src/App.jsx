@@ -30,6 +30,7 @@ import {
 import AssessmentOutlinedIcon from '@mui/icons-material/AssessmentOutlined';
 import CloudQueueOutlinedIcon from '@mui/icons-material/CloudQueueOutlined';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
+import DownloadOutlinedIcon from '@mui/icons-material/DownloadOutlined';
 import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
@@ -1157,11 +1158,20 @@ function CompoundDetailPanel({ compound }) {
                 {formatDetailValue(compound.molecule_id)}
               </Typography>
             </Stack>
-            <Chip
-              label={compound.valid_molecule === false ? 'Invalid molecule' : 'Valid molecule'}
-              color={compound.valid_molecule === false ? 'warning' : 'success'}
-              variant="outlined"
-            />
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} alignItems={{ sm: 'center' }}>
+              <Button
+                variant="outlined"
+                startIcon={<DownloadOutlinedIcon />}
+                onClick={() => downloadCompoundMarkdownReport(compound)}
+              >
+                Download Markdown Report
+              </Button>
+              <Chip
+                label={compound.valid_molecule === false ? 'Invalid molecule' : 'Valid molecule'}
+                color={compound.valid_molecule === false ? 'warning' : 'success'}
+                variant="outlined"
+              />
+            </Stack>
           </Stack>
 
           <Box
@@ -1268,6 +1278,129 @@ function formatClosestKnownCompound(row) {
     return row.closest_known_compound_name;
   }
   return `${row.closest_known_compound_name} (${similarity})`;
+}
+
+function downloadCompoundMarkdownReport(compound) {
+  const markdown = buildCompoundMarkdownReport(compound);
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${safeFilename(compound.molecule_id ?? 'compound')}-moloptima-report.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildCompoundMarkdownReport(compound) {
+  const lines = [
+    `# MolOptima Compound Report: ${markdownValue(compound.molecule_id)}`,
+    '',
+    '## Compound identity',
+    markdownRows([
+      ['Molecule ID', compound.molecule_id],
+      ['Input SMILES', compound.input_smiles],
+      ['Canonical SMILES', compound.canonical_smiles],
+      ['Valid molecule', compound.valid_molecule],
+    ]),
+    '',
+    '## Molecular prioritization',
+    markdownRows([
+      ['Priority score', compound.priority_score],
+      ['Lipinski pass/fail', formatPassFail(compound.lipinski_pass)],
+    ]),
+    '',
+    '## BBB prediction',
+    markdownRows([
+      ['BBB prediction', compound.bbb_prediction],
+      ['BBB probability', compound.bbb_probability],
+      ['BBB model status', compound.bbb_model_status],
+      ['BBB model name', compound.bbb_model_name],
+    ]),
+    '',
+    '## RDKit descriptors',
+    markdownRows([
+      ['Molecular weight', compound.mw],
+      ['TPSA', compound.tpsa],
+      ['HBA', compound.hba],
+      ['HBD', compound.hbd],
+      ['Rotatable bonds', compound.rotatable_bonds],
+      ['QED', compound.qed],
+    ]),
+  ];
+
+  if (hasDockingScore(compound)) {
+    lines.push(
+      '',
+      '## Docking score',
+      markdownRows([
+        ['Docking score', compound.docking_score],
+        ['Docking status', compound.docking_status],
+      ]),
+    );
+  }
+
+  lines.push(
+    '',
+    '## Synthetic feasibility',
+    markdownRows([
+      ['SA score', compound.sa_score],
+      ['Synthetic feasibility category', compound.synthetic_feasibility_category],
+      ['Synthetic feasibility status', compound.synthetic_feasibility_status],
+    ]),
+    '',
+    '## Known-compound identity',
+    markdownRows([
+      ['Known compound match', compound.known_compound_match],
+      ['Known compound name', compound.known_compound_name],
+      ['Known compound ID', compound.known_compound_id],
+      ['Known compound source', compound.known_compound_source],
+      ['Identity check status', compound.identity_check_status],
+    ]),
+    '',
+    '## Closest known compound similarity',
+    markdownRows([
+      ['Closest known compound', compound.closest_known_compound_name],
+      ['Closest known compound ID', compound.closest_known_compound_id],
+      ['Closest known compound similarity', compound.closest_known_compound_similarity],
+      ['Closest known compound source', compound.closest_known_compound_source],
+      ['Similarity check status', compound.similarity_check_status],
+    ]),
+    '',
+    '## Notes/disclaimer',
+    'This report is for computational screening only. It is not a clinical, legal, regulatory, patentability, safety, efficacy, or freedom-to-operate conclusion.',
+    '',
+  );
+
+  return lines.join('\n');
+}
+
+function markdownRows(rows) {
+  return rows
+    .map(([label, value]) => `- **${label}:** ${markdownValue(value)}`)
+    .join('\n');
+}
+
+function markdownValue(value) {
+  return String(formatDetailValue(value)).replaceAll('\n', ' ');
+}
+
+function hasDockingScore(compound) {
+  return (
+    compound.docking_score !== null &&
+    compound.docking_score !== undefined &&
+    compound.docking_score !== '' &&
+    compound.docking_status !== 'not_provided'
+  );
+}
+
+function safeFilename(value) {
+  return String(value)
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'compound';
 }
 
 function isTrueValue(value) {
