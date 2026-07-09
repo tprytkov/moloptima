@@ -409,6 +409,10 @@ function ActivePage({
     );
   }
 
+  if (activeItem === 'Biopharma Intelligence') {
+    return <BiopharmaIntelligencePage latestRunState={latestRunState} />;
+  }
+
   if (activeItem === 'Settings') {
     return (
       <ModelDataSourcesPage
@@ -585,6 +589,231 @@ function RunSummaryCard({ label, value, detail }) {
       </CardContent>
     </Card>
   );
+}
+
+const highSimilarityThreshold = 0.7;
+
+function BiopharmaIntelligencePage({ latestRunState }) {
+  const rows = latestRunState.result?.results ?? [];
+  const summary = buildBiopharmaSummary(rows);
+  const [selectedCompoundKey, setSelectedCompoundKey] = useState('');
+  const selectedCompound =
+    rows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? rows[0] ?? null;
+
+  return (
+    <Stack spacing={3}>
+      <PageIntro
+        title="Biopharma Intelligence"
+        description="Summarize exact local-reference identity matches and closest known-compound similarity for the latest completed prioritization run."
+      />
+
+      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2.5}>
+          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+            <Stack spacing={0.75}>
+              <Typography variant="h2">Latest Run Biopharma Context</Typography>
+              <Typography color="text.secondary">
+                {latestRunState.loading
+                  ? 'Loading latest completed prioritization run...'
+                  : rows.length > 0
+                  ? `Using ${rows.length} result rows from the latest completed run.`
+                  : 'Run molecular prioritization to populate biopharma context.'}
+              </Typography>
+            </Stack>
+            {rows.length > 0 && (
+              <Chip
+                label={`${summary.highSimilarityCompounds} high similarity`}
+                color={summary.highSimilarityCompounds > 0 ? 'secondary' : 'default'}
+                variant="outlined"
+              />
+            )}
+          </Stack>
+
+          {latestRunState.error && <Alert severity="warning">{latestRunState.error}</Alert>}
+
+          {rows.length > 0 ? (
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' },
+                gap: 1.5,
+              }}
+            >
+              <RunSummaryCard label="Exact known-compound matches" value={summary.exactMatches} />
+              <RunSummaryCard label="No exact matches" value={summary.noExactMatches} />
+              <RunSummaryCard
+                label="Avg closest-known similarity"
+                value={summary.averageClosestSimilarity}
+                detail={`${summary.similarityCount} molecules with similarity values`}
+              />
+              <RunSummaryCard
+                label="High-similarity compounds"
+                value={summary.highSimilarityCompounds}
+                detail={`Threshold >= ${highSimilarityThreshold.toFixed(2)}`}
+              />
+            </Box>
+          ) : !latestRunState.loading && (
+            <Alert severity="info">No latest result rows are available for Biopharma Intelligence yet.</Alert>
+          )}
+        </Stack>
+      </Paper>
+
+      {rows.length > 0 && (
+        <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+          <Stack spacing={2}>
+            <Typography variant="h2">Local Reference Context</Typography>
+            <BiopharmaResultTable
+              rows={rows}
+              selectedCompoundKey={compoundRowKey(selectedCompound, rows.indexOf(selectedCompound))}
+              onSelectCompound={setSelectedCompoundKey}
+            />
+          </Stack>
+        </Paper>
+      )}
+
+      {selectedCompound && <BiopharmaInterpretationPanel compound={selectedCompound} />}
+    </Stack>
+  );
+}
+
+function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
+  return (
+    <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+      <Table size="small" aria-label="Biopharma local reference context">
+        <TableHead>
+          <TableRow>
+            <TableCell>molecule_id</TableCell>
+            <TableCell>known_compound_match</TableCell>
+            <TableCell>known_compound_name</TableCell>
+            <TableCell>closest_known_compound_name</TableCell>
+            <TableCell>closest_known_compound_similarity</TableCell>
+            <TableCell>identity_check_status</TableCell>
+            <TableCell>similarity_check_status</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((row, index) => {
+            const rowKey = compoundRowKey(row, index);
+            return (
+              <TableRow
+                hover
+                key={rowKey}
+                selected={selectedCompoundKey === rowKey}
+                onClick={() => onSelectCompound(rowKey)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelectCompound(rowKey);
+                  }
+                }}
+                tabIndex={0}
+                sx={{ cursor: 'pointer' }}
+              >
+                <TableCell>{formatDetailValue(row.molecule_id)}</TableCell>
+                <TableCell>{formatDetailValue(row.known_compound_match)}</TableCell>
+                <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
+                <TableCell>{formatDetailValue(row.closest_known_compound_name)}</TableCell>
+                <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
+                <TableCell>{formatDetailValue(row.identity_check_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.similarity_check_status)}</TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </Box>
+  );
+}
+
+function BiopharmaInterpretationPanel({ compound }) {
+  const interpretation = interpretBiopharmaCompound(compound);
+
+  return (
+    <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
+      <CardContent sx={{ p: 3, '&:last-child': { pb: 3 } }}>
+        <Stack spacing={2}>
+          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+            <Stack spacing={0.5}>
+              <Typography variant="h2">Interpretation</Typography>
+              <Typography color="text.secondary">{formatDetailValue(compound.molecule_id)}</Typography>
+            </Stack>
+            <Chip label={interpretation.label} color={interpretation.color} variant="outlined" />
+          </Stack>
+          <Typography>{interpretation.message}</Typography>
+          <MetadataPanel
+            rows={[
+              ['Exact known compound', compound.known_compound_name],
+              ['Closest known compound', compound.closest_known_compound_name],
+              ['Closest similarity', compound.closest_known_compound_similarity],
+              ['Identity status', compound.identity_check_status],
+              ['Similarity status', compound.similarity_check_status],
+            ]}
+          />
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+function buildBiopharmaSummary(rows) {
+  const similarities = rows
+    .map((row) => numericValue(row.closest_known_compound_similarity))
+    .filter((value) => value !== null);
+  const exactMatches = rows.filter((row) => isTrueValue(row.known_compound_match)).length;
+  const highSimilarityCompounds = similarities.filter((value) => value >= highSimilarityThreshold).length;
+  const averageSimilarity =
+    similarities.length > 0
+      ? similarities.reduce((total, value) => total + value, 0) / similarities.length
+      : null;
+
+  return {
+    exactMatches,
+    noExactMatches: rows.length - exactMatches,
+    averageClosestSimilarity: averageSimilarity === null ? 'Not available' : averageSimilarity.toFixed(3),
+    highSimilarityCompounds,
+    similarityCount: similarities.length,
+  };
+}
+
+function interpretBiopharmaCompound(compound) {
+  if (
+    compound.valid_molecule === false ||
+    compound.similarity_check_status === 'not_run_invalid_molecule' ||
+    compound.identity_check_status === 'not_run_invalid_molecule'
+  ) {
+    return {
+      label: 'Invalid molecule',
+      color: 'warning',
+      message: 'Invalid molecule: local identity and similarity context were not run for this row.',
+    };
+  }
+
+  if (isTrueValue(compound.known_compound_match)) {
+    return {
+      label: 'Exact known compound',
+      color: 'success',
+      message: `Exact known compound: this molecule matches ${formatDetailValue(
+        compound.known_compound_name,
+      )} in the local reference table.`,
+    };
+  }
+
+  const similarity = numericValue(compound.closest_known_compound_similarity);
+  if (similarity !== null && similarity >= highSimilarityThreshold) {
+    return {
+      label: 'Close analog signal',
+      color: 'secondary',
+      message: `Close analog signal: the closest local reference is ${formatDetailValue(
+        compound.closest_known_compound_name,
+      )} with similarity ${similarity.toFixed(3)}.`,
+    };
+  }
+
+  return {
+    label: 'No close local-reference match',
+    color: 'default',
+    message: 'No close local-reference match: this row has no exact match and no closest-known similarity above the configured threshold.',
+  };
 }
 
 function buildLatestRunSummary(prioritizationState) {
@@ -1039,6 +1268,18 @@ function formatClosestKnownCompound(row) {
     return row.closest_known_compound_name;
   }
   return `${row.closest_known_compound_name} (${similarity})`;
+}
+
+function isTrueValue(value) {
+  return value === true || value === 'True' || value === 'true';
+}
+
+function numericValue(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
 }
 
 function formatDetailValue(value) {
