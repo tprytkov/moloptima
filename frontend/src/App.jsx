@@ -414,6 +414,10 @@ function ActivePage({
     return <BiopharmaIntelligencePage latestRunState={latestRunState} />;
   }
 
+  if (activeItem === 'Reports') {
+    return <ReportsPage latestRunState={latestRunState} />;
+  }
+
   if (activeItem === 'Settings') {
     return (
       <ModelDataSourcesPage
@@ -814,6 +818,189 @@ function interpretBiopharmaCompound(compound) {
     label: 'No close local-reference match',
     color: 'default',
     message: 'No close local-reference match: this row has no exact match and no closest-known similarity above the configured threshold.',
+  };
+}
+
+function ReportsPage({ latestRunState }) {
+  const rows = latestRunState.result?.results ?? [];
+  const summary = buildReportsSummary(latestRunState);
+  const [selectedCompoundKey, setSelectedCompoundKey] = useState('');
+  const selectedCompound =
+    rows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? rows[0] ?? null;
+
+  return (
+    <Stack spacing={3}>
+      <PageIntro
+        title="Reports"
+        description="Review available local export options for the latest completed prioritization run and download selected compound summaries."
+      />
+
+      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2.5}>
+          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+            <Stack spacing={0.75}>
+              <Typography variant="h2">Latest Run Report Options</Typography>
+              <Typography color="text.secondary">
+                {latestRunState.loading
+                  ? 'Loading latest completed prioritization run...'
+                  : rows.length > 0
+                  ? 'Markdown compound reports are available for the latest completed run.'
+                  : 'Upload molecules and run prioritization first to generate report options.'}
+              </Typography>
+            </Stack>
+            {rows.length > 0 && (
+              <Chip label={`${summary.totalRows} compounds`} color="secondary" variant="outlined" />
+            )}
+          </Stack>
+
+          {latestRunState.error && <Alert severity="warning">{latestRunState.error}</Alert>}
+
+          {rows.length > 0 ? (
+            <Stack spacing={2.5}>
+              <MetadataPanel
+                rows={[
+                  ['Latest job ID', summary.jobId],
+                  ['Result rows', summary.totalRows],
+                ]}
+              />
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' },
+                  gap: 1.5,
+                }}
+              >
+                <RunSummaryCard label="Valid molecules" value={summary.validMolecules} />
+                <RunSummaryCard
+                  label="High-priority molecules"
+                  value={summary.highPriorityMolecules}
+                  detail="priority_score >= 0.75"
+                />
+                <RunSummaryCard
+                  label="Known-compound exact matches"
+                  value={summary.knownCompoundMatches}
+                />
+                <RunSummaryCard
+                  label="High-similarity compounds"
+                  value={summary.highSimilarityCompounds}
+                  detail={`Threshold >= ${highSimilarityThreshold.toFixed(2)}`}
+                />
+              </Box>
+            </Stack>
+          ) : !latestRunState.loading && (
+            <Alert severity="info">
+              No completed run is available yet. Upload molecules and run prioritization first.
+            </Alert>
+          )}
+        </Stack>
+      </Paper>
+
+      {rows.length > 0 && (
+        <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+          <Stack spacing={2}>
+            <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+              <Stack spacing={0.75}>
+                <Typography variant="h2">Compounds Available for Export</Typography>
+                <Typography color="text.secondary">
+                  Select a compound row or download its Markdown report directly.
+                </Typography>
+              </Stack>
+              {selectedCompound && (
+                <Button
+                  variant="contained"
+                  startIcon={<DownloadOutlinedIcon />}
+                  onClick={() => downloadCompoundMarkdownReport(selectedCompound)}
+                >
+                  Download selected
+                </Button>
+              )}
+            </Stack>
+            <ReportsCompoundTable
+              rows={rows}
+              selectedCompoundKey={compoundRowKey(selectedCompound, rows.indexOf(selectedCompound))}
+              onSelectCompound={setSelectedCompoundKey}
+            />
+          </Stack>
+        </Paper>
+      )}
+    </Stack>
+  );
+}
+
+function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
+  return (
+    <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+      <Table size="small" aria-label="Compounds available for Markdown report export">
+        <TableHead>
+          <TableRow>
+            <TableCell>molecule_id</TableCell>
+            <TableCell>priority_score</TableCell>
+            <TableCell>valid_molecule</TableCell>
+            <TableCell>known_compound_name</TableCell>
+            <TableCell>closest_known_compound_similarity</TableCell>
+            <TableCell>bbb_prediction</TableCell>
+            <TableCell>Export</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((row, index) => {
+            const rowKey = compoundRowKey(row, index);
+            return (
+              <TableRow
+                hover
+                key={rowKey}
+                selected={selectedCompoundKey === rowKey}
+                onClick={() => onSelectCompound(rowKey)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelectCompound(rowKey);
+                  }
+                }}
+                tabIndex={0}
+                sx={{ cursor: 'pointer' }}
+              >
+                <TableCell>{formatDetailValue(row.molecule_id)}</TableCell>
+                <TableCell>{formatDetailValue(row.priority_score)}</TableCell>
+                <TableCell>{formatDetailValue(row.valid_molecule)}</TableCell>
+                <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
+                <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
+                <TableCell>{formatDetailValue(row.bbb_prediction)}</TableCell>
+                <TableCell>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<DownloadOutlinedIcon />}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      downloadCompoundMarkdownReport(row);
+                    }}
+                  >
+                    Markdown
+                  </Button>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </Box>
+  );
+}
+
+function buildReportsSummary(latestRunState) {
+  const rows = latestRunState.result?.results ?? [];
+
+  return {
+    jobId: latestRunState.job?.job_id ?? latestRunState.result?.job_id ?? 'Not available',
+    totalRows: Number(latestRunState.result?.row_count ?? rows.length),
+    validMolecules: rows.filter((row) => isTrueValue(row.valid_molecule)).length,
+    highPriorityMolecules: rows.filter((row) => Number(row.priority_score ?? 0) >= 0.75).length,
+    knownCompoundMatches: rows.filter((row) => isTrueValue(row.known_compound_match)).length,
+    highSimilarityCompounds: rows.filter((row) => {
+      const similarity = numericValue(row.closest_known_compound_similarity);
+      return similarity !== null && similarity >= highSimilarityThreshold;
+    }).length,
   };
 }
 
@@ -1404,7 +1591,7 @@ function safeFilename(value) {
 }
 
 function isTrueValue(value) {
-  return value === true || value === 'True' || value === 'true';
+  return value === true || value === 1 || String(value).toLowerCase() === 'true';
 }
 
 function numericValue(value) {
