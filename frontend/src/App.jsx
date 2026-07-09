@@ -1013,7 +1013,7 @@ function buildLatestRunSummary(prioritizationState) {
   }
 
   const totalMolecules = Number(result.row_count ?? rows.length);
-  const validMolecules = rows.filter((row) => row.valid_molecule === true).length;
+  const validMolecules = rows.filter((row) => isTrueValue(row.valid_molecule)).length;
   const highPriorityMolecules = rows.filter((row) => Number(row.priority_score ?? 0) >= 0.75).length;
   const bbbAvailable = rows.filter((row) => row.bbb_model_status === 'model_available').length;
   const bbbUnavailable = rows.length - bbbAvailable;
@@ -1354,8 +1354,8 @@ function CompoundDetailPanel({ compound }) {
                 Download Markdown Report
               </Button>
               <Chip
-                label={compound.valid_molecule === false ? 'Invalid molecule' : 'Valid molecule'}
-                color={compound.valid_molecule === false ? 'warning' : 'success'}
+                label={isFalseValue(compound.valid_molecule) ? 'Invalid molecule' : 'Valid molecule'}
+                color={isFalseValue(compound.valid_molecule) ? 'warning' : 'success'}
                 variant="outlined"
               />
             </Stack>
@@ -1592,6 +1592,10 @@ function safeFilename(value) {
 
 function isTrueValue(value) {
   return value === true || value === 1 || String(value).toLowerCase() === 'true';
+}
+
+function isFalseValue(value) {
+  return value === false || value === 0 || String(value).toLowerCase() === 'false';
 }
 
 function numericValue(value) {
