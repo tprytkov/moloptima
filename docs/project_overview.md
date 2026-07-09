@@ -1,12 +1,12 @@
-# MolOptima Portfolio Overview
+# MolOptima Project Overview
 
-MolOptima is a local full-stack molecular prioritization app intended for a public portfolio. It demonstrates Python/RDKit cheminformatics, a FastAPI backend, a React/MUI frontend, model-cache transparency, and report export without using private data or cloud services.
+MolOptima is a local compound prioritization and biopharma intelligence platform for analyzing generated or user-provided molecules. It is structured as a modular full-stack system that combines Python/RDKit cheminformatics, a FastAPI backend, a React/MUI frontend, model-cache transparency, and report export without using private data or cloud services.
 
-## Reviewer Walkthrough
+## System Walkthrough
 
 1. Start the backend with `python -m uvicorn backend.main:app --reload`.
 2. Start the frontend with `npm.cmd run dev` from `frontend/`.
-3. Upload `data/demo_inputs/demo_molecules.csv`.
+3. Upload `data/demo_inputs/demo_molecules.csv` or another CSV with `molecule_id` and `smiles`.
 4. Run prioritization.
 5. Review Dashboard, Molecular Prioritization, Biopharma Intelligence, Reports, and Settings.
 6. Download a compound Markdown report from Compound Detail or Reports.
@@ -59,4 +59,4 @@ npm.cmd run build
 
 ## Disclaimer
 
-MolOptima is a computational screening demo. It does not provide clinical, legal, regulatory, patentability, safety, efficacy, or freedom-to-operate conclusions.
+MolOptima is a computational screening application. It does not provide clinical, legal, regulatory, patentability, safety, efficacy, or freedom-to-operate conclusions.

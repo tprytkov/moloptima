@@ -1,6 +1,6 @@
 # Screenshots
 
-This folder contains public-safe screenshots of the local MolOptima demo workflow for README and portfolio presentation.
+This folder contains public-safe screenshots of the local MolOptima workflow for README and project documentation.
 
 The screenshots should avoid private local paths, unpublished compound sets, credentials, or patient/research data. Use `data/demo_inputs/demo_molecules.csv` when refreshing them.
 

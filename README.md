@@ -1,8 +1,8 @@
 # MolOptima
 
-MolOptima is a local full-stack portfolio project for early small-molecule prioritization. It combines a Python/RDKit scoring pipeline, a FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs, running transparent Phase 1 prioritization, reviewing biopharma context, and exporting compound-level Markdown reports.
+MolOptima is a full-stack scientific application for prioritizing AI-generated or user-provided small molecules and connecting top candidates to biopharma intelligence signals. It is a modular full-stack system that combines a Python/RDKit scoring pipeline, a FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs, running transparent Phase 1 prioritization, reviewing biopharma context, and exporting compound-level Markdown reports.
 
-The project is intentionally offline-first and portfolio-safe. It does not run docking software, perform online lookup, search patents, use OMOP/clinical data, require cloud services, or download model weights during normal app rendering.
+The system is intentionally offline-first and public-safe. It does not run docking software, perform online lookup, search patents, use OMOP/clinical data, require cloud services, or download model weights during normal app rendering.
 
 ## Current Workflow
 
@@ -62,7 +62,7 @@ data/demo_inputs/          Public-safe demo molecule CSVs
 data/reference_compounds/  Small local known-compound reference table
 app_data/                  App-managed model cache, lookup cache, and manifests
 tests/                     Pytest suite
-docs/                      Portfolio docs and screenshots
+docs/                      Project docs and screenshots
 ```
 
 Runtime outputs are local and intentionally ignored by Git:
@@ -202,16 +202,16 @@ The Settings page exposes model cache status, latest run model status, and plann
 
 ## Computational-Screening Disclaimer
 
-MolOptima is for computational screening, portfolio demonstration, and educational software engineering purposes only. Outputs are not clinical, legal, regulatory, patentability, safety, efficacy, or freedom-to-operate conclusions. Molecules prioritized by this app require independent scientific validation before any research, clinical, commercial, or legal use.
+MolOptima is for computational screening and scientific software workflow support only. Outputs are not clinical, legal, regulatory, patentability, safety, efficacy, or freedom-to-operate conclusions. Molecules prioritized by this app require independent scientific validation before any research, clinical, commercial, or legal use.
 
-## Portfolio Notes
+## Project Notes
 
-This version demonstrates:
+This version provides:
 
 - Python-first cheminformatics workflow design.
 - Full-stack local app integration with FastAPI and React.
-- Reproducible, public-safe demo data.
+- Reproducible, public-safe sample data.
 - Offline-first model/cache transparency.
-- Clear test/build workflow for a recruiter or reviewer.
+- Clear test/build workflow for technical review and maintenance.
 
-See [docs/portfolio_overview.md](docs/portfolio_overview.md) for a concise reviewer-oriented summary.
+See [docs/project_overview.md](docs/project_overview.md) for a concise system overview.
