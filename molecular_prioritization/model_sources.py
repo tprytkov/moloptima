@@ -139,6 +139,9 @@ def planned_public_source_statuses(
     pubchem_status: str = "available_when_requested",
     pubchem_last_successful_lookup: str = "",
     pubchem_error_message: str = "",
+    chembl_status: str = "available_when_requested",
+    chembl_last_successful_lookup: str = "",
+    chembl_error_message: str = "",
 ) -> dict[str, dict[str, object]]:
     timestamp = utc_timestamp()
     sources = {
@@ -160,6 +163,14 @@ def planned_public_source_statuses(
             "error_message": pubchem_error_message,
         }
     )
+    sources["ChEMBL"].update(
+        {
+            "status": chembl_status,
+            "last_successful_lookup": chembl_last_successful_lookup,
+            "cache_path": relative_path(PUBLIC_LOOKUP_CACHE_DIR / "chembl"),
+            "error_message": chembl_error_message,
+        }
+    )
     return sources
 
 
@@ -168,6 +179,9 @@ def update_public_data_manifest(
     pubchem_status: str = "available_when_requested",
     pubchem_last_successful_lookup: str = "",
     pubchem_error_message: str = "",
+    chembl_status: str = "available_when_requested",
+    chembl_last_successful_lookup: str = "",
+    chembl_error_message: str = "",
 ) -> dict[str, object]:
     payload = {
         "last_checked": utc_timestamp(),
@@ -175,6 +189,9 @@ def update_public_data_manifest(
             pubchem_status=pubchem_status,
             pubchem_last_successful_lookup=pubchem_last_successful_lookup,
             pubchem_error_message=pubchem_error_message,
+            chembl_status=chembl_status,
+            chembl_last_successful_lookup=chembl_last_successful_lookup,
+            chembl_error_message=chembl_error_message,
         ),
     }
     write_manifest(PUBLIC_DATA_MANIFEST_PATH, payload)
@@ -231,6 +248,38 @@ def summarize_pubchem_source(rows: list[dict[str, object]]) -> dict[str, str]:
     }
 
 
+def summarize_chembl_source(rows: list[dict[str, object]]) -> dict[str, str]:
+    statuses = row_status_values(rows, "chembl_lookup_status")
+    if not statuses or statuses == ["not_requested"]:
+        return {
+            "status": "not_requested",
+            "last_successful_lookup": "",
+            "error_message": "",
+        }
+    if any(status in {"exact_match", "similarity_match", "no_match"} for status in statuses):
+        return {
+            "status": "lookup_completed",
+            "last_successful_lookup": utc_timestamp(),
+            "error_message": "",
+        }
+    if "lookup_failed" in statuses:
+        warnings = {
+            str(row.get("chembl_warning", "")).strip()
+            for row in rows
+            if str(row.get("chembl_warning", "")).strip()
+        }
+        return {
+            "status": "lookup_failed",
+            "last_successful_lookup": "",
+            "error_message": "; ".join(sorted(warnings)),
+        }
+    return {
+        "status": "not_requested",
+        "last_successful_lookup": "",
+        "error_message": "",
+    }
+
+
 def update_run_manifest(
     *,
     job_id: str,
@@ -241,9 +290,10 @@ def update_run_manifest(
     runs = existing.get("runs") if isinstance(existing.get("runs"), dict) else {}
     statuses = bbb_status_values(rows)
     pubchem_statuses = row_status_values(rows, "pubchem_lookup_status")
+    chembl_statuses = row_status_values(rows, "chembl_lookup_status")
     public_lookup_requested = any(
         status not in {"", "not_requested"} for status in pubchem_statuses
-    )
+    ) or any(status not in {"", "not_requested"} for status in chembl_statuses)
     model_available = "model_available" in statuses
     placeholder_used = any(status != "model_available" for status in statuses) or not model_available
     run = {
@@ -254,9 +304,10 @@ def update_run_manifest(
         "fallback_placeholder_used": placeholder_used,
         "public_lookup_requested": public_lookup_requested,
         "pubchem_lookup_status_values": pubchem_statuses,
+        "chembl_lookup_status_values": chembl_statuses,
         "public_lookup_source_statuses": {
             "PubChem": summarize_pubchem_source(rows),
-            "ChEMBL": {"status": "planned_inactive"},
+            "ChEMBL": summarize_chembl_source(rows),
             "SureChEMBL": {"status": "planned_inactive"},
         },
         "output_file": output_file,
@@ -276,10 +327,14 @@ def update_run_manifest(
         )
     )
     pubchem_source = summarize_pubchem_source(rows)
+    chembl_source = summarize_chembl_source(rows)
     update_public_data_manifest(
         pubchem_status=pubchem_source["status"],
         pubchem_last_successful_lookup=pubchem_source["last_successful_lookup"],
         pubchem_error_message=pubchem_source["error_message"],
+        chembl_status=chembl_source["status"],
+        chembl_last_successful_lookup=chembl_source["last_successful_lookup"],
+        chembl_error_message=chembl_source["error_message"],
     )
     return payload
 

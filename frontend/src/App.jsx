@@ -128,7 +128,8 @@ function App() {
     loading: false,
     error: '',
   });
-  const [publicLookupEnabled, setPublicLookupEnabled] = useState(false);
+  const [pubchemLookupEnabled, setPubchemLookupEnabled] = useState(false);
+  const [chemblLookupEnabled, setChemblLookupEnabled] = useState(false);
   const health = useBackendHealth();
 
   useEffect(() => {
@@ -218,7 +219,11 @@ function App() {
       const job = await apiRequest('/api/jobs/prioritization', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ upload_id: uploadId, enable_public_lookup: publicLookupEnabled }),
+        body: JSON.stringify({
+          upload_id: uploadId,
+          enable_pubchem_lookup: pubchemLookupEnabled,
+          enable_chembl_lookup: chemblLookupEnabled,
+        }),
       });
       const result = await apiRequest(`/api/results/${job.job_id}`);
       const sourceStatus = await apiRequest('/api/model-sources/status');
@@ -280,8 +285,10 @@ function App() {
               sourceStatusState={sourceStatusState}
               onUpload={handleUpload}
               onStartPrioritization={handleStartPrioritization}
-              publicLookupEnabled={publicLookupEnabled}
-              setPublicLookupEnabled={setPublicLookupEnabled}
+              pubchemLookupEnabled={pubchemLookupEnabled}
+              setPubchemLookupEnabled={setPubchemLookupEnabled}
+              chemblLookupEnabled={chemblLookupEnabled}
+              setChemblLookupEnabled={setChemblLookupEnabled}
               onCheckLocalModelCache={handleCheckLocalModelCache}
               onRefreshSourceStatus={handleRefreshSourceStatus}
             />
@@ -392,8 +399,10 @@ function ActivePage({
   sourceStatusState,
   onUpload,
   onStartPrioritization,
-  publicLookupEnabled,
-  setPublicLookupEnabled,
+  pubchemLookupEnabled,
+  setPubchemLookupEnabled,
+  chemblLookupEnabled,
+  setChemblLookupEnabled,
   onCheckLocalModelCache,
   onRefreshSourceStatus,
 }) {
@@ -413,8 +422,10 @@ function ActivePage({
         uploadState={uploadState}
         prioritizationState={prioritizationState}
         onStartPrioritization={onStartPrioritization}
-        publicLookupEnabled={publicLookupEnabled}
-        setPublicLookupEnabled={setPublicLookupEnabled}
+        pubchemLookupEnabled={pubchemLookupEnabled}
+        setPubchemLookupEnabled={setPubchemLookupEnabled}
+        chemblLookupEnabled={chemblLookupEnabled}
+        setChemblLookupEnabled={setChemblLookupEnabled}
       />
     );
   }
@@ -659,6 +670,11 @@ function BiopharmaIntelligencePage({ latestRunState }) {
                 value={summary.pubchemExactMatches}
                 detail={summary.pubchemLookupDetail}
               />
+              <RunSummaryCard
+                label="ChEMBL matches"
+                value={summary.chemblMatches}
+                detail={summary.chemblLookupDetail}
+              />
               <RunSummaryCard label="No exact matches" value={summary.noExactMatches} />
               <RunSummaryCard
                 label="Avg closest-known similarity"
@@ -707,6 +723,10 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>pubchem_exact_match</TableCell>
             <TableCell>pubchem_cid</TableCell>
             <TableCell>pubchem_lookup_status</TableCell>
+            <TableCell>chembl_lookup_status</TableCell>
+            <TableCell>chembl_molecule_id</TableCell>
+            <TableCell>chembl_activity_count</TableCell>
+            <TableCell>chembl_target_summary</TableCell>
             <TableCell>closest_known_compound_name</TableCell>
             <TableCell>closest_known_compound_similarity</TableCell>
             <TableCell>identity_check_status</TableCell>
@@ -737,6 +757,10 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.pubchem_exact_match)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_cid)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.chembl_lookup_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.chembl_molecule_id || row.chembl_similarity_molecule_id)}</TableCell>
+                <TableCell>{formatDetailValue(row.chembl_activity_count)}</TableCell>
+                <TableCell>{formatDetailValue(row.chembl_target_summary)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
                 <TableCell>{formatDetailValue(row.identity_check_status)}</TableCell>
@@ -771,6 +795,12 @@ function BiopharmaInterpretationPanel({ compound }) {
               ['PubChem exact match', formatPubChemMatch(compound)],
               ['PubChem lookup status', compound.pubchem_lookup_status],
               ['PubChem cache status', compound.pubchem_cache_status],
+              ['ChEMBL match', formatChEMBLMatch(compound)],
+              ['ChEMBL lookup status', compound.chembl_lookup_status],
+              ['ChEMBL cache status', compound.chembl_cache_status],
+              ['Known public bioactivity records', compound.chembl_activity_count],
+              ['Associated public targets', compound.chembl_target_count],
+              ['ChEMBL target summary', compound.chembl_target_summary],
               ['Closest known compound', compound.closest_known_compound_name],
               ['Closest similarity', compound.closest_known_compound_similarity],
               ['Identity status', compound.identity_check_status],
@@ -790,6 +820,10 @@ function buildBiopharmaSummary(rows) {
   const exactMatches = rows.filter((row) => isTrueValue(row.known_compound_match)).length;
   const pubchemExactMatches = rows.filter((row) => isTrueValue(row.pubchem_exact_match)).length;
   const pubchemStatusCounts = countValues(rows.map((row) => row.pubchem_lookup_status).filter(Boolean));
+  const chemblMatches = rows.filter(
+    (row) => isTrueValue(row.chembl_exact_match) || isTrueValue(row.chembl_similarity_match),
+  ).length;
+  const chemblStatusCounts = countValues(rows.map((row) => row.chembl_lookup_status).filter(Boolean));
   const highSimilarityCompounds = similarities.filter((value) => value >= highSimilarityThreshold).length;
   const averageSimilarity =
     similarities.length > 0
@@ -800,6 +834,8 @@ function buildBiopharmaSummary(rows) {
     exactMatches,
     pubchemExactMatches,
     pubchemLookupDetail: formatCounts(pubchemStatusCounts) || 'Public lookup not run',
+    chemblMatches,
+    chemblLookupDetail: formatCounts(chemblStatusCounts) || 'ChEMBL lookup not run',
     noExactMatches: rows.length - exactMatches,
     averageClosestSimilarity: averageSimilarity === null ? 'Not available' : averageSimilarity.toFixed(3),
     highSimilarityCompounds,
@@ -837,6 +873,16 @@ function interpretBiopharmaCompound(compound) {
       message: `PubChem exact match: this molecule matched ${formatDetailValue(
         compound.pubchem_preferred_name,
       )} with CID ${formatDetailValue(compound.pubchem_cid)}. This is a public identity signal, not a novelty or patentability conclusion.`,
+    };
+  }
+
+  if (isTrueValue(compound.chembl_exact_match) || isTrueValue(compound.chembl_similarity_match)) {
+    return {
+      label: 'Public bioactivity context',
+      color: 'secondary',
+      message: `ChEMBL match: ${formatChEMBLMatch(
+        compound,
+      )}. This is a public database signal, not a clinical conclusion.`,
     };
   }
 
@@ -923,6 +969,11 @@ function ReportsPage({ latestRunState }) {
                   detail={summary.pubchemLookupDetail}
                 />
                 <RunSummaryCard
+                  label="ChEMBL matches"
+                  value={summary.chemblMatches}
+                  detail={summary.chemblLookupDetail}
+                />
+                <RunSummaryCard
                   label="High-similarity compounds"
                   value={summary.highSimilarityCompounds}
                   detail={`Threshold >= ${highSimilarityThreshold.toFixed(2)}`}
@@ -980,6 +1031,8 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>valid_molecule</TableCell>
             <TableCell>known_compound_name</TableCell>
             <TableCell>pubchem_lookup_status</TableCell>
+            <TableCell>chembl_lookup_status</TableCell>
+            <TableCell>chembl_activity_count</TableCell>
             <TableCell>closest_known_compound_similarity</TableCell>
             <TableCell>bbb_prediction</TableCell>
             <TableCell>Export</TableCell>
@@ -1008,6 +1061,8 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.valid_molecule)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.chembl_lookup_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.chembl_activity_count)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
                 <TableCell>{formatDetailValue(row.bbb_prediction)}</TableCell>
                 <TableCell>
@@ -1043,6 +1098,10 @@ function buildReportsSummary(latestRunState) {
     knownCompoundMatches: rows.filter((row) => isTrueValue(row.known_compound_match)).length,
     pubchemExactMatches: rows.filter((row) => isTrueValue(row.pubchem_exact_match)).length,
     pubchemLookupDetail: formatCounts(countValues(rows.map((row) => row.pubchem_lookup_status).filter(Boolean))) || 'Public lookup not run',
+    chemblMatches: rows.filter(
+      (row) => isTrueValue(row.chembl_exact_match) || isTrueValue(row.chembl_similarity_match),
+    ).length,
+    chemblLookupDetail: formatCounts(countValues(rows.map((row) => row.chembl_lookup_status).filter(Boolean))) || 'ChEMBL lookup not run',
     highSimilarityCompounds: rows.filter((row) => {
       const similarity = numericValue(row.closest_known_compound_similarity);
       return similarity !== null && similarity >= highSimilarityThreshold;
@@ -1179,8 +1238,10 @@ function PrioritizationPage({
   uploadState,
   prioritizationState,
   onStartPrioritization,
-  publicLookupEnabled,
-  setPublicLookupEnabled,
+  pubchemLookupEnabled,
+  setPubchemLookupEnabled,
+  chemblLookupEnabled,
+  setChemblLookupEnabled,
 }) {
   const resultRows = prioritizationState.result?.results ?? [];
   const [selectedCompoundKey, setSelectedCompoundKey] = useState(null);
@@ -1213,11 +1274,20 @@ function PrioritizationPage({
               <FormControlLabel
                 control={
                   <Checkbox
-                    checked={publicLookupEnabled}
-                    onChange={(event) => setPublicLookupEnabled(event.target.checked)}
+                    checked={pubchemLookupEnabled}
+                    onChange={(event) => setPubchemLookupEnabled(event.target.checked)}
                   />
                 }
                 label="Enable PubChem exact identity check"
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={chemblLookupEnabled}
+                    onChange={(event) => setChemblLookupEnabled(event.target.checked)}
+                  />
+                }
+                label="Enable ChEMBL public bioactivity context"
               />
               <Button
                 variant="contained"
@@ -1230,10 +1300,10 @@ function PrioritizationPage({
             </Stack>
           </Stack>
 
-          <Alert severity={publicLookupEnabled ? 'warning' : 'info'}>
-            {publicLookupEnabled
-              ? 'PubChem exact identity lookup is enabled for this run and may use the network. Results are cached locally.'
-              : 'Public compound lookup is off. Output rows will mark PubChem lookup as not_requested.'}
+          <Alert severity={pubchemLookupEnabled || chemblLookupEnabled ? 'warning' : 'info'}>
+            {pubchemLookupEnabled || chemblLookupEnabled
+              ? 'Selected public lookups may use the network. PubChem and ChEMBL results are cached locally and reported as public database signals only.'
+              : 'Public compound lookup is off. Output rows will mark PubChem and ChEMBL lookup as not_requested.'}
           </Alert>
 
           {prioritizationState.error && <Alert severity="error">{prioritizationState.error}</Alert>}
@@ -1338,6 +1408,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   const hasIdentityStatus = rows.some((row) => row.identity_check_status !== undefined);
   const hasSimilarityStatus = rows.some((row) => row.similarity_check_status !== undefined);
   const hasPublicIdentityStatus = rows.some((row) => row.pubchem_lookup_status !== undefined);
+  const hasChEMBLStatus = rows.some((row) => row.chembl_lookup_status !== undefined);
 
   return (
     <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -1349,6 +1420,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>Score</TableCell>
             {hasIdentityStatus && <TableCell>Identity</TableCell>}
             {hasPublicIdentityStatus && <TableCell>Public compound match</TableCell>}
+            {hasChEMBLStatus && <TableCell>Public bioactivity context</TableCell>}
             {hasSimilarityStatus && <TableCell>Closest known</TableCell>}
             {hasDockingScore && <TableCell>Docking score</TableCell>}
             {hasSyntheticAccessibility && <TableCell>SA score</TableCell>}
@@ -1383,6 +1455,9 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 )}
                 {hasPublicIdentityStatus && (
                   <TableCell>{formatPubChemMatch(row)}</TableCell>
+                )}
+                {hasChEMBLStatus && (
+                  <TableCell>{formatChEMBLMatch(row)}</TableCell>
                 )}
                 {hasSimilarityStatus && (
                   <TableCell>
@@ -1461,6 +1536,20 @@ function CompoundDetailPanel({ compound }) {
                 ['PubChem lookup status', compound.pubchem_lookup_status],
                 ['PubChem cache status', compound.pubchem_cache_status],
                 ['PubChem warning', compound.pubchem_warning],
+                ['ChEMBL match', formatChEMBLMatch(compound)],
+                ['ChEMBL molecule ID', compound.chembl_molecule_id],
+                ['ChEMBL preferred name', compound.chembl_pref_name],
+                ['ChEMBL lookup status', compound.chembl_lookup_status],
+                ['ChEMBL cache status', compound.chembl_cache_status],
+                ['ChEMBL warning', compound.chembl_warning],
+                ['Known public bioactivity records', compound.chembl_activity_count],
+                ['Associated public targets', compound.chembl_target_count],
+                ['ChEMBL target summary', compound.chembl_target_summary],
+                ['ChEMBL similarity match', compound.chembl_similarity_match],
+                ['ChEMBL similarity score', compound.chembl_similarity_score],
+                ['ChEMBL similarity molecule ID', compound.chembl_similarity_molecule_id],
+                ['ChEMBL similarity preferred name', compound.chembl_similarity_pref_name],
+                ['ChEMBL similarity status', compound.chembl_similarity_status],
                 ['Closest known compound', compound.closest_known_compound_name],
                 ['Closest known compound ID', compound.closest_known_compound_id],
                 ['Closest known compound similarity', compound.closest_known_compound_similarity],
@@ -1555,6 +1644,17 @@ function formatPubChemMatch(row) {
   return row.pubchem_lookup_status ?? 'not available';
 }
 
+function formatChEMBLMatch(row) {
+  if (isTrueValue(row.chembl_exact_match)) {
+    return `${row.chembl_pref_name || row.chembl_molecule_id || 'ChEMBL match'} (${formatDetailValue(row.chembl_activity_count)} activities)`;
+  }
+  if (isTrueValue(row.chembl_similarity_match)) {
+    const score = row.chembl_similarity_score ? `, similarity ${row.chembl_similarity_score}` : '';
+    return `${row.chembl_similarity_pref_name || row.chembl_similarity_molecule_id || 'ChEMBL analog'}${score}`;
+  }
+  return row.chembl_lookup_status ?? 'not available';
+}
+
 function downloadCompoundMarkdownReport(compound) {
   const markdown = buildCompoundMarkdownReport(compound);
   const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
@@ -1644,6 +1744,24 @@ function buildCompoundMarkdownReport(compound) {
       ['PubChem warning', compound.pubchem_warning],
     ]),
     '',
+    '## Public bioactivity context',
+    markdownRows([
+      ['ChEMBL exact match', compound.chembl_exact_match],
+      ['ChEMBL molecule ID', compound.chembl_molecule_id],
+      ['ChEMBL preferred name', compound.chembl_pref_name],
+      ['ChEMBL lookup status', compound.chembl_lookup_status],
+      ['ChEMBL cache status', compound.chembl_cache_status],
+      ['ChEMBL warning', compound.chembl_warning],
+      ['Known public bioactivity records', compound.chembl_activity_count],
+      ['Associated public targets', compound.chembl_target_count],
+      ['ChEMBL target summary', compound.chembl_target_summary],
+      ['ChEMBL similarity match', compound.chembl_similarity_match],
+      ['ChEMBL similarity score', compound.chembl_similarity_score],
+      ['ChEMBL similarity molecule ID', compound.chembl_similarity_molecule_id],
+      ['ChEMBL similarity preferred name', compound.chembl_similarity_pref_name],
+      ['ChEMBL similarity status', compound.chembl_similarity_status],
+    ]),
+    '',
     '## Closest known compound similarity',
     markdownRows([
       ['Closest known compound', compound.closest_known_compound_name],
@@ -1731,7 +1849,7 @@ function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRef
     <Stack spacing={3}>
       <PageIntro
         title="Model and Data Sources"
-        description="Inspect the app-managed BBB model cache, latest run model status, and planned public lookup source state."
+        description="Inspect the app-managed BBB model cache, latest run model status, and public lookup source state."
       />
 
       <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
@@ -1789,8 +1907,8 @@ function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRef
         <Stack spacing={2}>
           <Typography variant="h2">Public Lookup Sources</Typography>
           <Alert severity="info">
-            PubChem exact identity lookup is available only when explicitly enabled for a run.
-            ChEMBL and SureChEMBL remain planned inactive in this MolOptima build.
+            PubChem exact identity and ChEMBL public bioactivity context are available only when explicitly enabled for a run.
+            SureChEMBL remains planned inactive in this MolOptima build.
           </Alert>
           {sources.length > 0 ? (
             <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>

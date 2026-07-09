@@ -23,6 +23,9 @@ app_data/model_cache/huggingface/*
 !app_data/model_cache/huggingface/.gitkeep
 app_data/public_lookup_cache/*
 !app_data/public_lookup_cache/.gitkeep
+!app_data/public_lookup_cache/chembl/
+app_data/public_lookup_cache/chembl/*
+!app_data/public_lookup_cache/chembl/.gitkeep
 app_data/manifests/run_manifest_*.json
 app_data/manifests/*_local.json
 app_data/manifests/*.tmp

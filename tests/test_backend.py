@@ -59,8 +59,17 @@ def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
 
     prioritize_options = {}
 
-    def fake_prioritize_csv(input_path, output_path, *, enable_public_lookup=False):
+    def fake_prioritize_csv(
+        input_path,
+        output_path,
+        *,
+        enable_public_lookup=False,
+        enable_pubchem_lookup=None,
+        enable_chembl_lookup=False,
+    ):
         prioritize_options["enable_public_lookup"] = enable_public_lookup
+        prioritize_options["enable_pubchem_lookup"] = enable_pubchem_lookup
+        prioritize_options["enable_chembl_lookup"] = enable_chembl_lookup
         rows = [
             {
                 "molecule_id": "mol_1",
@@ -73,6 +82,7 @@ def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
                 "bbb_model_status": "model_unavailable",
                 "bbb_warning": "model missing",
                 "pubchem_lookup_status": "not_requested",
+                "chembl_lookup_status": "not_requested",
             }
         ]
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -111,6 +121,8 @@ def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
     assert job_payload["completed_at"]
     assert job_payload["error_message"] == ""
     assert prioritize_options["enable_public_lookup"] is False
+    assert prioritize_options["enable_pubchem_lookup"] is False
+    assert prioritize_options["enable_chembl_lookup"] is False
 
     metadata_path = services.JOB_METADATA_DIR / f"{job_payload['job_id']}.json"
     assert metadata_path.exists()
@@ -244,6 +256,10 @@ def test_model_source_status_endpoints(tmp_path: Path, monkeypatch):
         "available_when_requested",
         "not_requested",
     }
+    assert check_payload["public_data_manifest"]["sources"]["ChEMBL"]["status"] in {
+        "available_when_requested",
+        "not_requested",
+    }
 
 
 def test_prioritization_job_passes_public_lookup_flag(tmp_path: Path, monkeypatch):
@@ -254,8 +270,17 @@ def test_prioritization_job_passes_public_lookup_flag(tmp_path: Path, monkeypatc
     configure_temp_app_data(tmp_path, monkeypatch)
     prioritize_options = {}
 
-    def fake_prioritize_csv(input_path, output_path, *, enable_public_lookup=False):
+    def fake_prioritize_csv(
+        input_path,
+        output_path,
+        *,
+        enable_public_lookup=False,
+        enable_pubchem_lookup=None,
+        enable_chembl_lookup=False,
+    ):
         prioritize_options["enable_public_lookup"] = enable_public_lookup
+        prioritize_options["enable_pubchem_lookup"] = enable_pubchem_lookup
+        prioritize_options["enable_chembl_lookup"] = enable_chembl_lookup
         rows = [
             {
                 "molecule_id": "mol_1",
@@ -265,6 +290,7 @@ def test_prioritization_job_passes_public_lookup_flag(tmp_path: Path, monkeypatc
                 "priority_score": 0.75,
                 "bbb_model_status": "model_unavailable",
                 "pubchem_lookup_status": "exact_match",
+                "chembl_lookup_status": "not_requested",
             }
         ]
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -291,12 +317,80 @@ def test_prioritization_job_passes_public_lookup_flag(tmp_path: Path, monkeypatc
 
     assert job_response.status_code == 200
     assert prioritize_options["enable_public_lookup"] is True
+    assert prioritize_options["enable_pubchem_lookup"] is True
+    assert prioritize_options["enable_chembl_lookup"] is False
     run_manifest = json.loads(
         services.model_sources.RUN_MANIFEST_PATH.read_text(encoding="utf-8")
     )
     latest_run = run_manifest["runs"][job_response.json()["job_id"]]
     assert latest_run["public_lookup_requested"] is True
     assert latest_run["pubchem_lookup_status_values"] == ["exact_match"]
+
+
+def test_prioritization_job_passes_independent_chembl_flag(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(services, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(services, "UPLOAD_DIR", tmp_path / "backend" / "uploads")
+    monkeypatch.setattr(services, "JOB_OUTPUT_DIR", tmp_path / "backend" / "job_outputs")
+    monkeypatch.setattr(services, "JOB_METADATA_DIR", tmp_path / "backend" / "job_metadata")
+    configure_temp_app_data(tmp_path, monkeypatch)
+    prioritize_options = {}
+
+    def fake_prioritize_csv(
+        input_path,
+        output_path,
+        *,
+        enable_public_lookup=False,
+        enable_pubchem_lookup=None,
+        enable_chembl_lookup=False,
+    ):
+        prioritize_options["enable_public_lookup"] = enable_public_lookup
+        prioritize_options["enable_pubchem_lookup"] = enable_pubchem_lookup
+        prioritize_options["enable_chembl_lookup"] = enable_chembl_lookup
+        rows = [
+            {
+                "molecule_id": "mol_1",
+                "input_smiles": "CCO",
+                "canonical_smiles": "CCO",
+                "valid_molecule": True,
+                "priority_score": 0.75,
+                "bbb_model_status": "model_unavailable",
+                "pubchem_lookup_status": "not_requested",
+                "chembl_lookup_status": "exact_match",
+            }
+        ]
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        with Path(output_path).open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        return rows
+
+    monkeypatch.setattr(services, "prioritize_csv", fake_prioritize_csv)
+    client = TestClient(app)
+    upload_response = client.post(
+        "/api/molecules/upload",
+        files={"file": ("molecules.csv", b"molecule_id,smiles\nmol_1,CCO\n", "text/csv")},
+    )
+
+    job_response = client.post(
+        "/api/jobs/prioritization",
+        json={
+            "upload_id": upload_response.json()["upload_id"],
+            "enable_chembl_lookup": True,
+        },
+    )
+
+    assert job_response.status_code == 200
+    assert prioritize_options["enable_public_lookup"] is False
+    assert prioritize_options["enable_pubchem_lookup"] is False
+    assert prioritize_options["enable_chembl_lookup"] is True
+    run_manifest = json.loads(
+        services.model_sources.RUN_MANIFEST_PATH.read_text(encoding="utf-8")
+    )
+    latest_run = run_manifest["runs"][job_response.json()["job_id"]]
+    assert latest_run["public_lookup_requested"] is True
+    assert latest_run["pubchem_lookup_status_values"] == ["not_requested"]
+    assert latest_run["chembl_lookup_status_values"] == ["exact_match"]
 
 
 def test_model_source_status_endpoint_reports_cached_bbb_model(tmp_path: Path, monkeypatch):
@@ -345,7 +439,14 @@ def test_prioritization_failure_writes_failed_metadata(tmp_path: Path, monkeypat
     monkeypatch.setattr(services, "JOB_OUTPUT_DIR", tmp_path / "backend" / "job_outputs")
     monkeypatch.setattr(services, "JOB_METADATA_DIR", tmp_path / "backend" / "job_metadata")
 
-    def failing_prioritize_csv(input_path, output_path, *, enable_public_lookup=False):
+    def failing_prioritize_csv(
+        input_path,
+        output_path,
+        *,
+        enable_public_lookup=False,
+        enable_pubchem_lookup=None,
+        enable_chembl_lookup=False,
+    ):
         raise RuntimeError("synthetic pipeline failure")
 
     monkeypatch.setattr(services, "prioritize_csv", failing_prioritize_csv)

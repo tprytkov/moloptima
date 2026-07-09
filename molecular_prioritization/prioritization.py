@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from biopharma_intelligence.identity import IdentityMatchResult
-from biopharma_intelligence.public_lookup import PublicIdentityResult, not_requested_result
+from biopharma_intelligence.public_lookup import (
+    ChEMBLBioactivityResult,
+    PublicIdentityResult,
+    chembl_not_requested_result,
+    not_requested_result,
+)
 from biopharma_intelligence.similarity import SimilarityMatchResult
 from molecular_prioritization.bbb_predictor import BBBPrediction
 from molecular_prioritization.descriptors import MolecularDescriptors
@@ -57,6 +62,7 @@ def build_priority_record(
     identity_match: IdentityMatchResult | None = None,
     similarity_match: SimilarityMatchResult | None = None,
     public_identity_match: PublicIdentityResult | None = None,
+    chembl_bioactivity_match: ChEMBLBioactivityResult | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     """Build one row for a ranked molecular prioritization result."""
@@ -107,6 +113,7 @@ def build_priority_record(
         similarity_check_status="not_run",
     )
     public_identity_values = public_identity_match or not_requested_result()
+    chembl_bioactivity_values = chembl_bioactivity_match or chembl_not_requested_result()
 
     return {
         "molecule_id": molecule_id,
@@ -133,6 +140,22 @@ def build_priority_record(
         "pubchem_lookup_status": public_identity_values.pubchem_lookup_status,
         "pubchem_cache_status": public_identity_values.pubchem_cache_status,
         "pubchem_warning": public_identity_values.pubchem_warning,
+        "chembl_exact_match": chembl_bioactivity_values.chembl_exact_match,
+        "chembl_molecule_id": chembl_bioactivity_values.chembl_molecule_id,
+        "chembl_pref_name": chembl_bioactivity_values.chembl_pref_name,
+        "chembl_lookup_status": chembl_bioactivity_values.chembl_lookup_status,
+        "chembl_cache_status": chembl_bioactivity_values.chembl_cache_status,
+        "chembl_warning": chembl_bioactivity_values.chembl_warning,
+        "chembl_activity_count": chembl_bioactivity_values.chembl_activity_count,
+        "chembl_target_count": chembl_bioactivity_values.chembl_target_count,
+        "chembl_target_summary": chembl_bioactivity_values.chembl_target_summary,
+        "chembl_similarity_match": chembl_bioactivity_values.chembl_similarity_match,
+        "chembl_similarity_score": chembl_bioactivity_values.chembl_similarity_score,
+        "chembl_similarity_molecule_id": (
+            chembl_bioactivity_values.chembl_similarity_molecule_id
+        ),
+        "chembl_similarity_pref_name": chembl_bioactivity_values.chembl_similarity_pref_name,
+        "chembl_similarity_status": chembl_bioactivity_values.chembl_similarity_status,
         "docking_score": docking_values.docking_score,
         "docking_status": docking_values.docking_status,
         "sa_score": synthetic_accessibility_values.sa_score,

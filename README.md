@@ -186,13 +186,13 @@ Manifests:
 - `app_data/manifests/public_data_manifest.json`
 - `app_data/manifests/run_manifest.json`
 
-The Settings page exposes model cache status, latest run model status, and public data-source status. PubChem exact identity lookup is available only when explicitly enabled for a run and uses the app-managed cache at `app_data/public_lookup_cache/pubchem`. ChEMBL and SureChEMBL remain planned inactive sources in this version.
+The Settings page exposes model cache status, latest run model status, and public data-source status. PubChem exact identity lookup and ChEMBL public bioactivity context are available only when explicitly enabled for a run. They use app-managed caches at `app_data/public_lookup_cache/pubchem` and `app_data/public_lookup_cache/chembl`. SureChEMBL remains a planned inactive source in this version.
 
 ## Limitations / Not Yet Implemented
 
 - No docking execution, receptor preparation, AutoDock/Vina workflow, or binding simulation.
-- PubChem support is limited to optional exact identity lookup; it is not a novelty, patentability, safety, efficacy, or freedom-to-operate assessment.
-- No ChEMBL, SureChEMBL, or other public database lookup beyond the optional PubChem exact identity check.
+- PubChem support is limited to optional exact identity lookup; ChEMBL support is limited to optional public molecule/bioactivity context. These are not novelty, patentability, safety, efficacy, mechanism, clinical, or freedom-to-operate assessments.
+- No SureChEMBL or other public database lookup beyond the optional PubChem and ChEMBL checks.
 - No patent search, patent similarity, patentability analysis, or freedom-to-operate analysis.
 - No OMOP, clinical context, clinical-trial mapping, RWE, patient-level data, or medical decision support.
 - No retrosynthesis model or learned synthetic-accessibility model.

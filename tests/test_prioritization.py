@@ -2,7 +2,7 @@ from molecular_prioritization.bbb_predictor import BBBPrediction, UnavailableBBB
 from molecular_prioritization.descriptors import calculate_descriptors
 from molecular_prioritization.pipeline import prioritize_csv, prioritize_smiles
 from molecular_prioritization.prioritization import calculate_priority_score
-from biopharma_intelligence.public_lookup import PublicIdentityResult
+from biopharma_intelligence.public_lookup import ChEMBLBioactivityResult, PublicIdentityResult
 
 
 class FakeBBBPredictor:
@@ -47,6 +47,47 @@ class FakePublicLookupClient:
         )
 
 
+class FakeChEMBLLookupClient:
+    def __init__(self):
+        self.calls = []
+
+    def lookup_bioactivity_context(self, smiles, valid_molecule):
+        self.calls.append((smiles, valid_molecule))
+        if not valid_molecule:
+            return ChEMBLBioactivityResult(
+                chembl_exact_match=False,
+                chembl_molecule_id=None,
+                chembl_pref_name=None,
+                chembl_lookup_status="not_run_invalid_molecule",
+                chembl_cache_status="not_used",
+                chembl_warning="ChEMBL lookup skipped for invalid molecule.",
+                chembl_activity_count=None,
+                chembl_target_count=None,
+                chembl_target_summary=None,
+                chembl_similarity_match=False,
+                chembl_similarity_score=None,
+                chembl_similarity_molecule_id=None,
+                chembl_similarity_pref_name=None,
+                chembl_similarity_status="not_run_invalid_molecule",
+            )
+        return ChEMBLBioactivityResult(
+            chembl_exact_match=True,
+            chembl_molecule_id="CHEMBL545",
+            chembl_pref_name="ETHANOL",
+            chembl_lookup_status="exact_match",
+            chembl_cache_status="fresh_lookup",
+            chembl_warning="",
+            chembl_activity_count=12,
+            chembl_target_count=3,
+            chembl_target_summary="Target A; Target B; Target C",
+            chembl_similarity_match=False,
+            chembl_similarity_score=None,
+            chembl_similarity_molecule_id=None,
+            chembl_similarity_pref_name=None,
+            chembl_similarity_status="not_run_exact_match_found",
+        )
+
+
 def test_calculate_priority_score_is_zero_for_invalid_molecule():
     descriptors = calculate_descriptors("CCO")
 
@@ -84,6 +125,7 @@ def test_prioritize_smiles_keeps_invalid_records_in_ranked_output():
     assert invalid["closest_known_compound_similarity"] is None
     assert invalid["similarity_check_status"] == "not_run_invalid_molecule"
     assert invalid["pubchem_lookup_status"] == "not_requested"
+    assert invalid["chembl_lookup_status"] == "not_requested"
     assert ranked[0]["priority_score"] >= ranked[-1]["priority_score"]
 
 
@@ -147,17 +189,23 @@ def test_prioritize_smiles_marks_no_known_compound_identity_match():
 
 def test_prioritize_smiles_default_public_lookup_is_not_requested():
     client = FakePublicLookupClient()
+    chembl_client = FakeChEMBLLookupClient()
 
     ranked = prioritize_smiles(
         [{"molecule_id": "ethanol", "smiles": "CCO"}],
         bbb_predictor=UnavailableBBBPredictor("model cache missing"),
         public_lookup_client=client,
+        chembl_lookup_client=chembl_client,
     )
 
     assert ranked[0]["pubchem_exact_match"] is False
     assert ranked[0]["pubchem_lookup_status"] == "not_requested"
     assert ranked[0]["pubchem_cache_status"] == "not_used"
+    assert ranked[0]["chembl_exact_match"] is False
+    assert ranked[0]["chembl_lookup_status"] == "not_requested"
+    assert ranked[0]["chembl_cache_status"] == "not_used"
     assert client.calls == []
+    assert chembl_client.calls == []
 
 
 def test_prioritize_smiles_runs_public_lookup_when_requested():
@@ -178,6 +226,46 @@ def test_prioritize_smiles_runs_public_lookup_when_requested():
     assert client.calls == [("CCO", True)]
 
 
+def test_prioritize_smiles_runs_chembl_lookup_when_requested():
+    client = FakeChEMBLLookupClient()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        enable_chembl_lookup=True,
+        chembl_lookup_client=client,
+    )
+
+    assert ranked[0]["pubchem_lookup_status"] == "not_requested"
+    assert ranked[0]["chembl_exact_match"] is True
+    assert ranked[0]["chembl_molecule_id"] == "CHEMBL545"
+    assert ranked[0]["chembl_pref_name"] == "ETHANOL"
+    assert ranked[0]["chembl_lookup_status"] == "exact_match"
+    assert ranked[0]["chembl_cache_status"] == "fresh_lookup"
+    assert ranked[0]["chembl_activity_count"] == 12
+    assert ranked[0]["chembl_target_count"] == 3
+    assert client.calls == [("CCO", True)]
+
+
+def test_prioritize_smiles_pubchem_and_chembl_can_run_together():
+    pubchem_client = FakePublicLookupClient()
+    chembl_client = FakeChEMBLLookupClient()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        enable_pubchem_lookup=True,
+        enable_chembl_lookup=True,
+        public_lookup_client=pubchem_client,
+        chembl_lookup_client=chembl_client,
+    )
+
+    assert ranked[0]["pubchem_lookup_status"] == "exact_match"
+    assert ranked[0]["chembl_lookup_status"] == "exact_match"
+    assert pubchem_client.calls == [("CCO", True)]
+    assert chembl_client.calls == [("CCO", True)]
+
+
 def test_prioritize_smiles_public_lookup_skips_invalid_molecule_when_requested():
     client = FakePublicLookupClient()
 
@@ -190,6 +278,21 @@ def test_prioritize_smiles_public_lookup_skips_invalid_molecule_when_requested()
 
     assert ranked[0]["pubchem_exact_match"] is False
     assert ranked[0]["pubchem_lookup_status"] == "not_run_invalid_molecule"
+    assert client.calls == [(None, False)]
+
+
+def test_prioritize_smiles_chembl_lookup_skips_invalid_molecule_when_requested():
+    client = FakeChEMBLLookupClient()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "invalid", "smiles": "C1CC"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        enable_chembl_lookup=True,
+        chembl_lookup_client=client,
+    )
+
+    assert ranked[0]["chembl_exact_match"] is False
+    assert ranked[0]["chembl_lookup_status"] == "not_run_invalid_molecule"
     assert client.calls == [(None, False)]
 
 
@@ -266,6 +369,20 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "pubchem_lookup_status" in header
     assert "pubchem_cache_status" in header
     assert "pubchem_warning" in header
+    assert "chembl_exact_match" in header
+    assert "chembl_molecule_id" in header
+    assert "chembl_pref_name" in header
+    assert "chembl_lookup_status" in header
+    assert "chembl_cache_status" in header
+    assert "chembl_warning" in header
+    assert "chembl_activity_count" in header
+    assert "chembl_target_count" in header
+    assert "chembl_target_summary" in header
+    assert "chembl_similarity_match" in header
+    assert "chembl_similarity_score" in header
+    assert "chembl_similarity_molecule_id" in header
+    assert "chembl_similarity_pref_name" in header
+    assert "chembl_similarity_status" in header
 
 
 def test_prioritize_csv_writes_precomputed_docking_columns(tmp_path):

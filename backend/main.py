@@ -47,6 +47,8 @@ def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
         **services.run_prioritization_job(
             request.upload_id,
             enable_public_lookup=request.enable_public_lookup,
+            enable_pubchem_lookup=request.enable_pubchem_lookup or request.enable_public_lookup,
+            enable_chembl_lookup=request.enable_chembl_lookup,
         )
     )
 

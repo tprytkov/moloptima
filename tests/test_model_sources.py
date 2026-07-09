@@ -78,11 +78,13 @@ def test_latest_run_manifest_records_bbb_status(tmp_path: Path, monkeypatch: pyt
             "molecule_id": "mol_1",
             "bbb_model_status": "model_unavailable",
             "pubchem_lookup_status": "not_requested",
+            "chembl_lookup_status": "not_requested",
         },
         {
             "molecule_id": "mol_2",
             "bbb_model_status": "not_run_invalid_molecule",
             "pubchem_lookup_status": "not_requested",
+            "chembl_lookup_status": "not_requested",
         },
     ]
 
@@ -98,6 +100,7 @@ def test_latest_run_manifest_records_bbb_status(tmp_path: Path, monkeypatch: pyt
     assert run["bbb_model_status_values"] == ["model_unavailable", "not_run_invalid_molecule"]
     assert run["public_lookup_requested"] is False
     assert run["pubchem_lookup_status_values"] == ["not_requested"]
+    assert run["chembl_lookup_status_values"] == ["not_requested"]
 
 
 def test_no_automatic_model_download_when_cache_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -131,7 +134,11 @@ def test_public_data_manifest_records_public_source_statuses(
         "public_lookup_cache",
         "pubchem",
     )
-    assert manifest["sources"]["ChEMBL"]["status"] == "planned_inactive"
+    assert manifest["sources"]["ChEMBL"]["status"] == "available_when_requested"
+    assert Path(manifest["sources"]["ChEMBL"]["cache_path"]).parts[-2:] == (
+        "public_lookup_cache",
+        "chembl",
+    )
     assert manifest["sources"]["SureChEMBL"]["status"] == "planned_inactive"
     assert all(source["last_checked"] for source in manifest["sources"].values())
 
@@ -143,12 +150,14 @@ def test_run_manifest_records_pubchem_lookup_completed(tmp_path: Path, monkeypat
             "molecule_id": "mol_1",
             "bbb_model_status": "model_unavailable",
             "pubchem_lookup_status": "exact_match",
+            "chembl_lookup_status": "not_requested",
             "pubchem_warning": "",
         },
         {
             "molecule_id": "mol_2",
             "bbb_model_status": "model_unavailable",
             "pubchem_lookup_status": "no_exact_match",
+            "chembl_lookup_status": "not_requested",
             "pubchem_warning": "",
         },
     ]
@@ -165,3 +174,37 @@ def test_run_manifest_records_pubchem_lookup_completed(tmp_path: Path, monkeypat
     assert run["public_lookup_source_statuses"]["PubChem"]["status"] == "lookup_completed"
     public_manifest = model_sources.read_manifest(model_sources.PUBLIC_DATA_MANIFEST_PATH)
     assert public_manifest["sources"]["PubChem"]["status"] == "lookup_completed"
+
+
+def test_run_manifest_records_chembl_lookup_completed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    configure_temp_app_data(tmp_path, monkeypatch)
+    rows = [
+        {
+            "molecule_id": "mol_1",
+            "bbb_model_status": "model_unavailable",
+            "pubchem_lookup_status": "not_requested",
+            "chembl_lookup_status": "exact_match",
+            "chembl_warning": "",
+        },
+        {
+            "molecule_id": "mol_2",
+            "bbb_model_status": "model_unavailable",
+            "pubchem_lookup_status": "not_requested",
+            "chembl_lookup_status": "similarity_match",
+            "chembl_warning": "",
+        },
+    ]
+
+    manifest = model_sources.update_run_manifest(
+        job_id="job-chembl",
+        output_file="backend/job_outputs/job-chembl/ranked_results.csv",
+        rows=rows,
+    )
+
+    run = manifest["runs"]["job-chembl"]
+    assert run["public_lookup_requested"] is True
+    assert run["pubchem_lookup_status_values"] == ["not_requested"]
+    assert run["chembl_lookup_status_values"] == ["exact_match", "similarity_match"]
+    assert run["public_lookup_source_statuses"]["ChEMBL"]["status"] == "lookup_completed"
+    public_manifest = model_sources.read_manifest(model_sources.PUBLIC_DATA_MANIFEST_PATH)
+    assert public_manifest["sources"]["ChEMBL"]["status"] == "lookup_completed"
