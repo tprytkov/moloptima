@@ -1,56 +1,84 @@
 # MolOptima
 
-MolOptima is a Python-first scientific project for prioritizing small molecules after they have been generated or supplied by a user.
+MolOptima is a local full-stack portfolio project for early small-molecule prioritization. It combines a Python/RDKit scoring pipeline, a FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs, running transparent Phase 1 prioritization, reviewing biopharma context, and exporting compound-level Markdown reports.
 
-This repository currently focuses on Phase 1: core molecular prioritization logic, a minimal local FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs and running prioritization jobs. It intentionally does not include docking execution, patents, OMOP, Databricks, MLflow, Redis, Docker, cloud services, or downloaded model weights.
+The project is intentionally offline-first and portfolio-safe. It does not run docking software, perform online lookup, search patents, use OMOP/clinical data, require cloud services, or download model weights during normal app rendering.
 
-## Current Scope
+## Current Workflow
 
-- Validate and canonicalize SMILES input with RDKit.
-- Calculate Phase 1 RDKit descriptors and Lipinski-style flags.
-- Rank molecules with a simple, transparent first-pass score.
-- Check exact known-compound identity and nearest known-compound similarity against a small local reference table.
-- Preserve optional precomputed docking scores from input CSVs without running docking software.
-- Add informational heuristic synthetic accessibility fields without changing the priority score.
-- Optionally add cached ChemBERTa BBB predictions when local model files are available.
+1. Upload a CSV with `molecule_id` and `smiles` columns.
+2. Run the local prioritization job from the Molecular Prioritization page.
+3. Review Dashboard summary metrics for the latest completed run.
+4. Inspect ranked results and open a Compound Detail panel.
+5. Review Biopharma Intelligence identity and similarity summaries.
+6. Export a selected compound Markdown report from Compound Detail or Reports.
+7. Check local model/data-source status from Settings.
 
-## Project Structure
+Demo input:
 
 ```text
-molecular_prioritization/
-  __init__.py
-  standardize.py
-  descriptors.py
-  prioritization.py
-  pipeline.py
-  bbb_predictor.py
-biopharma_intelligence/
-  __init__.py
-  identity.py
-backend/
-  main.py
-  schemas.py
-  services.py
-frontend/
-  src/
-  package.json
-data/
-  demo_inputs/
-  reference_compounds/
-outputs/
-  ranked_results/
-app_data/
-  model_cache/
-    huggingface/
-  public_lookup_cache/
-  manifests/
-tests/
-docs/
+data/demo_inputs/demo_molecules.csv
 ```
 
-## Run Full-Stack App Locally
+## Screenshots
 
-Use the conda environment that has RDKit, FastAPI, pytest, and the backend dependencies installed.
+| Dashboard | Compound Detail |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Compound Detail](docs/screenshots/compound-detail.png) |
+
+| Biopharma Intelligence | Reports |
+|---|---|
+| ![Biopharma Intelligence](docs/screenshots/biopharma.png) | ![Reports](docs/screenshots/reports.png) |
+
+| Settings |
+|---|
+| ![Settings](docs/screenshots/settings.png) |
+
+## Implemented Features
+
+- React/MUI dashboard with sidebar pages for Dashboard, Upload Molecules, Molecular Prioritization, Biopharma Intelligence, Reports, and Settings.
+- Local FastAPI backend with health check, upload, prioritization job, latest job, result retrieval, and model/source status endpoints.
+- RDKit SMILES validation and canonicalization.
+- RDKit descriptors including molecular weight, TPSA, hydrogen-bond counts, rotatable bonds, QED, and Lipinski-style pass/fail.
+- Transparent `priority_score` calculation for first-pass ranking.
+- Offline exact known-compound identity against `data/reference_compounds/known_compounds.csv`.
+- Offline closest known-compound similarity using RDKit Morgan fingerprints and Tanimoto similarity.
+- Optional precomputed docking-score preservation from input CSVs without docking execution.
+- Informational heuristic synthetic-accessibility fields.
+- Optional BBB/ChemBERTa inference only when model files already exist in the app-managed cache.
+- App-managed model/data-source manifests and visible Settings status.
+- Latest-run Dashboard, Biopharma Intelligence, and Reports summaries.
+- Client-side Markdown report export for selected compounds.
+- Python test coverage for backend routes, pipeline behavior, descriptors, identity, similarity, model-source manifests, docking input handling, and synthetic-accessibility fields.
+
+## Architecture
+
+```text
+frontend/                  React + Vite + MUI app
+backend/                   FastAPI local backend and file-backed services
+molecular_prioritization/  Python/RDKit prioritization pipeline
+biopharma_intelligence/    Local identity and similarity checks
+data/demo_inputs/          Public-safe demo molecule CSVs
+data/reference_compounds/  Small local known-compound reference table
+app_data/                  App-managed model cache, lookup cache, and manifests
+tests/                     Pytest suite
+docs/                      Portfolio docs and screenshots
+```
+
+Runtime outputs are local and intentionally ignored by Git:
+
+- `backend/uploads/`
+- `backend/job_outputs/`
+- `backend/job_metadata/`
+- `outputs/ranked_results/`
+- `app_data/model_cache/`
+- `app_data/public_lookup_cache/`
+
+Each runtime folder keeps only public-safe placeholders where needed.
+
+## Local Run Commands
+
+Use a conda environment with Python 3.11, RDKit, FastAPI, pytest, and the project dependencies installed.
 
 From Anaconda Prompt:
 
@@ -59,13 +87,13 @@ conda activate molecule-intelligence
 cd MolOptima
 ```
 
-Start the FastAPI backend from the repository root:
+Start the backend:
 
 ```bat
-uvicorn backend.main:app --reload
+python -m uvicorn backend.main:app --reload
 ```
 
-In a second Anaconda Prompt, start the React/Vite frontend:
+Start the frontend in a second terminal:
 
 ```bat
 cd MolOptima
@@ -74,15 +102,21 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-Open the Vite URL shown in the terminal, typically:
+Open the Vite URL shown in the terminal, usually:
 
 ```text
 http://127.0.0.1:5173/
 ```
 
-The frontend calls the backend at `http://localhost:8000`. The backend must be running before the upload/prioritization workflow will work.
+The frontend expects the backend at:
 
-Run backend tests from the repository root:
+```text
+http://localhost:8000
+```
+
+## Test And Build Commands
+
+Run all Python tests from the repository root:
 
 ```bat
 conda activate molecule-intelligence
@@ -98,224 +132,86 @@ cd frontend
 npm.cmd run build
 ```
 
-## Current Capabilities
+Run the command-line demo pipeline:
 
-- Upload a molecule CSV with `molecule_id` and `smiles` columns through the React/MUI frontend.
-- Store uploaded CSVs locally under `backend/uploads/`.
-- Start a synchronous Phase 1 prioritization job through the FastAPI backend.
-- Validate and canonicalize SMILES with RDKit.
-- Calculate basic descriptors, Lipinski-style flags, QED, BBB columns, local identity/similarity columns, optional precomputed docking columns, heuristic synthetic accessibility fields, and `priority_score`.
-- Fetch job results from `GET /api/results/{job_id}`.
-- Display job status, row count, output path, and a small preview table in the frontend.
-- Persist local JSON job metadata under `backend/job_metadata/`.
-- Show model and public-data source status in the Settings page.
-- Write app-managed model, public-data, and run manifests under `app_data/manifests/`.
-
-## Not Yet Implemented
-
-- Docking execution, receptor preparation, or binding-score workflows beyond preserving precomputed `docking_score` values.
-- Online PubChem, ChEMBL, or SureChEMBL lookup. Current identity checks use only `data/reference_compounds/known_compounds.csv`.
-- BBB/ChemBERTa as a required model dependency. The BBB step is optional and uses local cached model files only when available.
-- Retrosynthesis or synthetic-accessibility model integration beyond the current transparent heuristic.
-- Patent search, patent similarity, or freedom-to-operate analysis.
-- OMOP, clinical context, clinical-trial mapping, or patient-level clinical/RWE workflows.
-- Redis/RQ, Celery, or any background worker queue.
-- Cloud, Databricks, AWS, Docker, MLflow, or managed deployment features.
-
-## Development Commands
-
-Run all Python tests from the repository root:
-
-```bash
-python -m pytest
-```
-
-Run the demo pipeline:
-
-```bash
+```bat
+cd MolOptima
 python -m molecular_prioritization.pipeline --input data/demo_inputs/demo_molecules.csv --output outputs/ranked_results/demo_ranked.csv
 ```
 
-Run the local API:
+## API Summary
 
-```bash
-uvicorn backend.main:app --reload
+Start the backend:
+
+```bat
+python -m uvicorn backend.main:app --reload
 ```
 
-Run the frontend dashboard from `frontend/`:
+Core local endpoints:
 
-```bash
-cd frontend
-npm.cmd install
-npm.cmd run dev
-```
+- `GET /health`
+- `POST /api/molecules/upload`
+- `POST /api/jobs/prioritization`
+- `GET /api/jobs/latest`
+- `GET /api/results/{job_id}`
+- `GET /api/model-sources/status`
+- `POST /api/model-sources/refresh`
 
-The frontend includes pages for uploading a molecule CSV and starting a Phase 1 prioritization job against the local FastAPI backend. Start the backend first with `uvicorn backend.main:app --reload`, then open the Vite URL shown by `npm.cmd run dev`.
+Uploaded CSVs, ranked result files, and JSON job metadata are stored locally under `backend/` runtime folders.
 
-Build the frontend:
+## Model Cache Explanation
 
-```bash
-cd frontend
-npm.cmd run build
-```
-
-The API exposes `GET /health`, `POST /api/molecules/upload`, `POST /api/jobs/prioritization`, and `GET /api/results/{job_id}`. Uploaded CSVs, ranked result files, and JSON job metadata are stored locally under `backend/`.
-
-Runtime files are intentionally ignored by Git:
-
-- `backend/uploads/`
-- `backend/job_outputs/`
-- `backend/job_metadata/`
-- `outputs/ranked_results/`
-- `app_data/model_cache/`
-- `app_data/public_lookup_cache/`
-
-Each runtime folder keeps a `.gitkeep` placeholder so the folder structure is available after cloning.
-
-## API Usage
-
-Start the server:
-
-```bash
-uvicorn backend.main:app --reload
-```
-
-Check health:
-
-```bash
-curl http://127.0.0.1:8000/health
-```
-
-Upload a molecule CSV:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/molecules/upload \
-  -F "file=@data/demo_inputs/demo_molecules.csv"
-```
-
-The upload response includes an `upload_id`. Use that value to run prioritization:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/jobs/prioritization \
-  -H "Content-Type: application/json" \
-  -d "{\"upload_id\":\"PASTE_UPLOAD_ID_HERE\"}"
-```
-
-The job response includes a `job_id`. Retrieve results with:
-
-```bash
-curl http://127.0.0.1:8000/api/results/PASTE_JOB_ID_HERE
-```
-
-Python example:
-
-```python
-import requests
-
-base_url = "http://127.0.0.1:8000"
-
-with open("data/demo_inputs/demo_molecules.csv", "rb") as handle:
-    upload = requests.post(
-        f"{base_url}/api/molecules/upload",
-        files={"file": ("demo_molecules.csv", handle, "text/csv")},
-        timeout=30,
-    )
-upload.raise_for_status()
-upload_id = upload.json()["upload_id"]
-
-job = requests.post(
-    f"{base_url}/api/jobs/prioritization",
-    json={"upload_id": upload_id},
-    timeout=120,
-)
-job.raise_for_status()
-job_id = job.json()["job_id"]
-
-results = requests.get(f"{base_url}/api/results/{job_id}", timeout=30)
-results.raise_for_status()
-print(results.json()["results"])
-```
-
-BBB prediction is optional and offline-first. By default MolOptima checks the app-managed Hugging Face cache root `app_data/model_cache/huggingface` for `Yousuf7/ChemBERT-BBB-Permeability`. If the model is unavailable, the output still includes `bbb_prediction`, `bbb_probability`, `bbb_model_status`, and `bbb_warning` columns without crashing.
-
-To point at a local cache, set `MOLOPTIMA_BBB_MODEL_CACHE`. MolOptima does not download model files automatically unless `MOLOPTIMA_ALLOW_MODEL_DOWNLOAD=1` is explicitly set.
-
-Synthetic accessibility is currently informational. MolOptima writes `sa_score`, `synthetic_feasibility_category`, and `synthetic_feasibility_status` using a transparent RDKit-based `heuristic_synthetic_accessibility` calculation. It is not a retrosynthesis model and does not change `priority_score`.
-
-Docking is currently input-only. If an uploaded CSV includes `docking_score`, MolOptima preserves it as a numeric output column and writes `docking_status` as `provided`, `not_provided`, or `invalid_docking_score`. It does not run AutoDock/Vina, require receptor files, or change `priority_score` based on docking scores.
-
-Biopharma Intelligence currently starts with offline exact identity and similarity matching. MolOptima checks canonicalized SMILES against `data/reference_compounds/known_compounds.csv` and writes `known_compound_match`, `known_compound_name`, `known_compound_source`, `known_compound_id`, and `identity_check_status`. It also compares valid molecules to the same local references with RDKit Morgan radius 2, 2048-bit fingerprints and Tanimoto similarity, writing `closest_known_compound_name`, `closest_known_compound_id`, `closest_known_compound_similarity`, `closest_known_compound_source`, and `similarity_check_status`. This does not call PubChem, ChEMBL, SureChEMBL, patents, or any online service, and it does not change `priority_score`.
-
-## Model and Data Sources
-
-MolOptima uses an app-managed cache by default:
+MolOptima uses an app-managed Hugging Face cache root by default:
 
 ```text
 app_data/model_cache/huggingface
 ```
 
-To check whether the BBB/ChemBERTa model is cached, look for:
+The optional BBB model path is:
 
 ```text
 app_data/model_cache/huggingface/models--Yousuf7--ChemBERT-BBB-Permeability
 ```
 
-The Settings page includes a Model and Data Sources section with explicit buttons for:
+Normal app rendering keeps `local_files_only=True` behavior and does not download model weights. If the BBB model is not cached, MolOptima still writes BBB-related output columns with an unavailable/not-run status rather than failing the run.
 
-- Check local model cache
-- Refresh source status
+Relevant environment variables:
 
-Normal rendering does not download large model files. Set `MOLOPTIMA_ALLOW_MODEL_DOWNLOAD=1` only when you intentionally want model download behavior from the Python loader.
+- `MOLOPTIMA_BBB_MODEL_CACHE`: override the app-managed model cache location.
+- `MOLOPTIMA_ALLOW_MODEL_DOWNLOAD=1`: allow intentional local model download behavior.
 
-Manifests are stored in:
+Manifests:
 
 - `app_data/manifests/model_manifest.json`
 - `app_data/manifests/public_data_manifest.json`
 - `app_data/manifests/run_manifest.json`
 
-The public-data manifest currently records PubChem, ChEMBL, and SureChEMBL as planned inactive sources.
+The Settings page exposes model cache status, latest run model status, and planned public lookup source status. PubChem, ChEMBL, and SureChEMBL are listed as planned inactive sources in this version.
 
-## Troubleshooting
+## Limitations / Not Yet Implemented
 
-### PowerShell blocks npm.ps1
+- No docking execution, receptor preparation, AutoDock/Vina workflow, or binding simulation.
+- No online PubChem, ChEMBL, SureChEMBL, or other public database lookup.
+- No patent search, patent similarity, patentability analysis, or freedom-to-operate analysis.
+- No OMOP, clinical context, clinical-trial mapping, RWE, patient-level data, or medical decision support.
+- No retrosynthesis model or learned synthetic-accessibility model.
+- No Redis/RQ, Celery, Databricks, MLflow, AWS, Docker, or cloud deployment features.
+- BBB/ChemBERTa is optional and only used when local cached model files are available.
+- The local known-compound table is intentionally small and demo-oriented.
+- `priority_score` is a transparent first-pass heuristic, not a validated efficacy or safety model.
 
-On this Windows machine, PowerShell may reject `npm` with a script execution policy error. Use `npm.cmd` instead:
+## Computational-Screening Disclaimer
 
-```bat
-cd MolOptima
-cd frontend
-npm.cmd install
-npm.cmd run dev
-npm.cmd run build
-```
+MolOptima is for computational screening, portfolio demonstration, and educational software engineering purposes only. Outputs are not clinical, legal, regulatory, patentability, safety, efficacy, or freedom-to-operate conclusions. Molecules prioritized by this app require independent scientific validation before any research, clinical, commercial, or legal use.
 
-### Backend must run before frontend workflow
+## Portfolio Notes
 
-The frontend can load without the backend, but upload and prioritization requests require FastAPI to be running:
+This version demonstrates:
 
-```bat
-conda activate molecule-intelligence
-cd MolOptima
-uvicorn backend.main:app --reload
-```
+- Python-first cheminformatics workflow design.
+- Full-stack local app integration with FastAPI and React.
+- Reproducible, public-safe demo data.
+- Offline-first model/cache transparency.
+- Clear test/build workflow for a recruiter or reviewer.
 
-Check backend health:
-
-```bat
-curl http://127.0.0.1:8000/health
-```
-
-Expected response:
-
-```json
-{"status":"ok","service":"moloptima-backend"}
-```
-
-### CORS localhost configuration
-
-The backend currently allows local Vite origins:
-
-- `http://localhost:5173`
-- `http://127.0.0.1:5173`
-
-If the frontend runs on a different port, update the local CORS origins in `backend/main.py` or run Vite on port `5173`.
+See [docs/portfolio_overview.md](docs/portfolio_overview.md) for a concise reviewer-oriented summary.
