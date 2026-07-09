@@ -171,6 +171,8 @@ def test_prioritize_smiles_keeps_invalid_records_in_ranked_output():
     assert invalid["pubchem_lookup_status"] == "not_requested"
     assert invalid["chembl_lookup_status"] == "not_requested"
     assert invalid["patent_lookup_status"] == "not_requested"
+    assert invalid["evidence_summary_category"] == "invalid_molecule"
+    assert invalid["biopharma_context_level"] == "invalid_molecule"
     assert ranked[0]["priority_score"] >= ranked[-1]["priority_score"]
 
 
@@ -219,6 +221,8 @@ def test_prioritize_smiles_adds_exact_known_compound_identity_match():
     assert ranked[0]["known_compound_source"] == "local_reference"
     assert ranked[0]["known_compound_id"] == "LOCAL_REF_0001"
     assert ranked[0]["identity_check_status"] == "exact_match"
+    assert ranked[0]["evidence_summary_category"] == "identity_context"
+    assert ranked[0]["public_identity_signal"] == "local_identity_signal_present"
 
 
 def test_prioritize_smiles_marks_no_known_compound_identity_match():
@@ -257,6 +261,9 @@ def test_prioritize_smiles_default_public_lookup_is_not_requested():
     assert client.calls == []
     assert chembl_client.calls == []
     assert patent_client.calls == []
+    assert ranked[0]["public_identity_signal"] == "local_identity_signal_present"
+    assert "ChEMBL public bioactivity lookup was not requested" in ranked[0]["evidence_summary_notes"]
+    assert "SureChEMBL patent-context lookup was not requested" in ranked[0]["evidence_summary_notes"]
 
 
 def test_prioritize_smiles_runs_public_lookup_when_requested():
@@ -275,6 +282,7 @@ def test_prioritize_smiles_runs_public_lookup_when_requested():
     assert ranked[0]["pubchem_lookup_status"] == "exact_match"
     assert ranked[0]["pubchem_cache_status"] == "fresh_lookup"
     assert client.calls == [("CCO", True)]
+    assert ranked[0]["public_identity_signal"] == "public_identity_signal_present"
 
 
 def test_prioritize_smiles_runs_chembl_lookup_when_requested():
@@ -296,6 +304,7 @@ def test_prioritize_smiles_runs_chembl_lookup_when_requested():
     assert ranked[0]["chembl_activity_count"] == 12
     assert ranked[0]["chembl_target_count"] == 3
     assert client.calls == [("CCO", True)]
+    assert ranked[0]["public_bioactivity_signal"] == "public_bioactivity_signal_present"
 
 
 def test_prioritize_smiles_pubchem_and_chembl_can_run_together():
@@ -334,6 +343,7 @@ def test_prioritize_smiles_runs_patent_lookup_when_requested():
     assert ranked[0]["patent_cache_status"] == "fresh_lookup"
     assert ranked[0]["patent_record_count"] == 7
     assert client.calls == [("CCO", True, None, None)]
+    assert ranked[0]["patent_context_signal"] == "patent_context_signal_present"
 
 
 def test_prioritize_smiles_all_public_sources_can_run_together():
@@ -356,6 +366,8 @@ def test_prioritize_smiles_all_public_sources_can_run_together():
     assert ranked[0]["chembl_lookup_status"] == "exact_match"
     assert ranked[0]["patent_lookup_status"] == "match_found"
     assert patent_client.calls == [("CCO", True, "702", "CHEMBL545")]
+    assert ranked[0]["evidence_summary_category"] == "combined_public_context"
+    assert ranked[0]["biopharma_context_level"] == "high_evidence_context"
 
 
 def test_prioritize_smiles_public_lookup_skips_invalid_molecule_when_requested():
@@ -414,6 +426,7 @@ def test_prioritize_smiles_adds_closest_known_compound_similarity():
     assert ranked[0]["closest_known_compound_similarity"] == 1.0
     assert ranked[0]["closest_known_compound_source"] == "local_reference"
     assert ranked[0]["similarity_check_status"] == "closest_match_found"
+    assert ranked[0]["local_similarity_signal"] == "local_exact_identity_signal_present"
 
 
 def test_prioritize_smiles_preserves_valid_precomputed_docking_score():
@@ -500,6 +513,14 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "patent_top_record_url" in header
     assert "patent_query_identifier" in header
     assert "patent_warning" in header
+    assert "evidence_summary_category" in header
+    assert "evidence_summary_notes" in header
+    assert "public_identity_signal" in header
+    assert "public_bioactivity_signal" in header
+    assert "patent_context_signal" in header
+    assert "local_similarity_signal" in header
+    assert "biopharma_context_level" in header
+    assert "recommended_review_focus" in header
 
 
 def test_prioritize_csv_writes_precomputed_docking_columns(tmp_path):

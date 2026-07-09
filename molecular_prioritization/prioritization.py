@@ -13,6 +13,7 @@ from biopharma_intelligence.public_lookup import (
     not_requested_result,
     patent_not_requested_result,
 )
+from biopharma_intelligence.evidence_synthesis import synthesize_evidence
 from biopharma_intelligence.similarity import SimilarityMatchResult
 from molecular_prioritization.bbb_predictor import BBBPrediction
 from molecular_prioritization.descriptors import MolecularDescriptors
@@ -119,7 +120,7 @@ def build_priority_record(
     chembl_bioactivity_values = chembl_bioactivity_match or chembl_not_requested_result()
     patent_context_values = patent_context_match or patent_not_requested_result()
 
-    return {
+    record = {
         "molecule_id": molecule_id,
         "input_smiles": input_smiles,
         "canonical_smiles": canonical_smiles,
@@ -185,6 +186,13 @@ def build_priority_record(
         "bbb_warning": bbb_values.bbb_warning,
         **descriptor_values,
     }
+    evidence_synthesis = synthesize_evidence(record)
+    ordered_record: dict[str, object] = {}
+    for key, value in record.items():
+        ordered_record[key] = value
+        if key == "patent_warning":
+            ordered_record.update(evidence_synthesis)
+    return ordered_record
 
 
 def _bounded_preference(value: float, lower: float, upper: float) -> float:

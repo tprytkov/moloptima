@@ -637,7 +637,7 @@ function BiopharmaIntelligencePage({ latestRunState }) {
     <Stack spacing={3}>
       <PageIntro
         title="Biopharma Intelligence"
-        description="Summarize exact identity checks, optional public compound matches, and closest known-compound similarity for the latest completed prioritization run."
+        description="Summarize computational screening evidence from local identity, local similarity, and optional public database signals for the latest completed prioritization run."
       />
 
       <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
@@ -673,6 +673,11 @@ function BiopharmaIntelligencePage({ latestRunState }) {
               }}
             >
               <RunSummaryCard label="Exact known-compound matches" value={summary.exactMatches} />
+              <RunSummaryCard
+                label="Evidence summary"
+                value={summary.evidenceSummaryTopCategory}
+                detail={summary.evidenceSummaryDetail}
+              />
               <RunSummaryCard
                 label="PubChem exact matches"
                 value={summary.pubchemExactMatches}
@@ -731,6 +736,8 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
         <TableHead>
           <TableRow>
             <TableCell>molecule_id</TableCell>
+            <TableCell>evidence_summary_category</TableCell>
+            <TableCell>biopharma_context_level</TableCell>
             <TableCell>known_compound_match</TableCell>
             <TableCell>known_compound_name</TableCell>
             <TableCell>pubchem_exact_match</TableCell>
@@ -747,6 +754,7 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>closest_known_compound_similarity</TableCell>
             <TableCell>identity_check_status</TableCell>
             <TableCell>similarity_check_status</TableCell>
+            <TableCell>recommended_review_focus</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -768,6 +776,8 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 sx={{ cursor: 'pointer' }}
               >
                 <TableCell>{formatDetailValue(row.molecule_id)}</TableCell>
+                <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
+                <TableCell>{formatEvidenceCategory(row.biopharma_context_level)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_match)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_exact_match)}</TableCell>
@@ -784,6 +794,7 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
                 <TableCell>{formatDetailValue(row.identity_check_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.similarity_check_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.recommended_review_focus)}</TableCell>
               </TableRow>
             );
           })}
@@ -802,7 +813,7 @@ function BiopharmaInterpretationPanel({ compound }) {
         <Stack spacing={2}>
           <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
             <Stack spacing={0.5}>
-              <Typography variant="h2">Interpretation</Typography>
+              <Typography variant="h2">Evidence summary</Typography>
               <Typography color="text.secondary">{formatDetailValue(compound.molecule_id)}</Typography>
             </Stack>
             <Chip label={interpretation.label} color={interpretation.color} variant="outlined" />
@@ -810,6 +821,13 @@ function BiopharmaInterpretationPanel({ compound }) {
           <Typography>{interpretation.message}</Typography>
           <MetadataPanel
             rows={[
+              ['Evidence summary category', formatEvidenceCategory(compound.evidence_summary_category)],
+              ['Public identity signal', formatEvidenceCategory(compound.public_identity_signal)],
+              ['Public bioactivity signal', formatEvidenceCategory(compound.public_bioactivity_signal)],
+              ['Patent-context signal', formatEvidenceCategory(compound.patent_context_signal)],
+              ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
+              ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
+              ['Recommended review focus', compound.recommended_review_focus],
               ['Exact known compound', compound.known_compound_name],
               ['PubChem exact match', formatPubChemMatch(compound)],
               ['PubChem lookup status', compound.pubchem_lookup_status],
@@ -851,6 +869,8 @@ function buildBiopharmaSummary(rows) {
   const chemblStatusCounts = countValues(rows.map((row) => row.chembl_lookup_status).filter(Boolean));
   const patentSignals = rows.filter((row) => isTrueValue(row.patent_public_evidence_match)).length;
   const patentStatusCounts = countValues(rows.map((row) => row.patent_lookup_status).filter(Boolean));
+  const evidenceCategoryCounts = countValues(rows.map((row) => row.evidence_summary_category).filter(Boolean));
+  const topEvidenceCategory = topCountLabel(evidenceCategoryCounts);
   const highSimilarityCompounds = similarities.filter((value) => value >= highSimilarityThreshold).length;
   const averageSimilarity =
     similarities.length > 0
@@ -865,6 +885,8 @@ function buildBiopharmaSummary(rows) {
     chemblLookupDetail: formatCounts(chemblStatusCounts) || 'ChEMBL lookup not run',
     patentSignals,
     patentLookupDetail: formatCounts(patentStatusCounts) || 'Patent-context lookup not run',
+    evidenceSummaryTopCategory: topEvidenceCategory ? formatEvidenceCategory(topEvidenceCategory) : 'Not available',
+    evidenceSummaryDetail: formatCounts(evidenceCategoryCounts) || 'No evidence synthesis available',
     noExactMatches: rows.length - exactMatches,
     averageClosestSimilarity: averageSimilarity === null ? 'Not available' : averageSimilarity.toFixed(3),
     highSimilarityCompounds,
@@ -873,6 +895,14 @@ function buildBiopharmaSummary(rows) {
 }
 
 function interpretBiopharmaCompound(compound) {
+  if (compound.evidence_summary_category || compound.evidence_summary_notes) {
+    return {
+      label: formatEvidenceCategory(compound.evidence_summary_category || 'computational_screening_summary'),
+      color: evidenceSummaryColor(compound),
+      message: compound.evidence_summary_notes || 'Computational screening summary is not available for this row.',
+    };
+  }
+
   if (
     compound.valid_molecule === false ||
     compound.similarity_check_status === 'not_run_invalid_molecule' ||
@@ -1003,6 +1033,11 @@ function ReportsPage({ latestRunState }) {
                   value={summary.knownCompoundMatches}
                 />
                 <RunSummaryCard
+                  label="Evidence summary"
+                  value={summary.evidenceSummaryTopCategory}
+                  detail={summary.evidenceSummaryDetail}
+                />
+                <RunSummaryCard
                   label="PubChem exact matches"
                   value={summary.pubchemExactMatches}
                   detail={summary.pubchemLookupDetail}
@@ -1073,6 +1108,7 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>molecule_id</TableCell>
             <TableCell>priority_score</TableCell>
             <TableCell>valid_molecule</TableCell>
+            <TableCell>evidence_summary_category</TableCell>
             <TableCell>known_compound_name</TableCell>
             <TableCell>pubchem_lookup_status</TableCell>
             <TableCell>chembl_lookup_status</TableCell>
@@ -1105,6 +1141,7 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.molecule_id)}</TableCell>
                 <TableCell>{formatDetailValue(row.priority_score)}</TableCell>
                 <TableCell>{formatDetailValue(row.valid_molecule)}</TableCell>
+                <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_lookup_status)}</TableCell>
@@ -1137,6 +1174,8 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
 
 function buildReportsSummary(latestRunState) {
   const rows = latestRunState.result?.results ?? [];
+  const evidenceCategoryCounts = countValues(rows.map((row) => row.evidence_summary_category).filter(Boolean));
+  const topEvidenceCategory = topCountLabel(evidenceCategoryCounts);
 
   return {
     jobId: latestRunState.job?.job_id ?? latestRunState.result?.job_id ?? 'Not available',
@@ -1152,6 +1191,8 @@ function buildReportsSummary(latestRunState) {
     chemblLookupDetail: formatCounts(countValues(rows.map((row) => row.chembl_lookup_status).filter(Boolean))) || 'ChEMBL lookup not run',
     patentSignals: rows.filter((row) => isTrueValue(row.patent_public_evidence_match)).length,
     patentLookupDetail: formatCounts(countValues(rows.map((row) => row.patent_lookup_status).filter(Boolean))) || 'Patent-context lookup not run',
+    evidenceSummaryTopCategory: topEvidenceCategory ? formatEvidenceCategory(topEvidenceCategory) : 'Not available',
+    evidenceSummaryDetail: formatCounts(evidenceCategoryCounts) || 'No evidence synthesis available',
     highSimilarityCompounds: rows.filter((row) => {
       const similarity = numericValue(row.closest_known_compound_similarity);
       return similarity !== null && similarity >= highSimilarityThreshold;
@@ -1471,6 +1512,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   const hasPublicIdentityStatus = rows.some((row) => row.pubchem_lookup_status !== undefined);
   const hasChEMBLStatus = rows.some((row) => row.chembl_lookup_status !== undefined);
   const hasPatentStatus = rows.some((row) => row.patent_lookup_status !== undefined);
+  const hasEvidenceSynthesis = rows.some((row) => row.evidence_summary_category !== undefined);
 
   return (
     <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -1480,6 +1522,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>Molecule</TableCell>
             <TableCell>Valid</TableCell>
             <TableCell>Score</TableCell>
+            {hasEvidenceSynthesis && <TableCell>Evidence summary</TableCell>}
             {hasIdentityStatus && <TableCell>Identity</TableCell>}
             {hasPublicIdentityStatus && <TableCell>Public compound match</TableCell>}
             {hasChEMBLStatus && <TableCell>Public bioactivity context</TableCell>}
@@ -1513,6 +1556,9 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{row.molecule_id}</TableCell>
                 <TableCell>{row.valid_molecule}</TableCell>
                 <TableCell>{row.priority_score}</TableCell>
+                {hasEvidenceSynthesis && (
+                  <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
+                )}
                 {hasIdentityStatus && (
                   <TableCell>{row.known_compound_match === true ? row.known_compound_name : row.identity_check_status}</TableCell>
                 )}
@@ -1583,6 +1629,19 @@ function CompoundDetailPanel({ compound }) {
               gap: 2,
             }}
           >
+            <DetailTable
+              title="Computational Screening Summary"
+              rows={[
+                ['Evidence summary', formatEvidenceCategory(compound.evidence_summary_category)],
+                ['Summary notes', compound.evidence_summary_notes],
+                ['Public identity signal', formatEvidenceCategory(compound.public_identity_signal)],
+                ['Public bioactivity signal', formatEvidenceCategory(compound.public_bioactivity_signal)],
+                ['Patent-context signal', formatEvidenceCategory(compound.patent_context_signal)],
+                ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
+                ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
+                ['Recommended review focus', compound.recommended_review_focus],
+              ]}
+            />
             <DetailTable
               title="Identity and Score"
               rows={[
@@ -1740,6 +1799,34 @@ function formatPatentSignal(row) {
   return row.patent_lookup_status ?? 'not available';
 }
 
+function formatEvidenceCategory(value) {
+  if (value === null || value === undefined || value === '') {
+    return 'Not available';
+  }
+  return String(value)
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function evidenceSummaryColor(compound) {
+  if (compound.evidence_summary_category === 'invalid_molecule') {
+    return 'warning';
+  }
+  if (compound.biopharma_context_level === 'high_evidence_context') {
+    return 'success';
+  }
+  if (compound.biopharma_context_level === 'moderate_evidence_context') {
+    return 'secondary';
+  }
+  return 'default';
+}
+
+function topCountLabel(counts) {
+  return Object.entries(counts).sort((left, right) => right[1] - left[1])[0]?.[0] ?? '';
+}
+
 function downloadCompoundMarkdownReport(compound) {
   const markdown = buildCompoundMarkdownReport(compound);
   const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
@@ -1769,6 +1856,18 @@ function buildCompoundMarkdownReport(compound) {
     markdownRows([
       ['Priority score', compound.priority_score],
       ['Lipinski pass/fail', formatPassFail(compound.lipinski_pass)],
+    ]),
+    '',
+    '## Computational screening summary',
+    markdownRows([
+      ['Evidence summary', formatEvidenceCategory(compound.evidence_summary_category)],
+      ['Summary notes', compound.evidence_summary_notes],
+      ['Public identity signal', formatEvidenceCategory(compound.public_identity_signal)],
+      ['Public bioactivity signal', formatEvidenceCategory(compound.public_bioactivity_signal)],
+      ['Patent-context signal', formatEvidenceCategory(compound.patent_context_signal)],
+      ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
+      ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
+      ['Recommended review focus', compound.recommended_review_focus],
     ]),
     '',
     '## BBB prediction',
@@ -1847,7 +1946,7 @@ function buildCompoundMarkdownReport(compound) {
       ['ChEMBL similarity status', compound.chembl_similarity_status],
     ]),
     '',
-    '## Public IP-context evidence',
+    '## Public patent-context evidence',
     markdownRows([
       ['Patent-context signal', formatPatentSignal(compound)],
       ['Patent lookup status', compound.patent_lookup_status],
