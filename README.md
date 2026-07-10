@@ -1,18 +1,20 @@
 # MolOptima
 
-MolOptima is a full-stack scientific application for prioritizing AI-generated or user-provided small molecules and connecting top candidates to biopharma intelligence signals. It is a modular full-stack system that combines a Python/RDKit scoring pipeline, a FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs, running transparent Phase 1 prioritization, reviewing biopharma context, and exporting compound-level Markdown reports.
+MolOptima is a local scientific application for prioritizing AI-generated or user-provided small molecules and connecting candidates to computational and public-database evidence signals. It combines a Python/RDKit scoring pipeline, a FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs, running transparent prioritization, reviewing biopharma context, comparing saved runs, annotating candidates, and exporting handoff files.
 
 The system is intentionally offline-first and public-safe. It does not run docking software, perform online lookup unless explicitly requested, use OMOP/clinical data, require cloud services, or download model weights during normal app rendering.
 
 ## Current Workflow
 
-1. Upload a CSV with `molecule_id` and `smiles` columns.
-2. Run the local prioritization job from the Molecular Prioritization page.
+1. Upload a CSV with `molecule_id` and `smiles` columns. An optional `docking_score` column can be included when scores were generated externally.
+2. Run the local prioritization job from the Molecular Prioritization page, optionally enabling PubChem, ChEMBL, and SureChEMBL public lookups.
 3. Review Dashboard summary metrics for the latest completed run.
-4. Inspect ranked results and open a Compound Detail panel.
-5. Review Biopharma Intelligence identity and similarity summaries.
-6. Export a selected compound Markdown report from Compound Detail or Reports.
-7. Check local model/data-source status from Settings.
+4. Inspect ranked results, evidence synthesis, docking-informed fields, structural alerts, diversity clusters, chemical-space coordinates, and 2D structure previews.
+5. Review Biopharma Intelligence identity, similarity, public bioactivity, patent-context, and evidence-summary signals.
+6. Load previous analyses from Run History or compare two completed runs.
+7. Mark candidates as selected, watchlist, deprioritized, rejected, or unreviewed and add local review notes.
+8. Export filtered rows, compound Markdown reports, candidate handoff CSV/Markdown packages, or candidate SDF files.
+9. Check local model/data-source status from Settings.
 
 Demo input:
 
@@ -36,20 +38,31 @@ data/demo_inputs/demo_molecules.csv
 
 ## Implemented Features
 
-- React/MUI dashboard with sidebar pages for Dashboard, Upload Molecules, Molecular Prioritization, Biopharma Intelligence, Reports, and Settings.
-- Local FastAPI backend with health check, upload, prioritization job, latest job, result retrieval, and model/source status endpoints.
+- React/MUI dashboard with sidebar pages for Dashboard, Upload Molecules, Molecular Prioritization, Run History, Run Comparison, Chemical Space, Biopharma Intelligence, Reports, and Settings.
+- Local FastAPI backend with health check, upload, prioritization job, run history, result retrieval, candidate annotation, structure preview, SDF export, and model/source status endpoints.
 - RDKit SMILES validation and canonicalization.
 - RDKit descriptors including molecular weight, TPSA, hydrogen-bond counts, rotatable bonds, QED, and Lipinski-style pass/fail.
 - Transparent `priority_score` calculation for first-pass ranking.
 - Offline exact known-compound identity against `data/reference_compounds/known_compounds.csv`.
 - Offline closest known-compound similarity using RDKit Morgan fingerprints and Tanimoto similarity.
 - Optional precomputed docking-score preservation from input CSVs without docking execution.
+- Optional docking-informed fields computed from uploaded numeric `docking_score` values, including run-level normalization, docking rank, percentile, docking priority signal, and separate `combined_candidate_score`.
 - Informational heuristic synthetic-accessibility fields.
 - Optional BBB/ChemBERTa inference only when model files already exist in the app-managed cache.
 - App-managed model/data-source manifests and visible Settings status.
-- Latest-run Dashboard, Biopharma Intelligence, and Reports summaries.
-- Client-side Markdown report export for selected compounds.
-- Python test coverage for backend routes, pipeline behavior, descriptors, identity, similarity, model-source manifests, docking input handling, and synthetic-accessibility fields.
+- Optional PubChem exact public identity lookup with local caching.
+- Optional ChEMBL public bioactivity context with local caching.
+- Optional SureChEMBL patent-context signal with local caching.
+- Deterministic evidence synthesis across local identity, similarity, PubChem, ChEMBL, and SureChEMBL signals.
+- RDKit medicinal chemistry structural-alert screening using PAINS and Brenk alert catalogs where available.
+- RDKit fingerprint-based diversity clustering with nearest-neighbor similarity, cluster size, and representative flags.
+- Deterministic chemical-space coordinates and SVG-based chemical-space visualization.
+- RDKit-based 2D structure preview endpoint and UI display.
+- Latest-run Dashboard, Biopharma Intelligence, Reports, and Chemical Space summaries.
+- Run History for reloading completed analyses and Run Comparison for comparing saved analyses.
+- Candidate review queue with local per-job review status and review notes.
+- CSV, Markdown, and SDF export for filtered rows, selected compounds, and selected/watchlist candidate packages.
+- Python test coverage for backend routes, pipeline behavior, descriptors, identity, similarity, model-source manifests, public lookups, docking input and docking-informed scoring, structural alerts, diversity, chemical space, annotations, and exports.
 
 ## Architecture
 
@@ -157,7 +170,7 @@ Core local endpoints:
 - `GET /api/model-sources/status`
 - `POST /api/model-sources/refresh`
 
-Uploaded CSVs, ranked result files, and JSON job metadata are stored locally under `backend/` runtime folders.
+Uploaded CSVs, ranked result files, JSON job metadata, and local review annotations are stored locally under `backend/` runtime folders.
 
 ## Model Cache Explanation
 
@@ -191,7 +204,10 @@ The Settings page exposes model cache status, latest run model status, and publi
 ## Limitations / Not Yet Implemented
 
 - No docking execution, receptor preparation, AutoDock/Vina workflow, or binding simulation.
-- PubChem support is limited to optional exact identity lookup; ChEMBL support is limited to optional public molecule/bioactivity context; SureChEMBL support is limited to optional public patent-associated evidence. These are research-screening signals only, not clinical, commercial, regulatory, or legal assessments. SureChEMBL record counts are returned-record counts for a structure/query, not conclusions about rights or applicability.
+- Docking-informed scoring depends entirely on uploaded, externally generated, protocol-dependent `docking_score` values. It is separate from `priority_score` and does not confirm binding.
+- PubChem support is limited to optional exact identity lookup; ChEMBL support is limited to optional public molecule/bioactivity context; SureChEMBL support is limited to optional public patent-context evidence. These lookups are optional API calls with app-managed local caching.
+- Patent-context output is not a legal conclusion. SureChEMBL record counts are returned-record counts for a structure/query, not conclusions about rights, patentability, infringement, ownership, or freedom to operate.
+- Medicinal chemistry structural alerts are heuristic screening signals. PAINS and Brenk matches do not prove toxicity, assay interference, developability failure, or experimental unsuitability.
 - No public database lookup beyond the optional PubChem, ChEMBL, and SureChEMBL checks.
 - No patent analysis, ownership inference, commercialization guidance, or legal-status assessment.
 - No OMOP, clinical context, clinical-trial mapping, RWE, patient-level data, or medical decision support.
@@ -199,20 +215,10 @@ The Settings page exposes model cache status, latest run model status, and publi
 - No Redis/RQ, Celery, Databricks, MLflow, AWS, Docker, or cloud deployment features.
 - BBB/ChemBERTa is optional and only used when local cached model files are available.
 - The local known-compound table is intentionally small and demo-oriented.
-- `priority_score` is a transparent first-pass heuristic, not a validated efficacy or safety model.
+- `priority_score`, `combined_candidate_score`, evidence synthesis, structural alerts, diversity clusters, and public lookup fields are computational screening signals only, not validated efficacy, safety, selectivity, clinical, regulatory, or legal models.
 
 ## Computational-Screening Disclaimer
 
 MolOptima is for computational screening and scientific software workflow support only. Outputs are research signals, not clinical, legal, regulatory, safety, efficacy, ownership, or commercialization conclusions. Molecules prioritized by this app require independent scientific validation before any research, clinical, commercial, or legal use.
-
-## Project Notes
-
-This version provides:
-
-- Python-first cheminformatics workflow design.
-- Full-stack local app integration with FastAPI and React.
-- Reproducible, public-safe sample data.
-- Offline-first model/cache transparency.
-- Clear test/build workflow for technical review and maintenance.
 
 See [docs/project_overview.md](docs/project_overview.md) for a concise system overview.
