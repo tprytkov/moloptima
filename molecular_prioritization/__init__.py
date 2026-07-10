@@ -2,6 +2,7 @@
 
 __all__ = [
     "descriptors",
+    "diversity",
     "pipeline",
     "prioritization",
     "standardize",

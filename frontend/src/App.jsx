@@ -966,6 +966,11 @@ function BiopharmaIntelligencePage({ latestRunState, annotationsState, onSaveRev
                 value={summary.highSimilarityCompounds}
                 detail={`Threshold >= ${highSimilarityThreshold.toFixed(2)}`}
               />
+              <RunSummaryCard
+                label="Chemical diversity"
+                value={`${summary.diversityClusterCount} clusters`}
+                detail={`Largest cluster: ${summary.largestDiversityClusterSize}`}
+              />
             </Box>
           ) : !latestRunState.loading && (
             <Alert severity="info">No latest result rows are available for Biopharma Intelligence yet.</Alert>
@@ -1019,6 +1024,9 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>review_note</TableCell>
             <TableCell>evidence_summary_category</TableCell>
             <TableCell>biopharma_context_level</TableCell>
+            <TableCell>diversity_cluster</TableCell>
+            <TableCell>cluster_representative</TableCell>
+            <TableCell>nearest_neighbor_similarity</TableCell>
             <TableCell>known_compound_match</TableCell>
             <TableCell>known_compound_name</TableCell>
             <TableCell>pubchem_exact_match</TableCell>
@@ -1061,6 +1069,9 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.biopharma_context_level)}</TableCell>
+                <TableCell>{formatDiversityCluster(row)}</TableCell>
+                <TableCell>{formatBooleanLabel(row.diversity_representative)}</TableCell>
+                <TableCell>{formatNearestNeighbor(row)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_match)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_exact_match)}</TableCell>
@@ -1119,6 +1130,10 @@ function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReview
               ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
               ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
               ['Recommended review focus', compound.recommended_review_focus],
+              ['Diversity cluster', formatDiversityCluster(compound)],
+              ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
+              ['Nearest neighbor similarity', formatNearestNeighbor(compound)],
+              ['Diversity status', formatEvidenceCategory(compound.diversity_status)],
               ['Exact known compound', compound.known_compound_name],
               ['PubChem exact match', formatPubChemMatch(compound)],
               ['PubChem lookup status', compound.pubchem_lookup_status],
@@ -1163,6 +1178,7 @@ function buildBiopharmaSummary(rows) {
   const evidenceCategoryCounts = countValues(rows.map((row) => row.evidence_summary_category).filter(Boolean));
   const topEvidenceCategory = topCountLabel(evidenceCategoryCounts);
   const reviewSummary = formatReviewCounts(rows);
+  const diversitySummary = buildDiversitySummary(rows);
   const highSimilarityCompounds = similarities.filter((value) => value >= highSimilarityThreshold).length;
   const averageSimilarity =
     similarities.length > 0
@@ -1178,6 +1194,8 @@ function buildBiopharmaSummary(rows) {
     patentSignals,
     patentLookupDetail: formatCounts(patentStatusCounts) || 'Patent-context lookup not run',
     reviewSummary,
+    diversityClusterCount: diversitySummary.clusterCount,
+    largestDiversityClusterSize: diversitySummary.largestClusterSize,
     evidenceSummaryTopCategory: topEvidenceCategory ? formatEvidenceCategory(topEvidenceCategory) : 'Not available',
     evidenceSummaryDetail: formatCounts(evidenceCategoryCounts) || 'No evidence synthesis available',
     noExactMatches: rows.length - exactMatches,
@@ -1720,6 +1738,11 @@ function ReportsPage({ latestRunState, annotationsState, onSaveReviewAnnotation 
                   value={summary.highSimilarityCompounds}
                   detail={`Threshold >= ${highSimilarityThreshold.toFixed(2)}`}
                 />
+                <RunSummaryCard
+                  label="Chemical diversity"
+                  value={`${summary.diversityClusterCount} clusters`}
+                  detail={`Largest cluster: ${summary.largestDiversityClusterSize}`}
+                />
               </Box>
             </Stack>
           ) : !latestRunState.loading && (
@@ -1793,6 +1816,9 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>review_status</TableCell>
             <TableCell>review_note</TableCell>
             <TableCell>evidence_summary_category</TableCell>
+            <TableCell>diversity_cluster</TableCell>
+            <TableCell>cluster_representative</TableCell>
+            <TableCell>nearest_neighbor_similarity</TableCell>
             <TableCell>known_compound_name</TableCell>
             <TableCell>pubchem_lookup_status</TableCell>
             <TableCell>chembl_lookup_status</TableCell>
@@ -1828,6 +1854,9 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatReviewStatus(row.review_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
+                <TableCell>{formatDiversityCluster(row)}</TableCell>
+                <TableCell>{formatBooleanLabel(row.diversity_representative)}</TableCell>
+                <TableCell>{formatNearestNeighbor(row)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_lookup_status)}</TableCell>
@@ -1879,6 +1908,8 @@ function buildReportsSummary(latestRunState) {
     patentSignals: rows.filter((row) => isTrueValue(row.patent_public_evidence_match)).length,
     patentLookupDetail: formatCounts(countValues(rows.map((row) => row.patent_lookup_status).filter(Boolean))) || 'Patent-context lookup not run',
     reviewSummary,
+    diversityClusterCount: diversitySummary.clusterCount,
+    largestDiversityClusterSize: diversitySummary.largestClusterSize,
     evidenceSummaryTopCategory: topEvidenceCategory ? formatEvidenceCategory(topEvidenceCategory) : 'Not available',
     evidenceSummaryDetail: formatCounts(evidenceCategoryCounts) || 'No evidence synthesis available',
     highSimilarityCompounds: rows.filter((row) => {
@@ -2030,6 +2061,9 @@ function CandidateExportPanel({ rows }) {
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Available in current view: Selected {selectedRows.length}, Watchlist {watchlistRows.length}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Chemical diversity: {formatDiversitySummary(combinedRows)}
             </Typography>
           </Stack>
         </Stack>
@@ -2203,6 +2237,7 @@ function PrioritizationPage({
                 ['Output file', prioritizationState.job.output_file],
                 ['Completed at', prioritizationState.job.completed_at ?? ''],
                 ['Candidate shortlist', formatReviewCounts(resultRows)],
+                ['Chemical diversity', formatDiversitySummary(resultRows)],
               ]}
             />
           )}
@@ -2318,6 +2353,7 @@ const defaultEvidenceFilters = {
   bbb_model_status: '',
   valid_molecule: '',
   review_status: '',
+  diversity_representative: '',
 };
 
 const evidenceFilterFields = [
@@ -2330,6 +2366,7 @@ const evidenceFilterFields = [
   ['bbb_prediction', 'BBB prediction'],
   ['bbb_model_status', 'BBB status'],
   ['review_status', 'Review status'],
+  ['diversity_representative', 'Cluster representative'],
 ];
 
 function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onReset, exportFilename }) {
@@ -2348,6 +2385,9 @@ function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onReset, e
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Candidate shortlist: {formatReviewCounts(rows)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Chemical diversity: {formatDiversitySummary(rows)}
             </Typography>
           </Stack>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
@@ -2715,6 +2755,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   const hasChEMBLStatus = rows.some((row) => row.chembl_lookup_status !== undefined);
   const hasPatentStatus = rows.some((row) => row.patent_lookup_status !== undefined);
   const hasEvidenceSynthesis = rows.some((row) => row.evidence_summary_category !== undefined);
+  const hasDiversity = rows.some((row) => row.diversity_status !== undefined);
 
   return (
     <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -2727,6 +2768,8 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>Review status</TableCell>
             <TableCell>Review note</TableCell>
             {hasEvidenceSynthesis && <TableCell>Evidence summary</TableCell>}
+            {hasDiversity && <TableCell>Diversity cluster</TableCell>}
+            {hasDiversity && <TableCell>Nearest neighbor similarity</TableCell>}
             {hasIdentityStatus && <TableCell>Identity</TableCell>}
             {hasPublicIdentityStatus && <TableCell>Public compound match</TableCell>}
             {hasChEMBLStatus && <TableCell>Public bioactivity context</TableCell>}
@@ -2764,6 +2807,12 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 {hasEvidenceSynthesis && (
                   <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
+                )}
+                {hasDiversity && (
+                  <TableCell>{formatDiversityCluster(row)}</TableCell>
+                )}
+                {hasDiversity && (
+                  <TableCell>{formatNearestNeighbor(row)}</TableCell>
                 )}
                 {hasIdentityStatus && (
                   <TableCell>{row.known_compound_match === true ? row.known_compound_name : row.identity_check_status}</TableCell>
@@ -2854,6 +2903,10 @@ function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotatio
                 ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
                 ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
                 ['Recommended review focus', compound.recommended_review_focus],
+                ['Diversity cluster', formatDiversityCluster(compound)],
+                ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
+                ['Nearest neighbor similarity', formatNearestNeighbor(compound)],
+                ['Diversity status', formatEvidenceCategory(compound.diversity_status)],
               ]}
             />
             <DetailTable
@@ -3080,6 +3133,16 @@ function runOptionLabel(job) {
   return `${job.job_id}${completedAt}${rowCount}`;
 }
 
+function formatBooleanLabel(value) {
+  if (value === true || value === 'true' || value === 'True') {
+    return 'Yes';
+  }
+  if (value === false || value === 'false' || value === 'False') {
+    return 'No';
+  }
+  return 'Not available';
+}
+
 function formatReviewCounts(rows) {
   if (!rows || rows.length === 0) {
     return 'Not available';
@@ -3088,6 +3151,52 @@ function formatReviewCounts(rows) {
   return reviewStatuses
     .map((statusValue) => `${reviewStatusLabels[statusValue]}: ${counts[statusValue] ?? 0}`)
     .join(', ');
+}
+
+function buildDiversitySummary(rows) {
+  const clusterIds = new Set(
+    (rows ?? [])
+      .map((row) => row.diversity_cluster_id)
+      .filter((value) => value !== null && value !== undefined && value !== ''),
+  );
+  const clusterSizes = (rows ?? [])
+    .map((row) => numericValue(row.diversity_cluster_size))
+    .filter((value) => value !== null);
+  const representativeCount = (rows ?? []).filter((row) => isTrueValue(row.diversity_representative)).length;
+  return {
+    clusterCount: clusterIds.size,
+    largestClusterSize: clusterSizes.length > 0 ? Math.max(...clusterSizes) : 0,
+    representativeCount,
+  };
+}
+
+function formatDiversitySummary(rows) {
+  if (!rows || rows.length === 0) {
+    return 'Not available';
+  }
+  const summary = buildDiversitySummary(rows);
+  if (summary.clusterCount === 0) {
+    return 'No diversity clusters available';
+  }
+  return `${summary.clusterCount} clusters, largest cluster ${summary.largestClusterSize}, ${summary.representativeCount} representatives`;
+}
+
+function formatDiversityCluster(row) {
+  if (!row || row.diversity_status === 'not_run_invalid_molecule') {
+    return 'Not run for invalid molecule';
+  }
+  if (row.diversity_cluster_id === null || row.diversity_cluster_id === undefined || row.diversity_cluster_id === '') {
+    return formatEvidenceCategory(row?.diversity_status);
+  }
+  return `Cluster ${row.diversity_cluster_id} (${formatDetailValue(row.diversity_cluster_size)} molecules)`;
+}
+
+function formatNearestNeighbor(row) {
+  if (!row || row.nearest_neighbor_similarity === null || row.nearest_neighbor_similarity === undefined || row.nearest_neighbor_similarity === '') {
+    return 'Not available';
+  }
+  const neighbor = row.nearest_neighbor_molecule_id ? `${row.nearest_neighbor_molecule_id}: ` : '';
+  return `${neighbor}${row.nearest_neighbor_similarity}`;
 }
 
 function formatEvidenceCategory(value) {
@@ -3462,6 +3571,12 @@ const candidateExportColumns = [
   'local_similarity_signal',
   'biopharma_context_level',
   'recommended_review_focus',
+  'diversity_cluster_id',
+  'diversity_cluster_size',
+  'diversity_representative',
+  'nearest_neighbor_molecule_id',
+  'nearest_neighbor_similarity',
+  'diversity_status',
   'review_status',
   'review_note',
 ];
@@ -3564,6 +3679,9 @@ function buildCandidatePackageMarkdown(rows) {
         ['Evidence summary', formatEvidenceCategory(row.evidence_summary_category)],
         ['Biopharma context level', formatEvidenceCategory(row.biopharma_context_level)],
         ['Recommended review focus', row.recommended_review_focus],
+        ['Diversity cluster', formatDiversityCluster(row)],
+        ['Cluster representative', formatBooleanLabel(row.diversity_representative)],
+        ['Nearest neighbor similarity', formatNearestNeighbor(row)],
       ]),
       '',
     );
@@ -3623,6 +3741,10 @@ function buildCompoundMarkdownReport(compound) {
       ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
       ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
       ['Recommended review focus', compound.recommended_review_focus],
+      ['Diversity cluster', formatDiversityCluster(compound)],
+      ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
+      ['Nearest neighbor similarity', formatNearestNeighbor(compound)],
+      ['Diversity status', formatEvidenceCategory(compound.diversity_status)],
     ]),
     '',
     '## BBB prediction',

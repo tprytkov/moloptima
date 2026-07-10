@@ -210,6 +210,26 @@ def test_prioritize_smiles_adds_synthetic_accessibility_columns_for_valid_molecu
     assert ranked[0]["synthetic_feasibility_status"] == "heuristic_synthetic_accessibility"
 
 
+def test_prioritize_smiles_adds_diversity_columns():
+    ranked = prioritize_smiles(
+        [
+            {"molecule_id": "ethanol", "smiles": "CCO"},
+            {"molecule_id": "ethanol_duplicate", "smiles": "CCO"},
+            {"molecule_id": "invalid", "smiles": "C1CC"},
+        ],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+
+    ethanol = next(row for row in ranked if row["molecule_id"] == "ethanol")
+    duplicate = next(row for row in ranked if row["molecule_id"] == "ethanol_duplicate")
+    invalid = next(row for row in ranked if row["molecule_id"] == "invalid")
+
+    assert ethanol["diversity_cluster_id"] == duplicate["diversity_cluster_id"]
+    assert ethanol["diversity_cluster_size"] == 2
+    assert duplicate["nearest_neighbor_similarity"] == 1.0
+    assert invalid["diversity_status"] == "not_run_invalid_molecule"
+
+
 def test_prioritize_smiles_adds_exact_known_compound_identity_match():
     ranked = prioritize_smiles(
         [{"molecule_id": "aspirin", "smiles": "CC(=O)Oc1ccccc1C(=O)O"}],
@@ -521,6 +541,12 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "local_similarity_signal" in header
     assert "biopharma_context_level" in header
     assert "recommended_review_focus" in header
+    assert "diversity_cluster_id" in header
+    assert "diversity_cluster_size" in header
+    assert "diversity_representative" in header
+    assert "nearest_neighbor_molecule_id" in header
+    assert "nearest_neighbor_similarity" in header
+    assert "diversity_status" in header
 
 
 def test_prioritize_csv_writes_precomputed_docking_columns(tmp_path):

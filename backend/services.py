@@ -57,6 +57,12 @@ SDF_EXPORT_PROPERTIES = [
     "evidence_summary_category",
     "biopharma_context_level",
     "recommended_review_focus",
+    "diversity_cluster_id",
+    "diversity_cluster_size",
+    "diversity_representative",
+    "nearest_neighbor_molecule_id",
+    "nearest_neighbor_similarity",
+    "diversity_status",
     "review_status",
     "review_note",
 ]

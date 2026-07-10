@@ -182,6 +182,12 @@ def test_sdf_export_writes_key_properties():
                     "tpsa": 20.23,
                     "chembl_molecule_id": "CHEMBL123",
                     "evidence_summary_category": "public_identity_context",
+                    "diversity_cluster_id": 1,
+                    "diversity_cluster_size": 2,
+                    "diversity_representative": True,
+                    "nearest_neighbor_molecule_id": "mol_2",
+                    "nearest_neighbor_similarity": 0.91,
+                    "diversity_status": "clustered",
                     "review_status": "watchlist",
                     "review_note": "Review public data.",
                 }
@@ -195,6 +201,8 @@ def test_sdf_export_writes_key_properties():
     assert "likely_crosses" in sdf_text
     assert ">  <chembl_molecule_id>" in sdf_text
     assert "CHEMBL123" in sdf_text
+    assert ">  <diversity_cluster_id>" in sdf_text
+    assert ">  <nearest_neighbor_similarity>" in sdf_text
     assert ">  <review_note>" in sdf_text
     assert "Review public data." in sdf_text
 
