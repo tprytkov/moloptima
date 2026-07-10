@@ -4,18 +4,20 @@ MolOptima Phase 5A adds an Electron desktop launcher around the existing local a
 
 Phase 5A is a development desktop wrapper. Phase 5B adds Windows packaging support for a first distributable desktop app, but it is still not a fully standalone scientific runtime.
 Phase 5C adds desktop runtime diagnostics so users can confirm Python, backend health, frontend mode, app-data folders, and cache paths from the Electron shell.
+Phase 5D prepares the launcher to use a bundled Python/RDKit runtime when one is supplied in a future release, while keeping `MOLOPTIMA_PYTHON` as the first-priority override.
+Phase 5E adds local scripts to build and validate that runtime bundle under `desktop/runtime/python/` without committing runtime binaries.
 
 ## What The Launcher Does
 
 - Starts the FastAPI backend as a local child process.
-- Uses `MOLOPTIMA_PYTHON` when set, otherwise uses `python` on `PATH`.
+- Resolves Python in this order: `MOLOPTIMA_PYTHON`, bundled runtime, then `python` on `PATH` for development mode only.
 - Waits for `GET http://127.0.0.1:8000/health`.
 - Starts the existing Vite frontend dev server unless `MOLOPTIMA_FRONTEND_URL` is set.
 - In packaged mode, loads the built React frontend from packaged resources instead of starting Vite.
 - Opens the React/MUI app in an Electron `BrowserWindow`.
 - Stops the backend and frontend child processes when the Electron app exits.
 - Shows a startup error dialog if the backend or frontend cannot become available, including `MOLOPTIMA_PYTHON` setup instructions.
-- Provides a `MolOptima > Runtime Diagnostics` menu item with backend health, Python path, app-data path, frontend mode, package mode, and cache-location checks.
+- Provides a `MolOptima > Runtime Diagnostics` menu item with backend health, Python source, Python path, bundled runtime path, app-data path, frontend mode, package mode, backend startup command, and cache-location checks.
 
 ## Install Desktop Dependencies
 
@@ -43,9 +45,9 @@ PowerShell equivalent:
 $env:MOLOPTIMA_PYTHON = "C:\Users\tpryt\miniconda3\envs\molecule-intelligence\python.exe"
 ```
 
-If `MOLOPTIMA_PYTHON` is not set, the launcher uses `python` from `PATH`.
+If `MOLOPTIMA_PYTHON` is not set, the development launcher checks `desktop/runtime/python/python.exe` and then uses `python` from `PATH`.
 
-For packaged MolOptima builds, `MOLOPTIMA_PYTHON` is required. The packaged app will show a startup error if it is missing.
+For packaged MolOptima builds, the launcher checks `resources/runtime/python/python.exe` after `MOLOPTIMA_PYTHON`. If neither is available, the packaged app shows a startup error.
 
 To set `MOLOPTIMA_PYTHON` permanently for the current Windows user:
 
@@ -145,6 +147,84 @@ desktop\dist\win-unpacked\MolOptima.exe
 
 The packaged app starts FastAPI from the packaged MolOptima Python source copy and uses the configured local Python interpreter. It does not bundle Python, RDKit, Conda, model weights, public lookup caches, run outputs, or generated analysis files.
 
+## Future Bundled Runtime Layout
+
+Phase 5D supports, but does not commit, a future bundled Python/RDKit runtime. Expected development layout:
+
+```text
+desktop/runtime/python/python.exe
+desktop/runtime/python/python.dll
+desktop/runtime/python/Lib/
+desktop/runtime/python/Library/
+desktop/runtime/python/Scripts/
+```
+
+Expected packaged layout:
+
+```text
+resources/runtime/python/python.exe
+resources/runtime/python/python.dll
+resources/runtime/python/Lib/
+resources/runtime/python/Library/
+resources/runtime/python/Scripts/
+```
+
+`MOLOPTIMA_PYTHON` always overrides this bundled runtime. The runtime folder is ignored by Git and must not include BBB model weights, public lookup caches, or generated analyses.
+
+Future maintainers can create a runtime bundle from the existing Conda environment with a tool such as `conda-pack`:
+
+```bat
+conda activate molecule-intelligence
+conda install -c conda-forge conda-pack
+conda pack -p C:\Users\tpryt\miniconda3\envs\molecule-intelligence -o moloptima-runtime.zip
+```
+
+Unpack the archive into `desktop/runtime/python/` for development testing. The bundled runtime must include RDKit, FastAPI, Uvicorn, NumPy/Pandas-style dependencies used by the backend, and any optional model dependencies that should be available at runtime. BBB/ChemBERTa model weights remain outside the runtime unless a future release explicitly decides otherwise.
+
+When `desktop/runtime/` exists, the Electron packaging hook copies it into `resources/runtime/` during `npm.cmd run package` or `npm.cmd run dist`. If the folder is absent, packaging continues without a bundled runtime.
+
+Phase 5E provides scripts for the same workflow:
+
+```bat
+cd C:\MolOptima
+scripts\build_desktop_runtime_windows.bat
+scripts\check_desktop_runtime_windows.bat
+```
+
+If `conda-pack` is missing:
+
+```bat
+scripts\build_desktop_runtime_windows.bat /install-conda-pack
+```
+
+To rebuild an existing runtime:
+
+```bat
+scripts\build_desktop_runtime_windows.bat /force
+```
+
+To test runtime discovery without `MOLOPTIMA_PYTHON`:
+
+```bat
+set MOLOPTIMA_PYTHON=
+cd C:\MolOptima
+cd desktop
+npm.cmd run dev
+```
+
+Open `MolOptima > Runtime Diagnostics` and confirm `Python source selected` reports `bundled runtime`.
+
+To test a packaged app without `MOLOPTIMA_PYTHON` after creating the runtime:
+
+```bat
+set MOLOPTIMA_PYTHON=
+cd C:\MolOptima
+cd desktop
+npm.cmd run package
+cd ..
+desktop\dist\win-unpacked\MolOptima.exe
+```
+
 ## Runtime Diagnostics
 
 Open the desktop menu:
@@ -161,6 +241,10 @@ Diagnostics include:
 - Backend health from `GET http://127.0.0.1:8000/health`.
 - Backend child process state and PID when available.
 - Python path and whether `MOLOPTIMA_PYTHON` exists.
+- Python source selected: environment variable, bundled runtime, PATH fallback, or unavailable.
+- Bundled runtime path checked and whether it exists.
+- Whether `MOLOPTIMA_PYTHON` overrides a bundled runtime.
+- Backend startup command.
 - Project root used by the desktop shell.
 - App-data folder accessibility.
 - BBB model cache path and accessibility.
@@ -191,6 +275,7 @@ For packaged builds, the backend starts from the packaged Python source copy, bu
 ## Common Errors And Fixes
 
 - `MOLOPTIMA_PYTHON is required`: set `MOLOPTIMA_PYTHON` to the Conda environment `python.exe`, then restart the desktop app.
+- `No Python runtime is available`: set `MOLOPTIMA_PYTHON` or provide a future bundled runtime at `resources/runtime/python/python.exe`.
 - `MOLOPTIMA_PYTHON does not exist`: check the path for typos or recreate/activate the Conda environment.
 - Backend health timeout: confirm port 8000 is free, run the manual backend test, and check that RDKit/FastAPI/Uvicorn are installed in the selected environment.
 - Frontend not found in packaged mode: run `cd desktop && npm.cmd run package` again so `frontend/dist` is rebuilt and included.
@@ -224,7 +309,7 @@ PubChem, ChEMBL, and SureChEMBL requests require internet access only when those
 
 ## Limitations
 
-- This is a Phase 5A/5B/5C development launcher and first Windows package, not a signed production installer or fully standalone scientific runtime.
-- It does not bundle Python, RDKit, model weights, or public lookup caches.
+- This is a Phase 5A/5B/5C/5D development launcher and first Windows package, not a signed production installer or fully standalone scientific runtime.
+- It is prepared for a local bundled runtime, but this repository does not include Python, RDKit, model weights, or public lookup caches.
 - It depends on a local Python/Conda environment for the FastAPI backend and scientific functionality.
 - It does not change scientific scoring, `priority_score`, public lookup behavior, run history, annotations, or exports.

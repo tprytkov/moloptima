@@ -6,7 +6,6 @@ const path = require('node:path');
 const examplePythonPath = 'C:\\Users\\tpryt\\miniconda3\\envs\\molecule-intelligence\\python.exe';
 const backendUrl = process.env.MOLOPTIMA_BACKEND_URL || 'http://127.0.0.1:8000';
 const frontendUrl = process.env.MOLOPTIMA_FRONTEND_URL || 'http://127.0.0.1:5173';
-const pythonExecutable = process.env.MOLOPTIMA_PYTHON || 'python';
 const startFrontend =
   !app.isPackaged && process.env.MOLOPTIMA_START_FRONTEND !== '0' && !process.env.MOLOPTIMA_FRONTEND_URL;
 
@@ -27,6 +26,69 @@ function getFrontendIndexPath() {
     return path.join(process.resourcesPath, 'frontend-dist', 'index.html');
   }
   return path.join(getProjectRoot(), 'frontend', 'dist', 'index.html');
+}
+
+function getBundledPythonPath() {
+  const executableName = process.platform === 'win32' ? 'python.exe' : 'python';
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'runtime', 'python', executableName);
+  }
+  return path.join(__dirname, 'runtime', 'python', executableName);
+}
+
+function resolvePythonRuntime() {
+  const envPython = process.env.MOLOPTIMA_PYTHON?.trim();
+  const bundledPython = getBundledPythonPath();
+
+  if (envPython) {
+    return {
+      executable: envPython,
+      source: 'environment variable',
+      envOverridesBundled: fs.existsSync(bundledPython) ? 'yes' : 'no bundled runtime present',
+      bundledPath: bundledPython,
+      bundledExists: fs.existsSync(bundledPython),
+      available: fs.existsSync(envPython),
+      commandPreview: `${envPython} -m uvicorn backend.main:app --host 127.0.0.1 --port 8000`,
+      error: fs.existsSync(envPython) ? '' : `MOLOPTIMA_PYTHON does not exist: ${envPython}`,
+    };
+  }
+
+  if (fs.existsSync(bundledPython)) {
+    return {
+      executable: bundledPython,
+      source: 'bundled runtime',
+      envOverridesBundled: 'not overridden',
+      bundledPath: bundledPython,
+      bundledExists: true,
+      available: true,
+      commandPreview: `${bundledPython} -m uvicorn backend.main:app --host 127.0.0.1 --port 8000`,
+      error: '',
+    };
+  }
+
+  if (!app.isPackaged) {
+    return {
+      executable: 'python',
+      source: 'PATH fallback',
+      envOverridesBundled: 'not overridden',
+      bundledPath: bundledPython,
+      bundledExists: false,
+      available: true,
+      commandPreview: 'python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000',
+      error: '',
+    };
+  }
+
+  return {
+    executable: '',
+    source: 'unavailable',
+    envOverridesBundled: 'not overridden',
+    bundledPath: bundledPython,
+    bundledExists: false,
+    available: false,
+    commandPreview: '(unavailable) -m uvicorn backend.main:app --host 127.0.0.1 --port 8000',
+    error: 'No Python runtime is available. Set MOLOPTIMA_PYTHON or provide a bundled runtime.',
+  };
 }
 
 function getBbbCacheRoot() {
@@ -73,6 +135,7 @@ async function collectDiagnostics() {
 
   const pythonConfigured = Boolean(process.env.MOLOPTIMA_PYTHON);
   const pythonExists = pythonConfigured ? fs.existsSync(process.env.MOLOPTIMA_PYTHON) : false;
+  const pythonRuntime = resolvePythonRuntime();
   const packagedFrontendPath = getFrontendIndexPath();
 
   return {
@@ -84,8 +147,13 @@ async function collectDiagnostics() {
     frontendLoaded: frontendLoaded ? 'yes' : 'no',
     backendHealth: await checkBackendHealth(),
     backendProcess: backendProcess && !backendProcess.killed ? `started (pid ${backendProcess.pid})` : 'not running',
-    pythonPath: process.env.MOLOPTIMA_PYTHON || 'not set; using python on PATH for development mode',
+    pythonSource: pythonRuntime.source,
+    pythonPath: pythonRuntime.executable || 'unavailable',
     pythonPathExists: pythonConfigured ? (pythonExists ? 'yes' : 'no') : 'not set',
+    bundledRuntimePath: pythonRuntime.bundledPath,
+    bundledRuntimeExists: pythonRuntime.bundledExists ? 'yes' : 'no',
+    moloptimaPythonOverridesBundled: pythonRuntime.envOverridesBundled,
+    backendStartupCommand: pythonRuntime.commandPreview,
     projectRoot: getProjectRoot(),
     backendUrl,
     frontendUrl: process.env.MOLOPTIMA_FRONTEND_URL || (app.isPackaged ? packagedFrontendPath : frontendUrl),
@@ -102,8 +170,13 @@ function formatDiagnostics(diagnostics) {
     `Frontend loaded: ${diagnostics.frontendLoaded}`,
     `Backend health: ${diagnostics.backendHealth}`,
     `Backend process: ${diagnostics.backendProcess}`,
+    `Python source selected: ${diagnostics.pythonSource}`,
     `Python path: ${diagnostics.pythonPath}`,
     `Python path exists: ${diagnostics.pythonPathExists}`,
+    `Bundled runtime path checked: ${diagnostics.bundledRuntimePath}`,
+    `Bundled runtime exists: ${diagnostics.bundledRuntimeExists}`,
+    `MOLOPTIMA_PYTHON overrides bundled runtime: ${diagnostics.moloptimaPythonOverridesBundled}`,
+    `Backend startup command: ${diagnostics.backendStartupCommand}`,
     `Project root: ${diagnostics.projectRoot}`,
     `Backend URL: ${diagnostics.backendUrl}`,
     `Frontend target: ${diagnostics.frontendUrl}`,
@@ -131,7 +204,9 @@ function buildStartupErrorMessage(error, diagnostics) {
   return [
     `Failure: ${error.message}`,
     '',
-    'Packaged MolOptima requires a local Conda/Python environment for the FastAPI backend.',
+    'MolOptima requires a Python/RDKit runtime for the FastAPI backend.',
+    '',
+    'Resolution order: MOLOPTIMA_PYTHON, bundled runtime, then PATH fallback in development mode.',
     '',
     'Set MOLOPTIMA_PYTHON to the MolOptima environment python.exe before launching:',
     `set MOLOPTIMA_PYTHON=${examplePythonPath}`,
@@ -197,16 +272,12 @@ function spawnProcess(command, args, options = {}) {
 }
 
 function startBackend() {
-  if (app.isPackaged && !process.env.MOLOPTIMA_PYTHON) {
-    throw new Error(
-      'MOLOPTIMA_PYTHON is required for the packaged desktop app. Set it to the MolOptima Conda environment python.exe.',
-    );
-  }
-  if (process.env.MOLOPTIMA_PYTHON && !fs.existsSync(process.env.MOLOPTIMA_PYTHON)) {
-    throw new Error(`MOLOPTIMA_PYTHON does not exist: ${process.env.MOLOPTIMA_PYTHON}`);
+  const pythonRuntime = resolvePythonRuntime();
+  if (!pythonRuntime.available) {
+    throw new Error(pythonRuntime.error);
   }
 
-  backendProcess = spawnProcess(pythonExecutable, [
+  backendProcess = spawnProcess(pythonRuntime.executable, [
     '-m',
     'uvicorn',
     'backend.main:app',

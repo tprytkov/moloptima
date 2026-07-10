@@ -8,6 +8,7 @@ node_modules/
 frontend/dist/
 desktop/dist/
 desktop/out/
+desktop/runtime/
 
 # Local environment and secrets
 .env

@@ -157,6 +157,15 @@ npm.cmd run package
 The packaged app is written under `desktop/dist/`, which is ignored by Git. See [docs/desktop_app.md](docs/desktop_app.md) and [docs/windows_packaging.md](docs/windows_packaging.md) for details. This is a first Windows desktop package, not a fully standalone scientific runtime, and it does not bundle Python, RDKit, BBB model weights, or local cache files.
 
 The desktop app includes `MolOptima > Runtime Diagnostics` for checking `MOLOPTIMA_PYTHON`, backend health, frontend mode, app-data access, and cache paths.
+Phase 5D also prepares the launcher to discover a future bundled Python runtime under `desktop/runtime/python/` or packaged `resources/runtime/python/`; `MOLOPTIMA_PYTHON` remains the first-priority override.
+Phase 5E adds local runtime build/validation scripts:
+
+```bat
+scripts\build_desktop_runtime_windows.bat
+scripts\check_desktop_runtime_windows.bat
+```
+
+These scripts create and validate `desktop/runtime/python/` from the local Conda environment. The runtime folder is ignored by Git and should not be committed.
 
 ## Test And Build Commands
 
