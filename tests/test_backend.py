@@ -41,6 +41,30 @@ def configure_temp_app_data(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MOLOPTIMA_BBB_MODEL_CACHE", str(app_data / "model_cache" / "huggingface"))
 
 
+def configure_temp_job_storage(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(services, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(services, "UPLOAD_DIR", tmp_path / "backend" / "uploads")
+    monkeypatch.setattr(services, "JOB_OUTPUT_DIR", tmp_path / "backend" / "job_outputs")
+    monkeypatch.setattr(services, "JOB_METADATA_DIR", tmp_path / "backend" / "job_metadata")
+    monkeypatch.setattr(services, "JOB_ANNOTATION_DIR", tmp_path / "backend" / "job_annotations")
+
+
+def write_completed_job(job_id: str) -> None:
+    services.write_job_metadata(
+        {
+            "job_id": job_id,
+            "upload_id": "upload-1",
+            "status": "completed",
+            "input_file": "backend/uploads/upload-1/molecules.csv",
+            "output_file": f"backend/job_outputs/{job_id}/ranked_results.csv",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "completed_at": "2026-01-01T00:01:00+00:00",
+            "error_message": "",
+            "row_count": 1,
+        }
+    )
+
+
 def test_health_endpoint():
     client = TestClient(app)
 
@@ -215,6 +239,174 @@ def test_latest_job_endpoint_returns_latest_completed_job(tmp_path: Path, monkey
     assert payload["job"]["job_id"] == latest_job_id
     assert payload["job"]["status"] == "completed"
     assert payload["job"]["results"][0]["molecule_id"] == "latest_mol"
+
+
+def test_job_history_endpoint_returns_recent_completed_jobs(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(services, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(services, "JOB_OUTPUT_DIR", tmp_path / "backend" / "job_outputs")
+    monkeypatch.setattr(services, "JOB_METADATA_DIR", tmp_path / "backend" / "job_metadata")
+
+    older_job_id = "older-job"
+    latest_job_id = "latest-job"
+    failed_job_id = "failed-job"
+    for job_id, molecule_id in [(older_job_id, "old_mol"), (latest_job_id, "latest_mol")]:
+        output_path = services.JOB_OUTPUT_DIR / job_id / "ranked_results.csv"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["molecule_id", "priority_score"])
+            writer.writeheader()
+            writer.writerow({"molecule_id": molecule_id, "priority_score": 0.8})
+
+    services.write_job_metadata(
+        {
+            "job_id": older_job_id,
+            "upload_id": "upload-1",
+            "status": "completed",
+            "input_file": "backend/uploads/upload-1/molecules.csv",
+            "output_file": f"backend/job_outputs/{older_job_id}/ranked_results.csv",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "completed_at": "2026-01-01T00:01:00+00:00",
+            "error_message": "",
+            "row_count": 1,
+            "public_lookup_requested": False,
+            "pubchem_lookup_requested": False,
+            "chembl_lookup_requested": False,
+            "patent_lookup_requested": False,
+        }
+    )
+    services.write_job_metadata(
+        {
+            "job_id": latest_job_id,
+            "upload_id": "upload-2",
+            "status": "completed",
+            "input_file": "backend/uploads/upload-2/molecules.csv",
+            "output_file": f"backend/job_outputs/{latest_job_id}/ranked_results.csv",
+            "created_at": "2026-01-02T00:00:00+00:00",
+            "completed_at": "2026-01-02T00:01:00+00:00",
+            "error_message": "",
+            "row_count": 1,
+            "public_lookup_requested": True,
+            "pubchem_lookup_requested": True,
+            "chembl_lookup_requested": True,
+            "patent_lookup_requested": False,
+        }
+    )
+    services.write_job_metadata(
+        {
+            "job_id": failed_job_id,
+            "upload_id": "upload-3",
+            "status": "failed",
+            "input_file": "backend/uploads/upload-3/molecules.csv",
+            "output_file": f"backend/job_outputs/{failed_job_id}/ranked_results.csv",
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "completed_at": "2026-01-03T00:01:00+00:00",
+            "error_message": "failed",
+            "row_count": 0,
+            "public_lookup_requested": True,
+            "pubchem_lookup_requested": True,
+            "chembl_lookup_requested": True,
+            "patent_lookup_requested": True,
+        }
+    )
+
+    client = TestClient(app)
+    history_response = client.get("/api/jobs/history")
+    result_response = client.get(f"/api/results/{older_job_id}")
+
+    assert history_response.status_code == 200
+    jobs = history_response.json()["jobs"]
+    assert [job["job_id"] for job in jobs] == [latest_job_id, older_job_id]
+    assert jobs[0]["row_count"] == 1
+    assert jobs[0]["pubchem_lookup_requested"] is True
+    assert jobs[0]["chembl_lookup_requested"] is True
+    assert jobs[0]["patent_lookup_requested"] is False
+    assert jobs[1]["public_lookup_requested"] is False
+    assert result_response.status_code == 200
+    assert result_response.json()["results"][0]["molecule_id"] == "old_mol"
+
+
+def test_job_annotations_missing_file_returns_empty_annotations(tmp_path: Path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    write_completed_job("job-annotations")
+    client = TestClient(app)
+
+    response = client.get("/api/jobs/job-annotations/annotations")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "job_id": "job-annotations",
+        "annotations": {},
+        "updated_at": None,
+    }
+
+
+def test_job_annotations_can_be_saved_and_reloaded(tmp_path: Path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    write_completed_job("job-annotations")
+    client = TestClient(app)
+
+    save_response = client.put(
+        "/api/jobs/job-annotations/annotations",
+        json={
+            "annotations": {
+                "aspirin": {
+                    "review_status": "selected",
+                    "review_note": "Advance for confirmatory review.",
+                },
+                "caffeine": {
+                    "review_status": "watchlist",
+                    "review_note": "Check public bioactivity context.",
+                },
+            }
+        },
+    )
+    reload_response = client.get("/api/jobs/job-annotations/annotations")
+
+    assert save_response.status_code == 200
+    payload = save_response.json()
+    assert payload["job_id"] == "job-annotations"
+    assert payload["annotations"]["aspirin"]["review_status"] == "selected"
+    assert payload["annotations"]["aspirin"]["review_note"] == "Advance for confirmatory review."
+    assert payload["updated_at"]
+    assert reload_response.status_code == 200
+    assert reload_response.json()["annotations"] == payload["annotations"]
+
+
+def test_job_annotations_normalize_unknown_status(tmp_path: Path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    write_completed_job("job-annotations")
+    client = TestClient(app)
+
+    response = client.put(
+        "/api/jobs/job-annotations/annotations",
+        json={
+            "annotations": {
+                "mol_1": {
+                    "review_status": "not-a-status",
+                    "review_note": "x" * 600,
+                }
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    annotation = response.json()["annotations"]["mol_1"]
+    assert annotation["review_status"] == "unreviewed"
+    assert len(annotation["review_note"]) == 500
+
+
+def test_job_annotations_reject_unknown_or_unsafe_job_id(tmp_path: Path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    missing_response = client.get("/api/jobs/missing/annotations")
+    unsafe_response = client.put(
+        "/api/jobs/..%2Funsafe/annotations",
+        json={"annotations": {}},
+    )
+
+    assert missing_response.status_code == 404
+    assert unsafe_response.status_code == 404
 
 
 def test_latest_job_endpoint_returns_null_when_no_completed_job(tmp_path: Path, monkeypatch):

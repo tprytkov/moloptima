@@ -45,6 +45,7 @@ const navigationItems = [
   { label: 'Dashboard', icon: AssessmentOutlinedIcon },
   { label: 'Upload Molecules', icon: UploadFileOutlinedIcon },
   { label: 'Molecular Prioritization', icon: ScienceOutlinedIcon },
+  { label: 'Run History', icon: AssessmentOutlinedIcon },
   { label: 'Biopharma Intelligence', icon: InsightsOutlinedIcon },
   { label: 'Reports', icon: DescriptionOutlinedIcon },
   { label: 'Settings', icon: SettingsOutlinedIcon },
@@ -128,10 +129,32 @@ function App() {
     loading: false,
     error: '',
   });
+  const [runHistoryState, setRunHistoryState] = useState({
+    jobs: [],
+    loading: true,
+    error: '',
+    selectedJobId: '',
+  });
+  const [annotationsState, setAnnotationsState] = useState({
+    jobId: '',
+    annotations: {},
+    loading: false,
+    saving: false,
+    error: '',
+    updatedAt: null,
+  });
   const [pubchemLookupEnabled, setPubchemLookupEnabled] = useState(false);
   const [chemblLookupEnabled, setChemblLookupEnabled] = useState(false);
   const [patentLookupEnabled, setPatentLookupEnabled] = useState(false);
   const health = useBackendHealth();
+  const annotatedPrioritizationState = useMemo(
+    () => annotateAnalysisState(prioritizationState, annotationsState),
+    [prioritizationState, annotationsState],
+  );
+  const annotatedLatestRunState = useMemo(
+    () => annotateAnalysisState(latestRunState, annotationsState),
+    [latestRunState, annotationsState],
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -143,12 +166,21 @@ function App() {
           return;
         }
         if (payload.job) {
+          const latestJob = latestJobMetadata(payload.job);
           setLatestRunState({
-            job: latestJobMetadata(payload.job),
+            job: latestJob,
             result: payload.job,
             loading: false,
             error: '',
           });
+          setPrioritizationState({
+            job: latestJob,
+            result: payload.job,
+            loading: false,
+            error: '',
+          });
+          setRunHistoryState((current) => ({ ...current, selectedJobId: latestJob.job_id }));
+          await loadAnnotationsForJob(latestJob.job_id);
         } else {
           setLatestRunState({ job: null, result: null, loading: false, error: '' });
         }
@@ -165,6 +197,37 @@ function App() {
     }
 
     loadLatestRun();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadRunHistory() {
+      try {
+        const payload = await apiRequest('/api/jobs/history');
+        if (isMounted) {
+          setRunHistoryState((current) => ({
+            ...current,
+            jobs: payload.jobs ?? [],
+            loading: false,
+            error: '',
+          }));
+        }
+      } catch (error) {
+        if (isMounted) {
+          setRunHistoryState((current) => ({
+            ...current,
+            loading: false,
+            error: readableError(error),
+          }));
+        }
+      }
+    }
+
+    loadRunHistory();
     return () => {
       isMounted = false;
     };
@@ -231,9 +294,144 @@ function App() {
       const sourceStatus = await apiRequest('/api/model-sources/status');
       setPrioritizationState({ job, result, loading: false, error: '' });
       setLatestRunState({ job, result, loading: false, error: '' });
+      setRunHistoryState((current) => ({
+        ...current,
+        selectedJobId: job.job_id,
+        jobs: mergeHistoryJob(current.jobs, job),
+      }));
+      await loadAnnotationsForJob(job.job_id);
       setSourceStatusState({ payload: sourceStatus, loading: false, error: '' });
     } catch (error) {
       setPrioritizationState((current) => ({
+        ...current,
+        loading: false,
+        error: readableError(error),
+      }));
+    }
+  }
+
+  async function handleLoadHistoricalRun(jobId) {
+    if (!jobId) {
+      return;
+    }
+    setRunHistoryState((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const result = await apiRequest(`/api/results/${jobId}`);
+      const job = latestJobMetadata(result);
+      setPrioritizationState({ job, result, loading: false, error: '' });
+      setLatestRunState({ job, result, loading: false, error: '' });
+      await loadAnnotationsForJob(jobId);
+      setRunHistoryState((current) => ({
+        ...current,
+        selectedJobId: jobId,
+        loading: false,
+        error: '',
+        jobs: mergeHistoryJob(current.jobs, job),
+      }));
+      setActiveItem('Molecular Prioritization');
+    } catch (error) {
+      setRunHistoryState((current) => ({
+        ...current,
+        loading: false,
+        error: readableError(error),
+      }));
+    }
+  }
+
+  async function loadAnnotationsForJob(jobId) {
+    if (!jobId) {
+      setAnnotationsState({
+        jobId: '',
+        annotations: {},
+        loading: false,
+        saving: false,
+        error: '',
+        updatedAt: null,
+      });
+      return;
+    }
+    setAnnotationsState((current) => ({
+      ...current,
+      jobId,
+      loading: true,
+      error: '',
+    }));
+    try {
+      const payload = await apiRequest(`/api/jobs/${jobId}/annotations`);
+      setAnnotationsState({
+        jobId,
+        annotations: payload.annotations ?? {},
+        loading: false,
+        saving: false,
+        error: '',
+        updatedAt: payload.updated_at ?? null,
+      });
+    } catch (error) {
+      setAnnotationsState({
+        jobId,
+        annotations: {},
+        loading: false,
+        saving: false,
+        error: readableError(error),
+        updatedAt: null,
+      });
+    }
+  }
+
+  async function handleSaveReviewAnnotation(annotationKey, annotation) {
+    const jobId = annotatedLatestRunState.job?.job_id ?? annotatedPrioritizationState.job?.job_id ?? '';
+    if (!jobId || !annotationKey) {
+      return;
+    }
+    const nextAnnotations = {
+      ...annotationsState.annotations,
+      [annotationKey]: {
+        review_status: annotation.review_status || 'unreviewed',
+        review_note: annotation.review_note || '',
+      },
+    };
+    setAnnotationsState((current) => ({
+      ...current,
+      jobId,
+      annotations: nextAnnotations,
+      saving: true,
+      error: '',
+    }));
+    try {
+      const payload = await apiRequest(`/api/jobs/${jobId}/annotations`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ annotations: nextAnnotations }),
+      });
+      setAnnotationsState({
+        jobId,
+        annotations: payload.annotations ?? {},
+        loading: false,
+        saving: false,
+        error: '',
+        updatedAt: payload.updated_at ?? null,
+      });
+    } catch (error) {
+      setAnnotationsState((current) => ({
+        ...current,
+        saving: false,
+        error: readableError(error),
+      }));
+    }
+  }
+
+  async function handleRefreshRunHistory() {
+    setRunHistoryState((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const payload = await apiRequest('/api/jobs/history');
+      setRunHistoryState((current) => ({
+        ...current,
+        jobs: payload.jobs ?? [],
+        loading: false,
+        error: '',
+      }));
+    } catch (error) {
+      setRunHistoryState((current) => ({
         ...current,
         loading: false,
         error: readableError(error),
@@ -282,11 +480,15 @@ function App() {
               health={health}
               uploadState={uploadState}
               setUploadState={setUploadState}
-              prioritizationState={prioritizationState}
-              latestRunState={latestRunState}
+              prioritizationState={annotatedPrioritizationState}
+              latestRunState={annotatedLatestRunState}
+              runHistoryState={runHistoryState}
+              annotationsState={annotationsState}
               sourceStatusState={sourceStatusState}
               onUpload={handleUpload}
               onStartPrioritization={handleStartPrioritization}
+              onLoadHistoricalRun={handleLoadHistoricalRun}
+              onRefreshRunHistory={handleRefreshRunHistory}
               pubchemLookupEnabled={pubchemLookupEnabled}
               setPubchemLookupEnabled={setPubchemLookupEnabled}
               chemblLookupEnabled={chemblLookupEnabled}
@@ -295,6 +497,7 @@ function App() {
               setPatentLookupEnabled={setPatentLookupEnabled}
               onCheckLocalModelCache={handleCheckLocalModelCache}
               onRefreshSourceStatus={handleRefreshSourceStatus}
+              onSaveReviewAnnotation={handleSaveReviewAnnotation}
             />
           </Box>
         </Box>
@@ -400,9 +603,14 @@ function ActivePage({
   setUploadState,
   prioritizationState,
   latestRunState,
+  runHistoryState,
+  annotationsState,
   sourceStatusState,
   onUpload,
   onStartPrioritization,
+  onLoadHistoricalRun,
+  onRefreshRunHistory,
+  onSaveReviewAnnotation,
   pubchemLookupEnabled,
   setPubchemLookupEnabled,
   chemblLookupEnabled,
@@ -434,16 +642,41 @@ function ActivePage({
         setChemblLookupEnabled={setChemblLookupEnabled}
         patentLookupEnabled={patentLookupEnabled}
         setPatentLookupEnabled={setPatentLookupEnabled}
+        annotationsState={annotationsState}
+        onSaveReviewAnnotation={onSaveReviewAnnotation}
       />
     );
   }
 
   if (activeItem === 'Biopharma Intelligence') {
-    return <BiopharmaIntelligencePage latestRunState={latestRunState} />;
+    return (
+      <BiopharmaIntelligencePage
+        latestRunState={latestRunState}
+        annotationsState={annotationsState}
+        onSaveReviewAnnotation={onSaveReviewAnnotation}
+      />
+    );
+  }
+
+  if (activeItem === 'Run History') {
+    return (
+      <RunHistoryPage
+        runHistoryState={runHistoryState}
+        loadedJobId={latestRunState.job?.job_id ?? prioritizationState.job?.job_id ?? ''}
+        onLoadHistoricalRun={onLoadHistoricalRun}
+        onRefreshRunHistory={onRefreshRunHistory}
+      />
+    );
   }
 
   if (activeItem === 'Reports') {
-    return <ReportsPage latestRunState={latestRunState} />;
+    return (
+      <ReportsPage
+        latestRunState={latestRunState}
+        annotationsState={annotationsState}
+        onSaveReviewAnnotation={onSaveReviewAnnotation}
+      />
+    );
   }
 
   if (activeItem === 'Settings') {
@@ -625,13 +858,27 @@ function RunSummaryCard({ label, value, detail }) {
 }
 
 const highSimilarityThreshold = 0.7;
+const reviewStatuses = ['unreviewed', 'selected', 'watchlist', 'deprioritized', 'rejected'];
+const reviewStatusLabels = {
+  unreviewed: 'Unreviewed',
+  selected: 'Selected',
+  watchlist: 'Watchlist',
+  deprioritized: 'Deprioritized',
+  rejected: 'Rejected',
+};
 
-function BiopharmaIntelligencePage({ latestRunState }) {
+function BiopharmaIntelligencePage({ latestRunState, annotationsState, onSaveReviewAnnotation }) {
   const rows = latestRunState.result?.results ?? [];
+  const [filters, setFilters] = useState(defaultEvidenceFilters);
+  const filteredRows = useMemo(() => applyEvidenceFilters(rows, filters), [rows, filters]);
   const summary = buildBiopharmaSummary(rows);
   const [selectedCompoundKey, setSelectedCompoundKey] = useState('');
   const selectedCompound =
-    rows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? rows[0] ?? null;
+    filteredRows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? filteredRows[0] ?? null;
+
+  useEffect(() => {
+    setSelectedCompoundKey('');
+  }, [latestRunState.result?.output_file, filters]);
 
   return (
     <Stack spacing={3}>
@@ -649,7 +896,7 @@ function BiopharmaIntelligencePage({ latestRunState }) {
                 {latestRunState.loading
                   ? 'Loading latest completed prioritization run...'
                   : rows.length > 0
-                  ? `Using ${rows.length} result rows from the latest completed run.`
+                  ? `Showing ${filteredRows.length} of ${rows.length} molecules from the latest completed run.`
                   : 'Run molecular prioritization to populate biopharma context.'}
               </Typography>
             </Stack>
@@ -673,6 +920,11 @@ function BiopharmaIntelligencePage({ latestRunState }) {
               }}
             >
               <RunSummaryCard label="Exact known-compound matches" value={summary.exactMatches} />
+              <RunSummaryCard
+                label="Candidate shortlist"
+                value={summary.reviewSummary}
+                detail="Local review status counts"
+              />
               <RunSummaryCard
                 label="Evidence summary"
                 value={summary.evidenceSummaryTopCategory}
@@ -714,17 +966,34 @@ function BiopharmaIntelligencePage({ latestRunState }) {
       {rows.length > 0 && (
         <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
           <Stack spacing={2}>
-            <Typography variant="h2">Local Reference Context</Typography>
-            <BiopharmaResultTable
+            <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+              <Typography variant="h2">Local Reference Context</Typography>
+              <Chip label={`Showing ${filteredRows.length} of ${rows.length} molecules`} variant="outlined" />
+            </Stack>
+            <EvidenceFilterPanel
               rows={rows}
-              selectedCompoundKey={compoundRowKey(selectedCompound, rows.indexOf(selectedCompound))}
+              filteredRows={filteredRows}
+              filters={filters}
+              onChange={setFilters}
+              onReset={() => setFilters(defaultEvidenceFilters)}
+              exportFilename="moloptima-biopharma-filtered.csv"
+            />
+            <BiopharmaResultTable
+              rows={filteredRows}
+              selectedCompoundKey={selectedCompound ? compoundRowKey(selectedCompound, filteredRows.indexOf(selectedCompound)) : ''}
               onSelectCompound={setSelectedCompoundKey}
             />
           </Stack>
         </Paper>
       )}
 
-      {selectedCompound && <BiopharmaInterpretationPanel compound={selectedCompound} />}
+      {selectedCompound && (
+        <BiopharmaInterpretationPanel
+          compound={selectedCompound}
+          annotationsState={annotationsState}
+          onSaveReviewAnnotation={onSaveReviewAnnotation}
+        />
+      )}
     </Stack>
   );
 }
@@ -736,6 +1005,8 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
         <TableHead>
           <TableRow>
             <TableCell>molecule_id</TableCell>
+            <TableCell>review_status</TableCell>
+            <TableCell>review_note</TableCell>
             <TableCell>evidence_summary_category</TableCell>
             <TableCell>biopharma_context_level</TableCell>
             <TableCell>known_compound_match</TableCell>
@@ -776,6 +1047,8 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 sx={{ cursor: 'pointer' }}
               >
                 <TableCell>{formatDetailValue(row.molecule_id)}</TableCell>
+                <TableCell>{formatReviewStatus(row.review_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.biopharma_context_level)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_match)}</TableCell>
@@ -804,7 +1077,7 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
   );
 }
 
-function BiopharmaInterpretationPanel({ compound }) {
+function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReviewAnnotation }) {
   const interpretation = interpretBiopharmaCompound(compound);
 
   return (
@@ -819,8 +1092,15 @@ function BiopharmaInterpretationPanel({ compound }) {
             <Chip label={interpretation.label} color={interpretation.color} variant="outlined" />
           </Stack>
           <Typography>{interpretation.message}</Typography>
+          <ReviewAnnotationControls
+            compound={compound}
+            annotationsState={annotationsState}
+            onSaveReviewAnnotation={onSaveReviewAnnotation}
+          />
           <MetadataPanel
             rows={[
+              ['Review status', formatReviewStatus(compound.review_status)],
+              ['Review note', compound.review_note],
               ['Evidence summary category', formatEvidenceCategory(compound.evidence_summary_category)],
               ['Public identity signal', formatEvidenceCategory(compound.public_identity_signal)],
               ['Public bioactivity signal', formatEvidenceCategory(compound.public_bioactivity_signal)],
@@ -871,6 +1151,7 @@ function buildBiopharmaSummary(rows) {
   const patentStatusCounts = countValues(rows.map((row) => row.patent_lookup_status).filter(Boolean));
   const evidenceCategoryCounts = countValues(rows.map((row) => row.evidence_summary_category).filter(Boolean));
   const topEvidenceCategory = topCountLabel(evidenceCategoryCounts);
+  const reviewSummary = formatReviewCounts(rows);
   const highSimilarityCompounds = similarities.filter((value) => value >= highSimilarityThreshold).length;
   const averageSimilarity =
     similarities.length > 0
@@ -885,6 +1166,7 @@ function buildBiopharmaSummary(rows) {
     chemblLookupDetail: formatCounts(chemblStatusCounts) || 'ChEMBL lookup not run',
     patentSignals,
     patentLookupDetail: formatCounts(patentStatusCounts) || 'Patent-context lookup not run',
+    reviewSummary,
     evidenceSummaryTopCategory: topEvidenceCategory ? formatEvidenceCategory(topEvidenceCategory) : 'Not available',
     evidenceSummaryDetail: formatCounts(evidenceCategoryCounts) || 'No evidence synthesis available',
     noExactMatches: rows.length - exactMatches,
@@ -973,12 +1255,108 @@ function interpretBiopharmaCompound(compound) {
   };
 }
 
-function ReportsPage({ latestRunState }) {
+function RunHistoryPage({ runHistoryState, loadedJobId, onLoadHistoricalRun, onRefreshRunHistory }) {
+  const jobs = runHistoryState.jobs ?? [];
+
+  return (
+    <Stack spacing={3}>
+      <PageIntro
+        title="Run History"
+        description="Review previously completed local prioritization jobs and reload saved result rows into the MolOptima analysis views."
+      />
+
+      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2.5}>
+          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+            <Stack spacing={0.75}>
+              <Typography variant="h2">Saved Analyses</Typography>
+              <Typography color="text.secondary">
+                {runHistoryState.loading
+                  ? 'Loading saved analyses...'
+                  : jobs.length > 0
+                  ? `${jobs.length} completed runs are available locally.`
+                  : 'No completed runs are available yet.'}
+              </Typography>
+            </Stack>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
+              {loadedJobId && <Chip label={`Loaded run: ${loadedJobId}`} color="secondary" variant="outlined" />}
+              <Button variant="outlined" onClick={onRefreshRunHistory} disabled={runHistoryState.loading}>
+                Refresh history
+              </Button>
+            </Stack>
+          </Stack>
+
+          {runHistoryState.error && <Alert severity="error">{runHistoryState.error}</Alert>}
+          {runHistoryState.loading && <Alert severity="info">Loading saved analyses...</Alert>}
+
+          {jobs.length > 0 ? (
+            <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+              <Table size="small" aria-label="Saved analysis run history">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>job_id</TableCell>
+                    <TableCell>completed_at</TableCell>
+                    <TableCell>rows</TableCell>
+                    <TableCell>lookup_sources</TableCell>
+                    <TableCell>input_file</TableCell>
+                    <TableCell>output_file</TableCell>
+                    <TableCell>status</TableCell>
+                    <TableCell>Load</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {jobs.map((job) => {
+                    const isLoaded = loadedJobId === job.job_id;
+                    return (
+                      <TableRow key={job.job_id} selected={isLoaded}>
+                        <TableCell sx={{ fontFamily: 'ui-monospace, Consolas, monospace' }}>
+                          {formatDetailValue(job.job_id)}
+                        </TableCell>
+                        <TableCell>{formatDetailValue(job.completed_at)}</TableCell>
+                        <TableCell>{formatDetailValue(job.row_count)}</TableCell>
+                        <TableCell>{formatLookupSources(job)}</TableCell>
+                        <TableCell>{formatDetailValue(job.input_file)}</TableCell>
+                        <TableCell>{formatDetailValue(job.output_file)}</TableCell>
+                        <TableCell>{formatDetailValue(job.status)}</TableCell>
+                        <TableCell>
+                          <Button
+                            size="small"
+                            variant={isLoaded ? 'contained' : 'outlined'}
+                            disabled={runHistoryState.loading}
+                            onClick={() => onLoadHistoricalRun(job.job_id)}
+                          >
+                            {isLoaded ? 'Loaded' : 'Load run'}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </Box>
+          ) : !runHistoryState.loading && (
+            <Alert severity="info">
+              Run molecular prioritization to create saved local analyses.
+            </Alert>
+          )}
+        </Stack>
+      </Paper>
+    </Stack>
+  );
+}
+
+function ReportsPage({ latestRunState, annotationsState, onSaveReviewAnnotation }) {
   const rows = latestRunState.result?.results ?? [];
+  const [filters, setFilters] = useState(defaultEvidenceFilters);
+  const filteredRows = useMemo(() => applyEvidenceFilters(rows, filters), [rows, filters]);
   const summary = buildReportsSummary(latestRunState);
   const [selectedCompoundKey, setSelectedCompoundKey] = useState('');
   const selectedCompound =
-    rows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? rows[0] ?? null;
+    filteredRows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? filteredRows[0] ?? null;
+
+  useEffect(() => {
+    setSelectedCompoundKey('');
+  }, [latestRunState.result?.output_file, filters]);
 
   return (
     <Stack spacing={3}>
@@ -996,7 +1374,7 @@ function ReportsPage({ latestRunState }) {
                 {latestRunState.loading
                   ? 'Loading latest completed prioritization run...'
                   : rows.length > 0
-                  ? 'Markdown compound reports are available for the latest completed run.'
+                  ? `Showing ${filteredRows.length} of ${rows.length} molecules. Markdown compound reports are available for the latest completed run.`
                   : 'Upload molecules and run prioritization first to generate report options.'}
               </Typography>
             </Stack>
@@ -1031,6 +1409,11 @@ function ReportsPage({ latestRunState }) {
                 <RunSummaryCard
                   label="Known-compound exact matches"
                   value={summary.knownCompoundMatches}
+                />
+                <RunSummaryCard
+                  label="Candidate shortlist"
+                  value={summary.reviewSummary}
+                  detail="Local review status counts"
                 />
                 <RunSummaryCard
                   label="Evidence summary"
@@ -1074,7 +1457,7 @@ function ReportsPage({ latestRunState }) {
               <Stack spacing={0.75}>
                 <Typography variant="h2">Compounds Available for Export</Typography>
                 <Typography color="text.secondary">
-                  Select a compound row or download its Markdown report directly.
+                  Select a compound row, download its Markdown report, or export the currently filtered rows.
                 </Typography>
               </Stack>
               {selectedCompound && (
@@ -1087,9 +1470,24 @@ function ReportsPage({ latestRunState }) {
                 </Button>
               )}
             </Stack>
-            <ReportsCompoundTable
+            <EvidenceFilterPanel
               rows={rows}
-              selectedCompoundKey={compoundRowKey(selectedCompound, rows.indexOf(selectedCompound))}
+              filteredRows={filteredRows}
+              filters={filters}
+              onChange={setFilters}
+              onReset={() => setFilters(defaultEvidenceFilters)}
+              exportFilename="moloptima-reports-filtered.csv"
+            />
+            {selectedCompound && (
+              <ReviewAnnotationControls
+                compound={selectedCompound}
+                annotationsState={annotationsState}
+                onSaveReviewAnnotation={onSaveReviewAnnotation}
+              />
+            )}
+            <ReportsCompoundTable
+              rows={filteredRows}
+              selectedCompoundKey={selectedCompound ? compoundRowKey(selectedCompound, filteredRows.indexOf(selectedCompound)) : ''}
               onSelectCompound={setSelectedCompoundKey}
             />
           </Stack>
@@ -1108,6 +1506,8 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>molecule_id</TableCell>
             <TableCell>priority_score</TableCell>
             <TableCell>valid_molecule</TableCell>
+            <TableCell>review_status</TableCell>
+            <TableCell>review_note</TableCell>
             <TableCell>evidence_summary_category</TableCell>
             <TableCell>known_compound_name</TableCell>
             <TableCell>pubchem_lookup_status</TableCell>
@@ -1141,6 +1541,8 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.molecule_id)}</TableCell>
                 <TableCell>{formatDetailValue(row.priority_score)}</TableCell>
                 <TableCell>{formatDetailValue(row.valid_molecule)}</TableCell>
+                <TableCell>{formatReviewStatus(row.review_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
@@ -1176,6 +1578,7 @@ function buildReportsSummary(latestRunState) {
   const rows = latestRunState.result?.results ?? [];
   const evidenceCategoryCounts = countValues(rows.map((row) => row.evidence_summary_category).filter(Boolean));
   const topEvidenceCategory = topCountLabel(evidenceCategoryCounts);
+  const reviewSummary = formatReviewCounts(rows);
 
   return {
     jobId: latestRunState.job?.job_id ?? latestRunState.result?.job_id ?? 'Not available',
@@ -1191,6 +1594,7 @@ function buildReportsSummary(latestRunState) {
     chemblLookupDetail: formatCounts(countValues(rows.map((row) => row.chembl_lookup_status).filter(Boolean))) || 'ChEMBL lookup not run',
     patentSignals: rows.filter((row) => isTrueValue(row.patent_public_evidence_match)).length,
     patentLookupDetail: formatCounts(countValues(rows.map((row) => row.patent_lookup_status).filter(Boolean))) || 'Patent-context lookup not run',
+    reviewSummary,
     evidenceSummaryTopCategory: topEvidenceCategory ? formatEvidenceCategory(topEvidenceCategory) : 'Not available',
     evidenceSummaryDetail: formatCounts(evidenceCategoryCounts) || 'No evidence synthesis available',
     highSimilarityCompounds: rows.filter((row) => {
@@ -1335,15 +1739,19 @@ function PrioritizationPage({
   setChemblLookupEnabled,
   patentLookupEnabled,
   setPatentLookupEnabled,
+  annotationsState,
+  onSaveReviewAnnotation,
 }) {
   const resultRows = prioritizationState.result?.results ?? [];
+  const [filters, setFilters] = useState(defaultEvidenceFilters);
+  const filteredRows = useMemo(() => applyEvidenceFilters(resultRows, filters), [resultRows, filters]);
   const [selectedCompoundKey, setSelectedCompoundKey] = useState(null);
   const selectedCompound =
-    resultRows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? null;
+    filteredRows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? null;
 
   useEffect(() => {
     setSelectedCompoundKey(null);
-  }, [prioritizationState.result?.output_file]);
+  }, [prioritizationState.result?.output_file, filters]);
 
   return (
     <Stack spacing={3}>
@@ -1418,6 +1826,7 @@ function PrioritizationPage({
                 ['Rows', prioritizationState.job.row_count],
                 ['Output file', prioritizationState.job.output_file],
                 ['Completed at', prioritizationState.job.completed_at ?? ''],
+                ['Candidate shortlist', formatReviewCounts(resultRows)],
               ]}
             />
           )}
@@ -1430,7 +1839,7 @@ function PrioritizationPage({
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1}>
               <Typography variant="h2">Result Preview</Typography>
               <Chip
-                label={`${prioritizationState.result.row_count} rows`}
+                label={`Showing ${filteredRows.length} of ${resultRows.length} molecules`}
                 color={prioritizationState.result.status === 'completed' ? 'success' : 'warning'}
                 variant="outlined"
               />
@@ -1439,11 +1848,26 @@ function PrioritizationPage({
               Result file: {prioritizationState.result.output_file}
             </Typography>
             {resultRows.length > 0 ? (
-              <ResultPreview
-                rows={resultRows.slice(0, 5)}
-                selectedCompoundKey={selectedCompoundKey}
-                onSelectCompound={setSelectedCompoundKey}
-              />
+              <>
+                <EvidenceFilterPanel
+                  rows={resultRows}
+                  filteredRows={filteredRows}
+                  filters={filters}
+                  onChange={setFilters}
+                  onReset={() => setFilters(defaultEvidenceFilters)}
+                  exportFilename="moloptima-prioritization-filtered.csv"
+                />
+                <ResultPreview
+                  rows={filteredRows.slice(0, 5)}
+                  selectedCompoundKey={selectedCompoundKey}
+                  onSelectCompound={setSelectedCompoundKey}
+                />
+                {filteredRows.length > 5 && (
+                  <Typography variant="caption" color="text.secondary">
+                    Preview shows the first 5 filtered molecules.
+                  </Typography>
+                )}
+              </>
             ) : (
               <Alert severity="info">No result rows were returned for this job.</Alert>
             )}
@@ -1451,7 +1875,13 @@ function PrioritizationPage({
         </Paper>
       )}
 
-      {selectedCompound && <CompoundDetailPanel compound={selectedCompound} />}
+      {selectedCompound && (
+        <CompoundDetailPanel
+          compound={selectedCompound}
+          annotationsState={annotationsState}
+          onSaveReviewAnnotation={onSaveReviewAnnotation}
+        />
+      )}
     </Stack>
   );
 }
@@ -1500,6 +1930,308 @@ function MetadataPanel({ rows }) {
   );
 }
 
+const defaultEvidenceFilters = {
+  evidence_summary_category: '',
+  biopharma_context_level: '',
+  public_identity_signal: '',
+  public_bioactivity_signal: '',
+  patent_context_signal: '',
+  local_similarity_signal: '',
+  priority_score_min: '',
+  bbb_prediction: '',
+  bbb_model_status: '',
+  valid_molecule: '',
+  review_status: '',
+};
+
+const evidenceFilterFields = [
+  ['evidence_summary_category', 'Evidence summary'],
+  ['biopharma_context_level', 'Biopharma context level'],
+  ['public_identity_signal', 'Public identity signal'],
+  ['public_bioactivity_signal', 'Public bioactivity signal'],
+  ['patent_context_signal', 'Patent-context signal'],
+  ['local_similarity_signal', 'Local similarity signal'],
+  ['bbb_prediction', 'BBB prediction'],
+  ['bbb_model_status', 'BBB status'],
+  ['review_status', 'Review status'],
+];
+
+function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onReset, exportFilename }) {
+  const updateFilter = (key, value) => {
+    onChange({ ...filters, [key]: value });
+  };
+
+  return (
+    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+      <Stack spacing={2}>
+        <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+          <Stack spacing={0.25}>
+            <Typography variant="h2">Evidence Filters</Typography>
+            <Typography color="text.secondary">
+              Showing {filteredRows.length} of {rows.length} molecules
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Candidate shortlist: {formatReviewCounts(rows)}
+            </Typography>
+          </Stack>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
+            <Button variant="outlined" onClick={onReset}>
+              Clear filters
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<DownloadOutlinedIcon />}
+              disabled={filteredRows.length === 0}
+              onClick={() => downloadRowsCsv(filteredRows, exportFilename)}
+            >
+              Export filtered CSV
+            </Button>
+          </Stack>
+        </Stack>
+
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' },
+            gap: 1.5,
+          }}
+        >
+          {evidenceFilterFields.map(([key, label]) => (
+            <FilterSelect
+              key={key}
+              label={label}
+              value={filters[key]}
+              options={filterOptions(rows, key)}
+              onChange={(value) => updateFilter(key, value)}
+            />
+          ))}
+          <FilterNumberInput
+            label="Minimum priority score"
+            value={filters.priority_score_min}
+            onChange={(value) => updateFilter('priority_score_min', value)}
+          />
+          <FilterSelect
+            label="Molecule status"
+            value={filters.valid_molecule}
+            options={[
+              ['valid', 'Valid molecules'],
+              ['invalid', 'Invalid molecules'],
+            ]}
+            onChange={(value) => updateFilter('valid_molecule', value)}
+          />
+        </Box>
+
+        {rows.length > 0 && filteredRows.length === 0 && (
+          <Alert severity="info">No molecules match the current filters.</Alert>
+        )}
+      </Stack>
+    </Box>
+  );
+}
+
+function FilterSelect({ label, value, options, onChange }) {
+  return (
+    <Box component="label" sx={{ display: 'grid', gap: 0.5 }}>
+      <Typography variant="caption" color="text.secondary">
+        {label}
+      </Typography>
+      <Box
+        component="select"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        sx={{
+          width: '100%',
+          minHeight: 38,
+          border: '1px solid',
+          borderColor: 'divider',
+          borderRadius: 1,
+          bgcolor: 'background.paper',
+          color: 'text.primary',
+          px: 1,
+        }}
+      >
+        <option value="">All</option>
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>
+            {optionLabel}
+          </option>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+function FilterNumberInput({ label, value, onChange }) {
+  return (
+    <Box component="label" sx={{ display: 'grid', gap: 0.5 }}>
+      <Typography variant="caption" color="text.secondary">
+        {label}
+      </Typography>
+      <Box
+        component="input"
+        type="number"
+        min="0"
+        max="1"
+        step="0.01"
+        value={value}
+        placeholder="All"
+        onChange={(event) => onChange(event.target.value)}
+        sx={{
+          width: '100%',
+          minHeight: 38,
+          border: '1px solid',
+          borderColor: 'divider',
+          borderRadius: 1,
+          bgcolor: 'background.paper',
+          color: 'text.primary',
+          px: 1,
+          boxSizing: 'border-box',
+        }}
+      />
+    </Box>
+  );
+}
+
+function ReviewAnnotationControls({ compound, annotationsState, onSaveReviewAnnotation }) {
+  const [draftStatus, setDraftStatus] = useState(compound.review_status ?? 'unreviewed');
+  const [draftNote, setDraftNote] = useState(compound.review_note ?? '');
+
+  useEffect(() => {
+    setDraftStatus(compound.review_status ?? 'unreviewed');
+    setDraftNote(compound.review_note ?? '');
+  }, [compound.review_annotation_key, compound.review_status, compound.review_note]);
+
+  const annotationChanged =
+    draftStatus !== (compound.review_status ?? 'unreviewed') ||
+    draftNote !== (compound.review_note ?? '');
+
+  return (
+    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+      <Stack spacing={1.5}>
+        <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+          <Stack spacing={0.25}>
+            <Typography variant="h2">Candidate shortlist</Typography>
+            <Typography color="text.secondary">
+              Assign a local review status and short note for this loaded run.
+            </Typography>
+          </Stack>
+          <Chip
+            label={formatReviewStatus(compound.review_status)}
+            color={reviewStatusColor(compound.review_status)}
+            variant="outlined"
+          />
+        </Stack>
+        {annotationsState?.error && <Alert severity="warning">{annotationsState.error}</Alert>}
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', md: '220px minmax(0, 1fr) auto' },
+            gap: 1.5,
+            alignItems: 'end',
+          }}
+        >
+          <FilterSelect
+            label="Review status"
+            value={draftStatus}
+            options={reviewStatuses.map((statusValue) => [statusValue, reviewStatusLabels[statusValue]])}
+            onChange={setDraftStatus}
+          />
+          <FilterTextInput
+            label="Review note"
+            value={draftNote}
+            maxLength={500}
+            onChange={setDraftNote}
+          />
+          <Button
+            variant="contained"
+            disabled={!annotationChanged || annotationsState?.saving}
+            onClick={() =>
+              onSaveReviewAnnotation(compound.review_annotation_key, {
+                review_status: draftStatus,
+                review_note: draftNote,
+              })
+            }
+          >
+            {annotationsState?.saving ? 'Saving' : 'Save note'}
+          </Button>
+        </Box>
+      </Stack>
+    </Box>
+  );
+}
+
+function FilterTextInput({ label, value, maxLength, onChange }) {
+  return (
+    <Box component="label" sx={{ display: 'grid', gap: 0.5 }}>
+      <Typography variant="caption" color="text.secondary">
+        {label}
+      </Typography>
+      <Box
+        component="input"
+        type="text"
+        value={value}
+        maxLength={maxLength}
+        onChange={(event) => onChange(event.target.value)}
+        sx={{
+          width: '100%',
+          minHeight: 38,
+          border: '1px solid',
+          borderColor: 'divider',
+          borderRadius: 1,
+          bgcolor: 'background.paper',
+          color: 'text.primary',
+          px: 1,
+          boxSizing: 'border-box',
+        }}
+      />
+    </Box>
+  );
+}
+
+function applyEvidenceFilters(rows, filters) {
+  const minimumPriority = numericValue(filters.priority_score_min);
+
+  return rows.filter((row) => {
+    for (const [key] of evidenceFilterFields) {
+      if (filters[key] && normalizedFilterValue(row[key]) !== filters[key]) {
+        return false;
+      }
+    }
+    if (minimumPriority !== null) {
+      const priorityScore = numericValue(row.priority_score);
+      if (priorityScore === null || priorityScore < minimumPriority) {
+        return false;
+      }
+    }
+    if (filters.valid_molecule === 'valid' && !isTrueValue(row.valid_molecule)) {
+      return false;
+    }
+    if (filters.valid_molecule === 'invalid' && !isFalseValue(row.valid_molecule)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function filterOptions(rows, key) {
+  return Array.from(
+    new Set(
+      rows
+        .map((row) => normalizedFilterValue(row[key]))
+        .filter(Boolean),
+    ),
+  )
+    .sort((left, right) => left.localeCompare(right))
+    .map((value) => [value, formatEvidenceCategory(value)]);
+}
+
+function normalizedFilterValue(value) {
+  if (value === null || value === undefined || value === '') {
+    return '';
+  }
+  return String(value);
+}
+
 function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   const hasSyntheticAccessibility = rows.some(
     (row) => row.sa_score !== undefined || row.synthetic_feasibility_category !== undefined,
@@ -1522,6 +2254,8 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>Molecule</TableCell>
             <TableCell>Valid</TableCell>
             <TableCell>Score</TableCell>
+            <TableCell>Review status</TableCell>
+            <TableCell>Review note</TableCell>
             {hasEvidenceSynthesis && <TableCell>Evidence summary</TableCell>}
             {hasIdentityStatus && <TableCell>Identity</TableCell>}
             {hasPublicIdentityStatus && <TableCell>Public compound match</TableCell>}
@@ -1556,6 +2290,8 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{row.molecule_id}</TableCell>
                 <TableCell>{row.valid_molecule}</TableCell>
                 <TableCell>{row.priority_score}</TableCell>
+                <TableCell>{formatReviewStatus(row.review_status)}</TableCell>
+                <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 {hasEvidenceSynthesis && (
                   <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
                 )}
@@ -1594,7 +2330,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   );
 }
 
-function CompoundDetailPanel({ compound }) {
+function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotation }) {
   return (
     <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
       <CardContent sx={{ p: 3, '&:last-child': { pb: 3 } }}>
@@ -1621,6 +2357,11 @@ function CompoundDetailPanel({ compound }) {
               />
             </Stack>
           </Stack>
+          <ReviewAnnotationControls
+            compound={compound}
+            annotationsState={annotationsState}
+            onSaveReviewAnnotation={onSaveReviewAnnotation}
+          />
 
           <Box
             sx={{
@@ -1632,6 +2373,8 @@ function CompoundDetailPanel({ compound }) {
             <DetailTable
               title="Computational Screening Summary"
               rows={[
+                ['Review status', formatReviewStatus(compound.review_status)],
+                ['Review note', compound.review_note],
                 ['Evidence summary', formatEvidenceCategory(compound.evidence_summary_category)],
                 ['Summary notes', compound.evidence_summary_notes],
                 ['Public identity signal', formatEvidenceCategory(compound.public_identity_signal)],
@@ -1799,6 +2542,50 @@ function formatPatentSignal(row) {
   return row.patent_lookup_status ?? 'not available';
 }
 
+function formatLookupSources(job) {
+  const sources = [];
+  if (isTrueValue(job.pubchem_lookup_requested)) {
+    sources.push('PubChem');
+  }
+  if (isTrueValue(job.chembl_lookup_requested)) {
+    sources.push('ChEMBL');
+  }
+  if (isTrueValue(job.patent_lookup_requested)) {
+    sources.push('SureChEMBL');
+  }
+  return sources.length > 0 ? sources.join(', ') : 'None requested';
+}
+
+function formatReviewStatus(value) {
+  return reviewStatusLabels[value] ?? reviewStatusLabels.unreviewed;
+}
+
+function reviewStatusColor(value) {
+  if (value === 'selected') {
+    return 'success';
+  }
+  if (value === 'watchlist') {
+    return 'secondary';
+  }
+  if (value === 'deprioritized') {
+    return 'warning';
+  }
+  if (value === 'rejected') {
+    return 'error';
+  }
+  return 'default';
+}
+
+function formatReviewCounts(rows) {
+  if (!rows || rows.length === 0) {
+    return 'Not available';
+  }
+  const counts = countValues(rows.map((row) => row.review_status || 'unreviewed'));
+  return reviewStatuses
+    .map((statusValue) => `${reviewStatusLabels[statusValue]}: ${counts[statusValue] ?? 0}`)
+    .join(', ');
+}
+
 function formatEvidenceCategory(value) {
   if (value === null || value === undefined || value === '') {
     return 'Not available';
@@ -1827,6 +2614,60 @@ function topCountLabel(counts) {
   return Object.entries(counts).sort((left, right) => right[1] - left[1])[0]?.[0] ?? '';
 }
 
+function mergeHistoryJob(jobs, job) {
+  if (!job?.job_id) {
+    return jobs;
+  }
+  const historyJob = {
+    job_id: job.job_id,
+    created_at: job.created_at,
+    completed_at: job.completed_at,
+    row_count: job.row_count,
+    status: job.status,
+    input_file: job.input_file,
+    output_file: job.output_file,
+    public_lookup_requested: job.public_lookup_requested,
+    pubchem_lookup_requested: job.pubchem_lookup_requested,
+    chembl_lookup_requested: job.chembl_lookup_requested,
+    patent_lookup_requested: job.patent_lookup_requested,
+  };
+  const withoutCurrent = jobs.filter((item) => item.job_id !== job.job_id);
+  return [historyJob, ...withoutCurrent].sort((left, right) =>
+    String(right.completed_at ?? '').localeCompare(String(left.completed_at ?? '')),
+  );
+}
+
+function annotateAnalysisState(runState, annotationsState) {
+  const rows = runState.result?.results ?? [];
+  if (!runState.result || rows.length === 0) {
+    return runState;
+  }
+  const annotations = annotationsState.jobId === runState.result.job_id ? annotationsState.annotations : {};
+  return {
+    ...runState,
+    result: {
+      ...runState.result,
+      results: rows.map((row, index) => annotateResultRow(row, index, annotations)),
+    },
+  };
+}
+
+function annotateResultRow(row, index, annotations) {
+  const annotationKey = moleculeAnnotationKey(row, index);
+  const annotation = annotations[annotationKey] ?? {};
+  return {
+    ...row,
+    review_annotation_key: annotationKey,
+    review_status: annotation.review_status || 'unreviewed',
+    review_note: annotation.review_note || '',
+  };
+}
+
+function moleculeAnnotationKey(row, index) {
+  const moleculeId = row.molecule_id === null || row.molecule_id === undefined ? '' : String(row.molecule_id).trim();
+  return moleculeId || `row_${index}`;
+}
+
 function downloadCompoundMarkdownReport(compound) {
   const markdown = buildCompoundMarkdownReport(compound);
   const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
@@ -1838,6 +2679,36 @@ function downloadCompoundMarkdownReport(compound) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadRowsCsv(rows, filename) {
+  if (rows.length === 0) {
+    return;
+  }
+  const columns = Array.from(
+    rows.reduce((keys, row) => {
+      Object.keys(row).forEach((key) => keys.add(key));
+      return keys;
+    }, new Set()),
+  );
+  const csvLines = [
+    columns.map(csvCell).join(','),
+    ...rows.map((row) => columns.map((column) => csvCell(row[column])).join(',')),
+  ];
+  const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return `"${text.replaceAll('"', '""').replaceAll('\n', ' ')}"`;
 }
 
 function buildCompoundMarkdownReport(compound) {
@@ -1860,6 +2731,8 @@ function buildCompoundMarkdownReport(compound) {
     '',
     '## Computational screening summary',
     markdownRows([
+      ['Review status', formatReviewStatus(compound.review_status)],
+      ['Review note', compound.review_note],
       ['Evidence summary', formatEvidenceCategory(compound.evidence_summary_category)],
       ['Summary notes', compound.evidence_summary_notes],
       ['Public identity signal', formatEvidenceCategory(compound.public_identity_signal)],

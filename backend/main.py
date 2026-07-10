@@ -8,6 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend import services
 from backend.schemas import (
     HealthResponse,
+    JobAnnotationsRequest,
+    JobAnnotationsResponse,
+    JobHistoryResponse,
     JobResponse,
     LatestJobResponse,
     PrioritizationRequest,
@@ -26,7 +29,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
     ],
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["*"],
 )
 
@@ -59,9 +62,26 @@ def get_latest_job() -> LatestJobResponse:
     return LatestJobResponse(**services.get_latest_completed_job())
 
 
+@app.get("/api/jobs/history", response_model=JobHistoryResponse)
+def get_job_history() -> JobHistoryResponse:
+    return JobHistoryResponse(**services.get_job_history())
+
+
 @app.get("/api/results/{job_id}", response_model=ResultResponse)
 def get_results(job_id: str) -> ResultResponse:
     return ResultResponse(**services.get_result(job_id))
+
+
+@app.get("/api/jobs/{job_id}/annotations", response_model=JobAnnotationsResponse)
+def get_job_annotations(job_id: str) -> JobAnnotationsResponse:
+    return JobAnnotationsResponse(**services.get_job_annotations(job_id))
+
+
+@app.put("/api/jobs/{job_id}/annotations", response_model=JobAnnotationsResponse)
+def put_job_annotations(job_id: str, request: JobAnnotationsRequest) -> JobAnnotationsResponse:
+    return JobAnnotationsResponse(
+        **services.save_job_annotations(job_id, request.annotations)
+    )
 
 
 @app.get("/api/model-sources/status", response_model=SourceStatusResponse)

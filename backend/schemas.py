@@ -56,6 +56,20 @@ class LatestJobResponse(BaseModel):
     job: ResultResponse | None = None
 
 
+class JobHistoryResponse(BaseModel):
+    jobs: list[dict[str, Any]]
+
+
+class JobAnnotationsResponse(BaseModel):
+    job_id: str
+    annotations: dict[str, dict[str, str]]
+    updated_at: str | None = None
+
+
+class JobAnnotationsRequest(BaseModel):
+    annotations: dict[str, dict[str, str]]
+
+
 class SourceStatusResponse(BaseModel):
     model_manifest: dict[str, Any]
     public_data_manifest: dict[str, Any]

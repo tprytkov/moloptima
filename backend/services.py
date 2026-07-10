@@ -20,7 +20,10 @@ BACKEND_DIR = PROJECT_ROOT / "backend"
 UPLOAD_DIR = BACKEND_DIR / "uploads"
 JOB_OUTPUT_DIR = BACKEND_DIR / "job_outputs"
 JOB_METADATA_DIR = BACKEND_DIR / "job_metadata"
+JOB_ANNOTATION_DIR = BACKEND_DIR / "job_annotations"
 REQUIRED_COLUMNS = {"molecule_id", "smiles"}
+REVIEW_STATUSES = {"unreviewed", "selected", "watchlist", "deprioritized", "rejected"}
+MAX_REVIEW_NOTE_LENGTH = 500
 
 
 def save_upload(file: UploadFile) -> dict[str, object]:
@@ -168,6 +171,129 @@ def get_latest_completed_job() -> dict[str, object]:
 
     latest_job = max(completed_jobs, key=lambda metadata: str(metadata.get("completed_at", "")))
     return {"job": get_result(str(latest_job["job_id"]))}
+
+
+def get_job_history(limit: int = 25) -> dict[str, object]:
+    """Return recent completed prioritization job metadata without result rows."""
+
+    completed_jobs = [
+        metadata
+        for metadata in read_all_job_metadata()
+        if metadata.get("status") == "completed" and metadata.get("completed_at")
+    ]
+    sorted_jobs = sorted(
+        completed_jobs,
+        key=lambda metadata: str(metadata.get("completed_at", "")),
+        reverse=True,
+    )
+    return {
+        "jobs": [history_metadata(metadata) for metadata in sorted_jobs[:limit]],
+    }
+
+
+def get_job_annotations(job_id: str) -> dict[str, object]:
+    """Return saved local review annotations for one job."""
+
+    validate_existing_job_id(job_id)
+    annotation_path = annotation_file_path(job_id)
+    if not annotation_path.exists():
+        return {"job_id": job_id, "annotations": {}, "updated_at": None}
+
+    try:
+        with annotation_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except json.JSONDecodeError:
+        return {"job_id": job_id, "annotations": {}, "updated_at": None}
+
+    annotations = payload.get("annotations") if isinstance(payload, dict) else {}
+    return {
+        "job_id": job_id,
+        "annotations": sanitize_annotations(annotations if isinstance(annotations, dict) else {}),
+        "updated_at": payload.get("updated_at") if isinstance(payload, dict) else None,
+    }
+
+
+def save_job_annotations(
+    job_id: str,
+    annotations: dict[str, dict[str, str]],
+) -> dict[str, object]:
+    """Persist local review annotations for one job."""
+
+    validate_existing_job_id(job_id)
+    sanitized_annotations = sanitize_annotations(annotations)
+    payload = {
+        "job_id": job_id,
+        "annotations": sanitized_annotations,
+        "updated_at": utc_timestamp(),
+    }
+    JOB_ANNOTATION_DIR.mkdir(parents=True, exist_ok=True)
+    with annotation_file_path(job_id).open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    return payload
+
+
+def sanitize_annotations(annotations: dict[str, object]) -> dict[str, dict[str, str]]:
+    """Normalize review annotations to known statuses and short notes."""
+
+    sanitized: dict[str, dict[str, str]] = {}
+    for raw_key, raw_value in annotations.items():
+        key = str(raw_key).strip()
+        if not key or not isinstance(raw_value, dict):
+            continue
+        status_value = str(raw_value.get("review_status") or "unreviewed").strip().lower()
+        review_status = status_value if status_value in REVIEW_STATUSES else "unreviewed"
+        review_note = str(raw_value.get("review_note") or "").strip()
+        sanitized[key] = {
+            "review_status": review_status,
+            "review_note": review_note[:MAX_REVIEW_NOTE_LENGTH],
+        }
+    return sanitized
+
+
+def validate_existing_job_id(job_id: str) -> None:
+    """Ensure job IDs are local filenames and refer to known metadata."""
+
+    if not job_id or Path(job_id).name != job_id or any(separator in job_id for separator in ("/", "\\")):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found.",
+        )
+    if read_job_metadata(job_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found.",
+        )
+
+
+def annotation_file_path(job_id: str) -> Path:
+    return JOB_ANNOTATION_DIR / f"{job_id}.json"
+
+
+def history_metadata(metadata: dict[str, object]) -> dict[str, object]:
+    """Project job metadata fields used by the run history UI."""
+
+    pubchem_requested = bool(metadata.get("pubchem_lookup_requested"))
+    chembl_requested = bool(metadata.get("chembl_lookup_requested"))
+    patent_requested = bool(metadata.get("patent_lookup_requested"))
+    return {
+        "job_id": metadata.get("job_id"),
+        "created_at": metadata.get("created_at"),
+        "completed_at": metadata.get("completed_at"),
+        "row_count": metadata.get("row_count", 0),
+        "status": metadata.get("status"),
+        "input_file": metadata.get("input_file"),
+        "output_file": metadata.get("output_file"),
+        "public_lookup_requested": bool(
+            metadata.get("public_lookup_requested")
+            or pubchem_requested
+            or chembl_requested
+            or patent_requested
+        ),
+        "pubchem_lookup_requested": pubchem_requested,
+        "chembl_lookup_requested": chembl_requested,
+        "patent_lookup_requested": patent_requested,
+    }
 
 
 def validate_molecule_csv(path: Path) -> int:

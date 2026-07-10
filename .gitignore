@@ -14,6 +14,8 @@ backend/job_outputs/*
 !backend/job_outputs/.gitkeep
 backend/job_metadata/*
 !backend/job_metadata/.gitkeep
+backend/job_annotations/*
+!backend/job_annotations/.gitkeep
 
 # App-managed local caches and manifests
 app_data/model_cache/*
