@@ -46,6 +46,7 @@ const navigationItems = [
   { label: 'Upload Molecules', icon: UploadFileOutlinedIcon },
   { label: 'Molecular Prioritization', icon: ScienceOutlinedIcon },
   { label: 'Run History', icon: AssessmentOutlinedIcon },
+  { label: 'Run Comparison', icon: AssessmentOutlinedIcon },
   { label: 'Biopharma Intelligence', icon: InsightsOutlinedIcon },
   { label: 'Reports', icon: DescriptionOutlinedIcon },
   { label: 'Settings', icon: SettingsOutlinedIcon },
@@ -664,6 +665,15 @@ function ActivePage({
         runHistoryState={runHistoryState}
         loadedJobId={latestRunState.job?.job_id ?? prioritizationState.job?.job_id ?? ''}
         onLoadHistoricalRun={onLoadHistoricalRun}
+        onRefreshRunHistory={onRefreshRunHistory}
+      />
+    );
+  }
+
+  if (activeItem === 'Run Comparison') {
+    return (
+      <RunComparisonPage
+        runHistoryState={runHistoryState}
         onRefreshRunHistory={onRefreshRunHistory}
       />
     );
@@ -1342,6 +1352,271 @@ function RunHistoryPage({ runHistoryState, loadedJobId, onLoadHistoricalRun, onR
         </Stack>
       </Paper>
     </Stack>
+  );
+}
+
+function RunComparisonPage({ runHistoryState, onRefreshRunHistory }) {
+  const jobs = runHistoryState.jobs ?? [];
+  const [runAId, setRunAId] = useState('');
+  const [runBId, setRunBId] = useState('');
+  const [comparisonState, setComparisonState] = useState({
+    loading: false,
+    error: '',
+    runA: null,
+    runB: null,
+    rows: [],
+    summary: null,
+  });
+
+  useEffect(() => {
+    if (!runAId && jobs[0]?.job_id) {
+      setRunAId(jobs[0].job_id);
+    }
+    if (!runBId && jobs[1]?.job_id) {
+      setRunBId(jobs[1].job_id);
+    }
+  }, [jobs, runAId, runBId]);
+
+  async function handleCompareRuns() {
+    if (!runAId || !runBId || runAId === runBId) {
+      setComparisonState((current) => ({
+        ...current,
+        error: 'Choose two different completed runs to compare.',
+      }));
+      return;
+    }
+    setComparisonState((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const [runAResult, runBResult, runAAnnotations, runBAnnotations] = await Promise.all([
+        apiRequest(`/api/results/${runAId}`),
+        apiRequest(`/api/results/${runBId}`),
+        apiRequest(`/api/jobs/${runAId}/annotations`).catch(() => ({ annotations: {} })),
+        apiRequest(`/api/jobs/${runBId}/annotations`).catch(() => ({ annotations: {} })),
+      ]);
+      const runA = annotateComparisonResult(runAResult, runAAnnotations.annotations ?? {});
+      const runB = annotateComparisonResult(runBResult, runBAnnotations.annotations ?? {});
+      const comparison = compareSavedRuns(runA, runB);
+      setComparisonState({
+        loading: false,
+        error: '',
+        runA,
+        runB,
+        rows: comparison.rows,
+        summary: comparison.summary,
+      });
+    } catch (error) {
+      setComparisonState((current) => ({
+        ...current,
+        loading: false,
+        error: readableError(error),
+      }));
+    }
+  }
+
+  const summary = comparisonState.summary ?? emptyRunComparisonSummary();
+  const largestPriorityChanges = comparisonState.rows
+    .filter((row) => row.presence === 'both' && row.priority_score_change !== '')
+    .slice()
+    .sort((left, right) => Math.abs(Number(right.priority_score_change)) - Math.abs(Number(left.priority_score_change)))
+    .slice(0, 5);
+
+  return (
+    <Stack spacing={3}>
+      <PageIntro
+        title="Run Comparison"
+        description="Compare saved completed analyses to inspect ranking changes, evidence synthesis shifts, public lookup signals, and local review annotations."
+      />
+
+      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2.5}>
+          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+            <Stack spacing={0.75}>
+              <Typography variant="h2">Compare Saved Runs</Typography>
+              <Typography color="text.secondary">
+                Select two completed runs from Run History. Comparison is computed locally from saved result CSVs and annotation JSON.
+              </Typography>
+            </Stack>
+            <Button variant="outlined" onClick={onRefreshRunHistory} disabled={runHistoryState.loading}>
+              Refresh history
+            </Button>
+          </Stack>
+
+          {runHistoryState.error && <Alert severity="error">{runHistoryState.error}</Alert>}
+          {comparisonState.error && <Alert severity="error">{comparisonState.error}</Alert>}
+
+          {jobs.length >= 2 ? (
+            <Stack spacing={2}>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+                  gap: 1.5,
+                }}
+              >
+                <FilterSelect
+                  label="Run A"
+                  value={runAId}
+                  options={jobs.map((job) => [job.job_id, runOptionLabel(job)])}
+                  onChange={setRunAId}
+                />
+                <FilterSelect
+                  label="Run B"
+                  value={runBId}
+                  options={jobs.map((job) => [job.job_id, runOptionLabel(job)])}
+                  onChange={setRunBId}
+                />
+              </Box>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
+                <Button
+                  variant="contained"
+                  disabled={comparisonState.loading || !runAId || !runBId || runAId === runBId}
+                  onClick={handleCompareRuns}
+                >
+                  Compare saved runs
+                </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<DownloadOutlinedIcon />}
+                  disabled={comparisonState.rows.length === 0}
+                  onClick={() => downloadRunComparisonCsv(comparisonState.rows, 'moloptima-run-comparison.csv')}
+                >
+                  Export comparison CSV
+                </Button>
+              </Stack>
+            </Stack>
+          ) : (
+            <Alert severity="info">
+              At least two completed saved runs are needed for comparison.
+            </Alert>
+          )}
+        </Stack>
+      </Paper>
+
+      {comparisonState.loading && <Alert severity="info">Loading and comparing saved runs...</Alert>}
+
+      {comparisonState.rows.length > 0 && (
+        <>
+          <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+            <Stack spacing={2}>
+              <Stack spacing={0.5}>
+                <Typography variant="h2">Comparison Summary</Typography>
+                <Typography color="text.secondary">
+                  Run A: {formatDetailValue(runAId)} | Run B: {formatDetailValue(runBId)}
+                </Typography>
+              </Stack>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' },
+                  gap: 1.5,
+                }}
+              >
+                <RunSummaryCard label="Shared molecules" value={summary.sharedMolecules} />
+                <RunSummaryCard label="Only in Run A" value={summary.onlyInRunA} />
+                <RunSummaryCard label="Only in Run B" value={summary.onlyInRunB} />
+                <RunSummaryCard label="Changed evidence" value={summary.changedEvidence} />
+                <RunSummaryCard label="Changed review status" value={summary.changedReviewStatus} />
+                <RunSummaryCard label="Changed BBB prediction" value={summary.changedBbbPrediction} />
+                <RunSummaryCard label="Changed public signals" value={summary.changedPublicSignals} />
+                <RunSummaryCard label="Compared rows" value={summary.totalRows} />
+              </Box>
+              {largestPriorityChanges.length > 0 && (
+                <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+                  <Typography variant="h2" sx={{ mb: 1 }}>
+                    Largest Priority Score Changes
+                  </Typography>
+                  <Stack spacing={0.75}>
+                    {largestPriorityChanges.map((row) => (
+                      <Typography key={row.comparison_key} color="text.secondary">
+                        {formatDetailValue(row.molecule_id)}: {formatDetailValue(row.priority_score_a)} to{' '}
+                        {formatDetailValue(row.priority_score_b)} ({formatSignedNumber(row.priority_score_change)})
+                      </Typography>
+                    ))}
+                  </Stack>
+                </Box>
+              )}
+            </Stack>
+          </Paper>
+
+          <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+            <Stack spacing={2}>
+              <Stack spacing={0.5}>
+                <Typography variant="h2">Run Comparison Table</Typography>
+                <Typography color="text.secondary">
+                  Shared molecules, run-specific molecules, changed evidence, review annotation differences, and priority score change.
+                </Typography>
+              </Stack>
+              <RunComparisonTable rows={comparisonState.rows} />
+            </Stack>
+          </Paper>
+        </>
+      )}
+    </Stack>
+  );
+}
+
+function RunComparisonTable({ rows }) {
+  return (
+    <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+      <Table size="small" aria-label="Run comparison table">
+        <TableHead>
+          <TableRow>
+            <TableCell>molecule_id</TableCell>
+            <TableCell>presence</TableCell>
+            <TableCell>priority_score_a</TableCell>
+            <TableCell>priority_score_b</TableCell>
+            <TableCell>priority_score_change</TableCell>
+            <TableCell>evidence_a</TableCell>
+            <TableCell>evidence_b</TableCell>
+            <TableCell>biopharma_context_a</TableCell>
+            <TableCell>biopharma_context_b</TableCell>
+            <TableCell>public_identity_a</TableCell>
+            <TableCell>public_identity_b</TableCell>
+            <TableCell>public_bioactivity_a</TableCell>
+            <TableCell>public_bioactivity_b</TableCell>
+            <TableCell>patent_context_a</TableCell>
+            <TableCell>patent_context_b</TableCell>
+            <TableCell>local_similarity_a</TableCell>
+            <TableCell>local_similarity_b</TableCell>
+            <TableCell>BBB_a</TableCell>
+            <TableCell>BBB_b</TableCell>
+            <TableCell>review_status_a</TableCell>
+            <TableCell>review_status_b</TableCell>
+            <TableCell>review_note_a</TableCell>
+            <TableCell>review_note_b</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.comparison_key}>
+              <TableCell>{formatDetailValue(row.molecule_id)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.presence)}</TableCell>
+              <TableCell>{formatDetailValue(row.priority_score_a)}</TableCell>
+              <TableCell>{formatDetailValue(row.priority_score_b)}</TableCell>
+              <TableCell>{formatSignedNumber(row.priority_score_change)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.evidence_summary_category_a)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.evidence_summary_category_b)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.biopharma_context_level_a)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.biopharma_context_level_b)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.public_identity_signal_a)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.public_identity_signal_b)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.public_bioactivity_signal_a)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.public_bioactivity_signal_b)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.patent_context_signal_a)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.patent_context_signal_b)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.local_similarity_signal_a)}</TableCell>
+              <TableCell>{formatEvidenceCategory(row.local_similarity_signal_b)}</TableCell>
+              <TableCell>{formatBbbComparison(row, 'a')}</TableCell>
+              <TableCell>{formatBbbComparison(row, 'b')}</TableCell>
+              <TableCell>{formatComparisonReviewStatus(row.review_status_a)}</TableCell>
+              <TableCell>{formatComparisonReviewStatus(row.review_status_b)}</TableCell>
+              <TableCell>{formatDetailValue(row.review_note_a)}</TableCell>
+              <TableCell>{formatDetailValue(row.review_note_b)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Box>
   );
 }
 
@@ -2624,6 +2899,13 @@ function formatReviewStatus(value) {
   return reviewStatusLabels[value] ?? reviewStatusLabels.unreviewed;
 }
 
+function formatComparisonReviewStatus(value) {
+  if (value === null || value === undefined || value === '') {
+    return 'Not available';
+  }
+  return formatReviewStatus(value);
+}
+
 function reviewStatusColor(value) {
   if (value === 'selected') {
     return 'success';
@@ -2638,6 +2920,32 @@ function reviewStatusColor(value) {
     return 'error';
   }
   return 'default';
+}
+
+function formatSignedNumber(value) {
+  const numeric = numericValue(value);
+  if (numeric === null) {
+    return 'Not available';
+  }
+  return numeric > 0 ? `+${numeric.toFixed(3)}` : numeric.toFixed(3);
+}
+
+function formatBbbComparison(row, suffix) {
+  const prediction = row[`bbb_prediction_${suffix}`];
+  const probability = row[`bbb_probability_${suffix}`];
+  if (prediction === null || prediction === undefined || prediction === '') {
+    return 'Not available';
+  }
+  if (probability === null || probability === undefined || probability === '') {
+    return prediction;
+  }
+  return `${prediction} (${probability})`;
+}
+
+function runOptionLabel(job) {
+  const completedAt = job.completed_at ? ` | ${job.completed_at}` : '';
+  const rowCount = job.row_count !== undefined ? ` | ${job.row_count} rows` : '';
+  return `${job.job_id}${completedAt}${rowCount}`;
 }
 
 function formatReviewCounts(rows) {
@@ -2716,6 +3024,14 @@ function annotateAnalysisState(runState, annotationsState) {
   };
 }
 
+function annotateComparisonResult(result, annotations) {
+  const rows = result?.results ?? [];
+  return {
+    ...result,
+    results: rows.map((row, index) => annotateResultRow(row, index, annotations)),
+  };
+}
+
 function annotateResultRow(row, index, annotations) {
   const annotationKey = moleculeAnnotationKey(row, index);
   const annotation = annotations[annotationKey] ?? {};
@@ -2730,6 +3046,135 @@ function annotateResultRow(row, index, annotations) {
 function moleculeAnnotationKey(row, index) {
   const moleculeId = row.molecule_id === null || row.molecule_id === undefined ? '' : String(row.molecule_id).trim();
   return moleculeId || `row_${index}`;
+}
+
+function compareSavedRuns(runA, runB) {
+  const runARows = runA?.results ?? [];
+  const runBRows = runB?.results ?? [];
+  const runAMap = comparisonRowMap(runARows);
+  const runBMap = comparisonRowMap(runBRows);
+  const keys = Array.from(new Set([...runAMap.keys(), ...runBMap.keys()])).sort((left, right) =>
+    comparisonSortLabel(runAMap.get(left), runBMap.get(left)).localeCompare(
+      comparisonSortLabel(runAMap.get(right), runBMap.get(right)),
+    ),
+  );
+  const rows = keys.map((key) => buildComparisonRow(key, runAMap.get(key), runBMap.get(key)));
+  return {
+    rows,
+    summary: summarizeRunComparison(rows),
+  };
+}
+
+function comparisonRowMap(rows) {
+  const rowMap = new Map();
+  rows.forEach((row, index) => {
+    const key = comparisonMoleculeKey(row, index);
+    if (!rowMap.has(key)) {
+      rowMap.set(key, row);
+    }
+  });
+  return rowMap;
+}
+
+function comparisonMoleculeKey(row, index) {
+  const moleculeId = normalizedCompareValue(row.molecule_id);
+  if (moleculeId) {
+    return `molecule:${moleculeId}`;
+  }
+  const canonicalSmiles = normalizedCompareValue(row.canonical_smiles);
+  if (canonicalSmiles) {
+    return `canonical:${canonicalSmiles}`;
+  }
+  const inputSmiles = normalizedCompareValue(row.input_smiles);
+  return inputSmiles ? `input:${inputSmiles}` : `row:${index}`;
+}
+
+function comparisonSortLabel(rowA, rowB) {
+  const row = rowA ?? rowB ?? {};
+  return normalizedCompareValue(row.molecule_id) || normalizedCompareValue(row.canonical_smiles) || '';
+}
+
+function buildComparisonRow(key, rowA, rowB) {
+  const priorityA = numericValue(rowA?.priority_score);
+  const priorityB = numericValue(rowB?.priority_score);
+  const priorityChange = priorityA !== null && priorityB !== null ? priorityB - priorityA : '';
+  return {
+    comparison_key: key,
+    molecule_id: rowA?.molecule_id ?? rowB?.molecule_id ?? '',
+    input_smiles_a: rowA?.input_smiles ?? '',
+    input_smiles_b: rowB?.input_smiles ?? '',
+    canonical_smiles_a: rowA?.canonical_smiles ?? '',
+    canonical_smiles_b: rowB?.canonical_smiles ?? '',
+    presence: rowA && rowB ? 'both' : rowA ? 'only_in_run_a' : 'only_in_run_b',
+    priority_score_a: rowA?.priority_score ?? '',
+    priority_score_b: rowB?.priority_score ?? '',
+    priority_score_change: priorityChange === '' ? '' : Number(priorityChange.toFixed(6)),
+    evidence_summary_category_a: rowA?.evidence_summary_category ?? '',
+    evidence_summary_category_b: rowB?.evidence_summary_category ?? '',
+    biopharma_context_level_a: rowA?.biopharma_context_level ?? '',
+    biopharma_context_level_b: rowB?.biopharma_context_level ?? '',
+    public_identity_signal_a: rowA?.public_identity_signal ?? '',
+    public_identity_signal_b: rowB?.public_identity_signal ?? '',
+    public_bioactivity_signal_a: rowA?.public_bioactivity_signal ?? '',
+    public_bioactivity_signal_b: rowB?.public_bioactivity_signal ?? '',
+    patent_context_signal_a: rowA?.patent_context_signal ?? '',
+    patent_context_signal_b: rowB?.patent_context_signal ?? '',
+    local_similarity_signal_a: rowA?.local_similarity_signal ?? '',
+    local_similarity_signal_b: rowB?.local_similarity_signal ?? '',
+    bbb_prediction_a: rowA?.bbb_prediction ?? '',
+    bbb_prediction_b: rowB?.bbb_prediction ?? '',
+    bbb_probability_a: rowA?.bbb_probability ?? '',
+    bbb_probability_b: rowB?.bbb_probability ?? '',
+    review_status_a: rowA?.review_status ?? '',
+    review_status_b: rowB?.review_status ?? '',
+    review_note_a: rowA?.review_note ?? '',
+    review_note_b: rowB?.review_note ?? '',
+    changed_evidence: rowA && rowB ? valuesDiffer(rowA.evidence_summary_category, rowB.evidence_summary_category) : false,
+    changed_review_status: rowA && rowB ? valuesDiffer(rowA.review_status, rowB.review_status) : false,
+    changed_public_signals: rowA && rowB
+      ? valuesDiffer(rowA.public_identity_signal, rowB.public_identity_signal)
+        || valuesDiffer(rowA.public_bioactivity_signal, rowB.public_bioactivity_signal)
+        || valuesDiffer(rowA.patent_context_signal, rowB.patent_context_signal)
+      : false,
+    changed_bbb_prediction: rowA && rowB ? valuesDiffer(rowA.bbb_prediction, rowB.bbb_prediction) : false,
+  };
+}
+
+function summarizeRunComparison(rows) {
+  return {
+    totalRows: rows.length,
+    sharedMolecules: rows.filter((row) => row.presence === 'both').length,
+    onlyInRunA: rows.filter((row) => row.presence === 'only_in_run_a').length,
+    onlyInRunB: rows.filter((row) => row.presence === 'only_in_run_b').length,
+    changedEvidence: rows.filter((row) => row.changed_evidence).length,
+    changedReviewStatus: rows.filter((row) => row.changed_review_status).length,
+    changedPublicSignals: rows.filter((row) => row.changed_public_signals).length,
+    changedBbbPrediction: rows.filter((row) => row.changed_bbb_prediction).length,
+  };
+}
+
+function emptyRunComparisonSummary() {
+  return {
+    totalRows: 0,
+    sharedMolecules: 0,
+    onlyInRunA: 0,
+    onlyInRunB: 0,
+    changedEvidence: 0,
+    changedReviewStatus: 0,
+    changedPublicSignals: 0,
+    changedBbbPrediction: 0,
+  };
+}
+
+function normalizedCompareValue(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value).trim();
+}
+
+function valuesDiffer(left, right) {
+  return normalizedCompareValue(left) !== normalizedCompareValue(right);
 }
 
 function downloadCompoundMarkdownReport(compound) {
@@ -2768,6 +3213,53 @@ function downloadRowsCsv(rows, filename) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+const runComparisonExportColumns = [
+  'molecule_id',
+  'presence',
+  'priority_score_a',
+  'priority_score_b',
+  'priority_score_change',
+  'evidence_summary_category_a',
+  'evidence_summary_category_b',
+  'biopharma_context_level_a',
+  'biopharma_context_level_b',
+  'public_identity_signal_a',
+  'public_identity_signal_b',
+  'public_bioactivity_signal_a',
+  'public_bioactivity_signal_b',
+  'patent_context_signal_a',
+  'patent_context_signal_b',
+  'local_similarity_signal_a',
+  'local_similarity_signal_b',
+  'bbb_prediction_a',
+  'bbb_prediction_b',
+  'bbb_probability_a',
+  'bbb_probability_b',
+  'review_status_a',
+  'review_status_b',
+  'review_note_a',
+  'review_note_b',
+  'input_smiles_a',
+  'input_smiles_b',
+  'canonical_smiles_a',
+  'canonical_smiles_b',
+  'changed_evidence',
+  'changed_review_status',
+  'changed_public_signals',
+  'changed_bbb_prediction',
+];
+
+function downloadRunComparisonCsv(rows, filename) {
+  if (rows.length === 0) {
+    return;
+  }
+  const csvLines = [
+    runComparisonExportColumns.map(csvCell).join(','),
+    ...rows.map((row) => runComparisonExportColumns.map((column) => csvCell(row[column])).join(',')),
+  ];
+  downloadTextFile(csvLines.join('\n'), filename, 'text/csv;charset=utf-8');
 }
 
 const candidateExportColumns = [
