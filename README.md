@@ -127,6 +127,27 @@ The frontend expects the backend at:
 http://localhost:8000
 ```
 
+## Desktop Launcher
+
+MolOptima also includes a Phase 5A Electron desktop launcher in `desktop/`. The launcher starts the existing FastAPI backend with a configurable Python executable, starts the existing Vite frontend in development mode, waits for local health checks, and opens the React app in an Electron window.
+
+Set `MOLOPTIMA_PYTHON` to the Conda environment Python when needed:
+
+```bat
+set MOLOPTIMA_PYTHON=C:\Users\tpryt\miniconda3\envs\molecule-intelligence\python.exe
+```
+
+Run the desktop launcher:
+
+```bat
+cd MolOptima
+cd desktop
+npm.cmd install
+npm.cmd run dev
+```
+
+See [docs/desktop_app.md](docs/desktop_app.md) for details. This is a development launcher, not a signed installer, and it does not bundle BBB model weights or local cache files.
+
 ## Test And Build Commands
 
 Run all Python tests from the repository root:

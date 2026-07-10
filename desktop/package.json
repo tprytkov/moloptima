@@ -1,0 +1,14 @@
+{
+  "name": "moloptima-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Phase 5A Electron desktop launcher for MolOptima.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.4.11"
+  }
+}

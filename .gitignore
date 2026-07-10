@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
+# Node/Electron generated files
+node_modules/
+frontend/dist/
+desktop/dist/
+desktop/out/
+
 # Local environment and secrets
 .env
 .env.*
