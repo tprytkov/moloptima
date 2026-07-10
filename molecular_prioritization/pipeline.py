@@ -23,7 +23,11 @@ from molecular_prioritization.diversity import (
     DIVERSITY_COLUMNS,
     add_diversity_analysis,
 )
-from molecular_prioritization.docking import parse_precomputed_docking_score
+from molecular_prioritization.docking import (
+    DOCKING_INFORMED_COLUMNS,
+    add_docking_informed_scores,
+    parse_precomputed_docking_score,
+)
 from molecular_prioritization.prioritization import build_priority_record
 from molecular_prioritization.standardize import standardize_smiles
 from molecular_prioritization.structural_alerts import (
@@ -139,7 +143,8 @@ def prioritize_smiles(
         key=lambda row: float(row["priority_score"]),
         reverse=True,
     )
-    return add_diversity_analysis(sorted_records)
+    docking_scored_records = add_docking_informed_scores(sorted_records)
+    return add_diversity_analysis(docking_scored_records)
 
 
 def prioritize_csv(
@@ -231,6 +236,7 @@ def prioritize_csv(
             *CHEMICAL_SPACE_COLUMNS,
             "docking_score",
             "docking_status",
+            *DOCKING_INFORMED_COLUMNS,
             "sa_score",
             "synthetic_feasibility_category",
             "synthetic_feasibility_status",

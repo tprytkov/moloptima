@@ -485,6 +485,13 @@ def test_prioritize_smiles_preserves_valid_precomputed_docking_score():
 
     assert ranked[0]["docking_score"] == -7.25
     assert ranked[0]["docking_status"] == "provided"
+    assert ranked[0]["docking_score_normalized"] == 1.0
+    assert ranked[0]["docking_priority_signal"] == "strong_docking_signal"
+    assert ranked[0]["docking_rank_within_run"] == 1
+    assert ranked[0]["docking_percentile_within_run"] == 100.0
+    assert ranked[0]["combined_score_status"] == "calculated"
+    assert ranked[0]["combined_candidate_score"] != ranked[0]["priority_score"]
+    assert "70% priority_score" in ranked[0]["combined_score_explanation"]
 
 
 def test_prioritize_smiles_marks_missing_docking_score_as_not_provided():
@@ -495,6 +502,9 @@ def test_prioritize_smiles_marks_missing_docking_score_as_not_provided():
 
     assert ranked[0]["docking_score"] is None
     assert ranked[0]["docking_status"] == "not_provided"
+    assert ranked[0]["docking_score_normalized"] is None
+    assert ranked[0]["combined_candidate_score"] is None
+    assert ranked[0]["combined_score_status"] == "docking_not_provided"
 
 
 def test_prioritize_smiles_marks_invalid_docking_score():
@@ -505,6 +515,34 @@ def test_prioritize_smiles_marks_invalid_docking_score():
 
     assert ranked[0]["docking_score"] is None
     assert ranked[0]["docking_status"] == "invalid_docking_score"
+    assert ranked[0]["combined_candidate_score"] is None
+    assert ranked[0]["combined_score_status"] == "invalid_docking_score"
+
+
+def test_prioritize_smiles_adds_docking_informed_scores_without_changing_priority_score():
+    baseline = prioritize_smiles(
+        [
+            {"molecule_id": "ethanol", "smiles": "CCO"},
+            {"molecule_id": "aspirin", "smiles": "CC(=O)Oc1ccccc1C(=O)O"},
+        ],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+    ranked = prioritize_smiles(
+        [
+            {"molecule_id": "ethanol", "smiles": "CCO", "docking_score": "-5.0"},
+            {"molecule_id": "aspirin", "smiles": "CC(=O)Oc1ccccc1C(=O)O", "docking_score": "-10.0"},
+        ],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+    baseline_scores = {row["molecule_id"]: row["priority_score"] for row in baseline}
+    ranked_by_id = {row["molecule_id"]: row for row in ranked}
+
+    assert ranked_by_id["ethanol"]["priority_score"] == baseline_scores["ethanol"]
+    assert ranked_by_id["aspirin"]["priority_score"] == baseline_scores["aspirin"]
+    assert ranked_by_id["aspirin"]["docking_score_normalized"] == 1.0
+    assert ranked_by_id["ethanol"]["docking_score_normalized"] == 0.0
+    assert ranked_by_id["aspirin"]["combined_candidate_score"] > ranked_by_id["ethanol"]["combined_candidate_score"]
+    assert ranked[0]["priority_score"] >= ranked[-1]["priority_score"]
 
 
 def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_path):
@@ -521,6 +559,13 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "synthetic_feasibility_status" in header
     assert "docking_score" in header
     assert "docking_status" in header
+    assert "docking_score_normalized" in header
+    assert "docking_priority_signal" in header
+    assert "docking_rank_within_run" in header
+    assert "docking_percentile_within_run" in header
+    assert "combined_candidate_score" in header
+    assert "combined_score_explanation" in header
+    assert "combined_score_status" in header
     assert "known_compound_match" in header
     assert "known_compound_name" in header
     assert "known_compound_source" in header
@@ -599,5 +644,7 @@ def test_prioritize_csv_writes_precomputed_docking_columns(tmp_path):
 
     assert ranked[0]["docking_score"] == -6.5
     assert ranked[0]["docking_status"] == "provided"
+    assert ranked[0]["combined_score_status"] == "calculated"
     assert "docking_score" in output_text
     assert "docking_status" in output_text
+    assert "combined_candidate_score" in output_text

@@ -193,6 +193,13 @@ def build_priority_record(
         "medchem_alert_summary": structural_alert_values.medchem_alert_summary,
         "docking_score": docking_values.docking_score,
         "docking_status": docking_values.docking_status,
+        "docking_score_normalized": None,
+        "docking_priority_signal": "not_available",
+        "docking_rank_within_run": None,
+        "docking_percentile_within_run": None,
+        "combined_candidate_score": None,
+        "combined_score_explanation": "Docking-informed scoring is calculated after run-level docking scores are available.",
+        "combined_score_status": "not_available",
         "sa_score": synthetic_accessibility_values.sa_score,
         "synthetic_feasibility_category": (
             synthetic_accessibility_values.synthetic_feasibility_category

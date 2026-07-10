@@ -1046,6 +1046,8 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>diversity_cluster</TableCell>
             <TableCell>cluster_representative</TableCell>
             <TableCell>nearest_neighbor_similarity</TableCell>
+            <TableCell>combined_candidate_score</TableCell>
+            <TableCell>docking_priority_signal</TableCell>
             <TableCell>known_compound_match</TableCell>
             <TableCell>known_compound_name</TableCell>
             <TableCell>pubchem_exact_match</TableCell>
@@ -1094,6 +1096,8 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDiversityCluster(row)}</TableCell>
                 <TableCell>{formatBooleanLabel(row.diversity_representative)}</TableCell>
                 <TableCell>{formatNearestNeighbor(row)}</TableCell>
+                <TableCell>{formatDetailValue(row.combined_candidate_score)}</TableCell>
+                <TableCell>{formatEvidenceCategory(row.docking_priority_signal)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_match)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_exact_match)}</TableCell>
@@ -1152,6 +1156,11 @@ function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReview
               ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
               ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
               ['Recommended review focus', compound.recommended_review_focus],
+              ['Combined candidate score', compound.combined_candidate_score],
+              ['Docking priority signal', formatEvidenceCategory(compound.docking_priority_signal)],
+              ['Docking rank', compound.docking_rank_within_run],
+              ['Docking percentile', compound.docking_percentile_within_run],
+              ['Protocol-dependent docking signal', compound.combined_score_explanation],
               ['Structural alerts', formatStructuralAlertStatus(compound)],
               ['PAINS alert', formatBooleanLabel(compound.pains_alert)],
               ['Brenk alert', formatBooleanLabel(compound.brenk_alert)],
@@ -2033,6 +2042,8 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>diversity_cluster</TableCell>
             <TableCell>cluster_representative</TableCell>
             <TableCell>nearest_neighbor_similarity</TableCell>
+            <TableCell>combined_candidate_score</TableCell>
+            <TableCell>docking_priority_signal</TableCell>
             <TableCell>known_compound_name</TableCell>
             <TableCell>pubchem_lookup_status</TableCell>
             <TableCell>chembl_lookup_status</TableCell>
@@ -2074,6 +2085,8 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDiversityCluster(row)}</TableCell>
                 <TableCell>{formatBooleanLabel(row.diversity_representative)}</TableCell>
                 <TableCell>{formatNearestNeighbor(row)}</TableCell>
+                <TableCell>{formatDetailValue(row.combined_candidate_score)}</TableCell>
+                <TableCell>{formatEvidenceCategory(row.docking_priority_signal)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_lookup_status)}</TableCell>
@@ -2576,7 +2589,9 @@ const defaultEvidenceFilters = {
   structural_alert_status: '',
   pains_alert: '',
   brenk_alert: '',
+  docking_priority_signal: '',
   priority_score_min: '',
+  combined_candidate_score_min: '',
   bbb_prediction: '',
   bbb_model_status: '',
   valid_molecule: '',
@@ -2594,6 +2609,7 @@ const evidenceFilterFields = [
   ['structural_alert_status', 'Structural alerts'],
   ['pains_alert', 'PAINS alert'],
   ['brenk_alert', 'Brenk alert'],
+  ['docking_priority_signal', 'Docking priority signal'],
   ['bbb_prediction', 'BBB prediction'],
   ['bbb_model_status', 'BBB status'],
   ['review_status', 'Review status'],
@@ -2659,6 +2675,11 @@ function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onReset, e
             label="Minimum priority score"
             value={filters.priority_score_min}
             onChange={(value) => updateFilter('priority_score_min', value)}
+          />
+          <FilterNumberInput
+            label="Minimum combined candidate score"
+            value={filters.combined_candidate_score_min}
+            onChange={(value) => updateFilter('combined_candidate_score_min', value)}
           />
           <FilterSelect
             label="Molecule status"
@@ -2934,6 +2955,7 @@ function FilterTextInput({ label, value, maxLength, onChange }) {
 
 function applyEvidenceFilters(rows, filters) {
   const minimumPriority = numericValue(filters.priority_score_min);
+  const minimumCombinedScore = numericValue(filters.combined_candidate_score_min);
 
   return rows.filter((row) => {
     for (const [key] of evidenceFilterFields) {
@@ -2944,6 +2966,12 @@ function applyEvidenceFilters(rows, filters) {
     if (minimumPriority !== null) {
       const priorityScore = numericValue(row.priority_score);
       if (priorityScore === null || priorityScore < minimumPriority) {
+        return false;
+      }
+    }
+    if (minimumCombinedScore !== null) {
+      const combinedScore = numericValue(row.combined_candidate_score);
+      if (combinedScore === null || combinedScore < minimumCombinedScore) {
         return false;
       }
     }
@@ -3014,6 +3042,8 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             {hasPatentStatus && <TableCell>Patent-context signal</TableCell>}
             {hasSimilarityStatus && <TableCell>Closest known</TableCell>}
             {hasDockingScore && <TableCell>Docking score</TableCell>}
+            {hasDockingScore && <TableCell>Docking-informed score</TableCell>}
+            {hasDockingScore && <TableCell>Docking priority signal</TableCell>}
             {hasSyntheticAccessibility && <TableCell>SA score</TableCell>}
             {hasSyntheticAccessibility && <TableCell>Synthesis</TableCell>}
             <TableCell>BBB</TableCell>
@@ -3079,6 +3109,8 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                   </TableCell>
                 )}
                 {hasDockingScore && <TableCell>{row.docking_score ?? 'not available'}</TableCell>}
+                {hasDockingScore && <TableCell>{formatDetailValue(row.combined_candidate_score)}</TableCell>}
+                {hasDockingScore && <TableCell>{formatEvidenceCategory(row.docking_priority_signal)}</TableCell>}
                 {hasSyntheticAccessibility && <TableCell>{row.sa_score ?? 'not available'}</TableCell>}
                 {hasSyntheticAccessibility && (
                   <TableCell>{row.synthetic_feasibility_category ?? 'not available'}</TableCell>
@@ -3150,6 +3182,11 @@ function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotatio
                 ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
                 ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
                 ['Recommended review focus', compound.recommended_review_focus],
+                ['Combined candidate score', compound.combined_candidate_score],
+                ['Docking priority signal', formatEvidenceCategory(compound.docking_priority_signal)],
+                ['Docking rank', compound.docking_rank_within_run],
+                ['Docking percentile', compound.docking_percentile_within_run],
+                ['Protocol-dependent docking signal', compound.combined_score_explanation],
                 ['Structural alerts', formatStructuralAlertStatus(compound)],
                 ['PAINS alert', formatBooleanLabel(compound.pains_alert)],
                 ['Brenk alert', formatBooleanLabel(compound.brenk_alert)],
@@ -3215,6 +3252,13 @@ function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotatio
                 ['Similarity check status', compound.similarity_check_status],
                 ['Docking score', compound.docking_score],
                 ['Docking status', compound.docking_status],
+                ['Docking normalized score', compound.docking_score_normalized],
+                ['Docking priority signal', formatEvidenceCategory(compound.docking_priority_signal)],
+                ['Docking rank within run', compound.docking_rank_within_run],
+                ['Docking percentile within run', compound.docking_percentile_within_run],
+                ['Combined candidate score', compound.combined_candidate_score],
+                ['Combined score status', formatEvidenceCategory(compound.combined_score_status)],
+                ['Combined score explanation', compound.combined_score_explanation],
               ]}
             />
             <DetailTable
@@ -3872,6 +3916,15 @@ const candidateExportColumns = [
   'sa_score',
   'synthetic_feasibility_category',
   'synthetic_feasibility_status',
+  'docking_score',
+  'docking_status',
+  'docking_score_normalized',
+  'docking_priority_signal',
+  'docking_rank_within_run',
+  'docking_percentile_within_run',
+  'combined_candidate_score',
+  'combined_score_explanation',
+  'combined_score_status',
   'known_compound_match',
   'known_compound_name',
   'known_compound_id',
@@ -4028,6 +4081,13 @@ function buildCandidatePackageMarkdown(rows) {
         ['Canonical SMILES', row.canonical_smiles],
         ['BBB prediction', row.bbb_prediction],
         ['BBB probability', row.bbb_probability],
+        ['Docking score', row.docking_score],
+        ['Docking-informed score', row.combined_candidate_score],
+        ['Docking priority signal', formatEvidenceCategory(row.docking_priority_signal)],
+        ['Docking rank', row.docking_rank_within_run],
+        ['Docking percentile', row.docking_percentile_within_run],
+        ['Combined score status', formatEvidenceCategory(row.combined_score_status)],
+        ['Protocol-dependent docking signal', row.combined_score_explanation],
         ['Molecular weight', row.mw],
         ['LogP', row.logp],
         ['TPSA', row.tpsa],
@@ -4149,6 +4209,13 @@ function buildCompoundMarkdownReport(compound) {
       markdownRows([
         ['Docking score', compound.docking_score],
         ['Docking status', compound.docking_status],
+        ['Docking normalized score', compound.docking_score_normalized],
+        ['Docking priority signal', formatEvidenceCategory(compound.docking_priority_signal)],
+        ['Docking rank within run', compound.docking_rank_within_run],
+        ['Docking percentile within run', compound.docking_percentile_within_run],
+        ['Combined candidate score', compound.combined_candidate_score],
+        ['Combined score status', formatEvidenceCategory(compound.combined_score_status)],
+        ['Protocol-dependent docking signal', compound.combined_score_explanation],
       ]),
     );
   }

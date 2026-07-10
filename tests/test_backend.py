@@ -182,6 +182,14 @@ def test_sdf_export_writes_key_properties():
                     "tpsa": 20.23,
                     "chembl_molecule_id": "CHEMBL123",
                     "evidence_summary_category": "public_identity_context",
+                    "docking_score": -8.5,
+                    "docking_score_normalized": 0.9,
+                    "docking_priority_signal": "strong_docking_signal",
+                    "docking_rank_within_run": 1,
+                    "docking_percentile_within_run": 100.0,
+                    "combined_candidate_score": 0.84,
+                    "combined_score_explanation": "Protocol-dependent docking signal.",
+                    "combined_score_status": "calculated",
                     "structural_alert_status": "alerts_detected",
                     "structural_alert_count": 1,
                     "structural_alert_categories": "PAINS",
@@ -212,6 +220,9 @@ def test_sdf_export_writes_key_properties():
     assert "likely_crosses" in sdf_text
     assert ">  <chembl_molecule_id>" in sdf_text
     assert "CHEMBL123" in sdf_text
+    assert ">  <combined_candidate_score>" in sdf_text
+    assert ">  <docking_priority_signal>" in sdf_text
+    assert "Protocol-dependent docking signal." in sdf_text
     assert ">  <diversity_cluster_id>" in sdf_text
     assert ">  <nearest_neighbor_similarity>" in sdf_text
     assert ">  <chemical_space_x>" in sdf_text
