@@ -24,6 +24,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TextField,
   ThemeProvider,
   Toolbar,
   Typography,
@@ -148,6 +149,19 @@ function App() {
   const [pubchemLookupEnabled, setPubchemLookupEnabled] = useState(false);
   const [chemblLookupEnabled, setChemblLookupEnabled] = useState(false);
   const [patentLookupEnabled, setPatentLookupEnabled] = useState(false);
+  const [targetReferenceEnabled, setTargetReferenceEnabled] = useState(false);
+  const [targetContext, setTargetContext] = useState({
+    target_name: '',
+    target_gene_symbol: '',
+    target_uniprot_id: '',
+    target_chembl_id: '',
+    pdb_id: '',
+    organism: '',
+    disease_context: '',
+    mechanism_context: '',
+    docking_protocol_notes: '',
+    binding_site_notes: '',
+  });
   const health = useBackendHealth();
   const annotatedPrioritizationState = useMemo(
     () => annotateAnalysisState(prioritizationState, annotationsState),
@@ -290,6 +304,8 @@ function App() {
           enable_pubchem_lookup: pubchemLookupEnabled,
           enable_chembl_lookup: chemblLookupEnabled,
           enable_patent_lookup: patentLookupEnabled,
+          enable_target_reference_discovery: targetReferenceEnabled,
+          ...targetContext,
         }),
       });
       const result = await apiRequest(`/api/results/${job.job_id}`);
@@ -497,6 +513,10 @@ function App() {
               setChemblLookupEnabled={setChemblLookupEnabled}
               patentLookupEnabled={patentLookupEnabled}
               setPatentLookupEnabled={setPatentLookupEnabled}
+              targetReferenceEnabled={targetReferenceEnabled}
+              setTargetReferenceEnabled={setTargetReferenceEnabled}
+              targetContext={targetContext}
+              setTargetContext={setTargetContext}
               onCheckLocalModelCache={handleCheckLocalModelCache}
               onRefreshSourceStatus={handleRefreshSourceStatus}
               onSaveReviewAnnotation={handleSaveReviewAnnotation}
@@ -619,6 +639,10 @@ function ActivePage({
   setChemblLookupEnabled,
   patentLookupEnabled,
   setPatentLookupEnabled,
+  targetReferenceEnabled,
+  setTargetReferenceEnabled,
+  targetContext,
+  setTargetContext,
   onCheckLocalModelCache,
   onRefreshSourceStatus,
 }) {
@@ -644,6 +668,10 @@ function ActivePage({
         setChemblLookupEnabled={setChemblLookupEnabled}
         patentLookupEnabled={patentLookupEnabled}
         setPatentLookupEnabled={setPatentLookupEnabled}
+        targetReferenceEnabled={targetReferenceEnabled}
+        setTargetReferenceEnabled={setTargetReferenceEnabled}
+        targetContext={targetContext}
+        setTargetContext={setTargetContext}
         annotationsState={annotationsState}
         onSaveReviewAnnotation={onSaveReviewAnnotation}
       />
@@ -893,6 +921,7 @@ function BiopharmaIntelligencePage({ latestRunState, annotationsState, onSaveRev
   const [filters, setFilters] = useState(defaultEvidenceFilters);
   const filteredRows = useMemo(() => applyEvidenceFilters(rows, filters), [rows, filters]);
   const summary = buildBiopharmaSummary(rows);
+  const targetReferences = latestRunState.result?.target_references ?? {};
   const [selectedCompoundKey, setSelectedCompoundKey] = useState('');
   const selectedCompound =
     filteredRows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? filteredRows[0] ?? null;
@@ -987,6 +1016,11 @@ function BiopharmaIntelligencePage({ latestRunState, annotationsState, onSaveRev
                 value={`${summary.diversityClusterCount} clusters`}
                 detail={`Largest cluster: ${summary.largestDiversityClusterSize}`}
               />
+              <RunSummaryCard
+                label="Target reference set"
+                value={`${targetReferences.reference_count ?? 0} references`}
+                detail={`${targetReferences.source ?? 'not used'}; ${targetReferences.lookup_status ?? 'not_requested'}`}
+              />
             </Box>
           ) : !latestRunState.loading && (
             <Alert severity="info">No latest result rows are available for Biopharma Intelligence yet.</Alert>
@@ -1001,6 +1035,9 @@ function BiopharmaIntelligencePage({ latestRunState, annotationsState, onSaveRev
               <Typography variant="h2">Local Reference Context</Typography>
               <Chip label={`Showing ${filteredRows.length} of ${rows.length} molecules`} variant="outlined" />
             </Stack>
+            <Alert severity="info">
+              Target-reference overlap is a fingerprint-based screening signal only. It is not a biological activity, clinical, or legal conclusion.
+            </Alert>
             <EvidenceFilterPanel
               rows={rows}
               filteredRows={filteredRows}
@@ -1048,6 +1085,9 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>nearest_neighbor_similarity</TableCell>
             <TableCell>combined_candidate_score</TableCell>
             <TableCell>docking_priority_signal</TableCell>
+            <TableCell>active_neighborhood_signal</TableCell>
+            <TableCell>nearest_active_reference</TableCell>
+            <TableCell>nearest_active_similarity</TableCell>
             <TableCell>known_compound_match</TableCell>
             <TableCell>known_compound_name</TableCell>
             <TableCell>pubchem_exact_match</TableCell>
@@ -1098,6 +1138,9 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatNearestNeighbor(row)}</TableCell>
                 <TableCell>{formatDetailValue(row.combined_candidate_score)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.docking_priority_signal)}</TableCell>
+                <TableCell>{formatEvidenceCategory(row.active_neighborhood_signal)}</TableCell>
+                <TableCell>{formatDetailValue(row.nearest_active_compound_name)}</TableCell>
+                <TableCell>{formatDetailValue(row.nearest_active_similarity)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_match)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_exact_match)}</TableCell>
@@ -1154,6 +1197,12 @@ function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReview
               ['Public bioactivity signal', formatEvidenceCategory(compound.public_bioactivity_signal)],
               ['Patent-context signal', formatEvidenceCategory(compound.patent_context_signal)],
               ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
+              ['Nearest active/reference compound', compound.nearest_active_compound_name],
+              ['Nearest active/reference similarity', compound.nearest_active_similarity],
+              ['Active-neighborhood signal', formatEvidenceCategory(compound.active_neighborhood_signal)],
+              ['Reference activity', formatTargetReferenceActivity(compound)],
+              ['Reference mechanism class', compound.nearest_active_mechanism_class],
+              ['Reference source', compound.target_reference_source],
               ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
               ['Recommended review focus', compound.recommended_review_focus],
               ['Combined candidate score', compound.combined_candidate_score],
@@ -1161,6 +1210,12 @@ function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReview
               ['Docking rank', compound.docking_rank_within_run],
               ['Docking percentile', compound.docking_percentile_within_run],
               ['Protocol-dependent docking signal', compound.combined_score_explanation],
+              ['Nearest active/reference compound', compound.nearest_active_compound_name],
+              ['Nearest active/reference similarity', compound.nearest_active_similarity],
+              ['Active-neighborhood signal', formatEvidenceCategory(compound.active_neighborhood_signal)],
+              ['Reference activity', formatTargetReferenceActivity(compound)],
+              ['Reference mechanism class', compound.nearest_active_mechanism_class],
+              ['Reference source', compound.target_reference_source],
               ['Structural alerts', formatStructuralAlertStatus(compound)],
               ['PAINS alert', formatBooleanLabel(compound.pains_alert)],
               ['Brenk alert', formatBooleanLabel(compound.brenk_alert)],
@@ -1691,6 +1746,10 @@ function ChemicalSpacePage({ latestRunState, annotationsState, onSaveReviewAnnot
   const plottedRows = rows.filter(
     (row) => numericValue(row.chemical_space_x) !== null && numericValue(row.chemical_space_y) !== null,
   );
+  const targetReferences = latestRunState.result?.target_references?.references ?? [];
+  const plottedReferences = targetReferences.filter(
+    (row) => numericValue(row.chemical_space_x) !== null && numericValue(row.chemical_space_y) !== null,
+  );
   const skippedRows = rows.filter((row) => row.chemical_space_status === 'not_run_invalid_molecule').length;
   const summary = buildChemicalSpaceSummary(rows);
   const [selectedCompoundKey, setSelectedCompoundKey] = useState('');
@@ -1737,6 +1796,7 @@ function ChemicalSpacePage({ latestRunState, annotationsState, onSaveReviewAnnot
               }}
             >
               <RunSummaryCard label="Plotted molecules" value={summary.plottedCount} />
+              <RunSummaryCard label="Target references" value={plottedReferences.length} detail={latestRunState.result?.target_references?.source ?? 'not used'} />
               <RunSummaryCard label="Skipped molecules" value={summary.skippedCount} detail="Invalid or unavailable structures" />
               <RunSummaryCard label="Diversity clusters" value={summary.clusterCount} />
               <RunSummaryCard label="Selected candidates" value={summary.selectedCount} detail="Selected or watchlist" />
@@ -1754,11 +1814,13 @@ function ChemicalSpacePage({ latestRunState, annotationsState, onSaveReviewAnnot
               <Typography variant="h2">Morgan Fingerprint PCA Map</Typography>
               <Typography color="text.secondary">
                 Point color follows diversity cluster, point size follows priority score, and outlined points mark selected/watchlist candidates. Generated from Morgan fingerprints.
+                Target references are plotted in the same projection when target-reference discovery was enabled.
               </Typography>
             </Stack>
-            {plottedRows.length > 0 ? (
+            {plottedRows.length > 0 || plottedReferences.length > 0 ? (
               <ChemicalSpacePlot
                 rows={plottedRows}
+                references={plottedReferences}
                 selectedCompoundKey={selectedCompound ? compoundRowKey(selectedCompound, plottedRows.indexOf(selectedCompound)) : ''}
                 onSelectCompound={setSelectedCompoundKey}
               />
@@ -1768,7 +1830,7 @@ function ChemicalSpacePage({ latestRunState, annotationsState, onSaveReviewAnnot
               </Alert>
             )}
             <Typography variant="caption" color="text.secondary">
-              Plotted {plottedRows.length} molecules, skipped {skippedRows}. Coordinates are a 2D PCA projection of fingerprint bits.
+              Plotted {plottedRows.length} molecules and {plottedReferences.length} target references, skipped {skippedRows}. Coordinates are a 2D PCA projection of fingerprint bits.
             </Typography>
           </Stack>
         </Paper>
@@ -1785,12 +1847,13 @@ function ChemicalSpacePage({ latestRunState, annotationsState, onSaveReviewAnnot
   );
 }
 
-function ChemicalSpacePlot({ rows, selectedCompoundKey, onSelectCompound }) {
+function ChemicalSpacePlot({ rows, references = [], selectedCompoundKey, onSelectCompound }) {
   const width = 760;
   const height = 430;
   const padding = 42;
-  const xValues = rows.map((row) => numericValue(row.chemical_space_x)).filter((value) => value !== null);
-  const yValues = rows.map((row) => numericValue(row.chemical_space_y)).filter((value) => value !== null);
+  const allPoints = [...rows, ...references];
+  const xValues = allPoints.map((row) => numericValue(row.chemical_space_x)).filter((value) => value !== null);
+  const yValues = allPoints.map((row) => numericValue(row.chemical_space_y)).filter((value) => value !== null);
   const xDomain = paddedDomain(xValues);
   const yDomain = paddedDomain(yValues);
 
@@ -1847,6 +1910,29 @@ function ChemicalSpacePlot({ rows, selectedCompoundKey, onSelectCompound }) {
                   R
                 </text>
               )}
+            </g>
+          );
+        })}
+        {references.map((reference, index) => {
+          const xValue = numericValue(reference.chemical_space_x) ?? 0;
+          const yValue = numericValue(reference.chemical_space_y) ?? 0;
+          const x = scaleLinear(xValue, xDomain, [padding, width - padding]);
+          const y = scaleLinear(yValue, yDomain, [height - padding, padding]);
+          const label = reference.compound_name || reference.reference_id || `reference_${index + 1}`;
+          return (
+            <g key={`reference-${reference.reference_id || index}`}>
+              <path
+                d={`M ${x} ${y - 8} L ${x + 8} ${y} L ${x} ${y + 8} L ${x - 8} ${y} Z`}
+                fill="#b85c00"
+                stroke="#ffffff"
+                strokeWidth="1.5"
+                opacity="0.92"
+              >
+                <title>{targetReferenceTooltip(reference)}</title>
+              </path>
+              <text x={x + 10} y={y + 4} fill="#5b3b12" fontSize="11">
+                {label.slice(0, 18)}
+              </text>
             </g>
           );
         })}
@@ -2387,6 +2473,10 @@ function PrioritizationPage({
   setChemblLookupEnabled,
   patentLookupEnabled,
   setPatentLookupEnabled,
+  targetReferenceEnabled,
+  setTargetReferenceEnabled,
+  targetContext,
+  setTargetContext,
   annotationsState,
   onSaveReviewAnnotation,
 }) {
@@ -2447,6 +2537,18 @@ function PrioritizationPage({
                 }
                 label="Enable SureChEMBL patent-context signal"
               />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={targetReferenceEnabled}
+                    onChange={(event) => setTargetReferenceEnabled(event.target.checked)}
+                  />
+                }
+                label="Enable target reference discovery"
+              />
+              {targetReferenceEnabled && (
+                <TargetContextFields targetContext={targetContext} setTargetContext={setTargetContext} />
+              )}
               <Button
                 variant="contained"
                 onClick={onStartPrioritization}
@@ -2458,9 +2560,9 @@ function PrioritizationPage({
             </Stack>
           </Stack>
 
-          <Alert severity={pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled ? 'warning' : 'info'}>
-            {pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled
-              ? 'Selected public lookups may use the network. PubChem, ChEMBL, and SureChEMBL patent-context results are cached locally and reported as research signals only.'
+          <Alert severity={pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled || targetReferenceEnabled ? 'warning' : 'info'}>
+            {pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled || targetReferenceEnabled
+              ? 'Selected public lookups may use the network. PubChem, ChEMBL, SureChEMBL, and target-reference results are cached locally and reported as research signals only.'
               : 'Public compound lookup is off. Output rows will mark PubChem, ChEMBL, and patent-context lookup as not_requested.'}
           </Alert>
 
@@ -2476,6 +2578,7 @@ function PrioritizationPage({
                 ['Completed at', prioritizationState.job.completed_at ?? ''],
                 ['Candidate shortlist', formatReviewCounts(resultRows)],
                 ['Chemical diversity', formatDiversitySummary(resultRows)],
+                ['Target reference set', formatTargetReferenceSet(prioritizationState.result?.target_references)],
               ]}
             />
           )}
@@ -2548,6 +2651,57 @@ function PageIntro({ title, description }) {
   );
 }
 
+function TargetContextFields({ targetContext, setTargetContext }) {
+  const updateTargetContext = (key, value) => {
+    setTargetContext({ ...targetContext, [key]: value });
+  };
+  const fields = [
+    ['target_name', 'Target name'],
+    ['target_gene_symbol', 'Gene symbol'],
+    ['target_chembl_id', 'ChEMBL target ID'],
+    ['target_uniprot_id', 'UniProt ID'],
+    ['pdb_id', 'PDB ID'],
+    ['organism', 'Organism'],
+    ['disease_context', 'Disease context'],
+    ['mechanism_context', 'Mechanism context'],
+  ];
+
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+        gap: 1,
+        minWidth: { md: 460 },
+      }}
+    >
+      {fields.map(([key, label]) => (
+        <TextField
+          key={key}
+          label={label}
+          size="small"
+          value={targetContext[key] ?? ''}
+          onChange={(event) => updateTargetContext(key, event.target.value)}
+        />
+      ))}
+      <TextField
+        label="Docking protocol notes"
+        size="small"
+        value={targetContext.docking_protocol_notes ?? ''}
+        onChange={(event) => updateTargetContext('docking_protocol_notes', event.target.value)}
+        sx={{ gridColumn: { md: '1 / -1' } }}
+      />
+      <TextField
+        label="Binding site notes"
+        size="small"
+        value={targetContext.binding_site_notes ?? ''}
+        onChange={(event) => updateTargetContext('binding_site_notes', event.target.value)}
+        sx={{ gridColumn: { md: '1 / -1' } }}
+      />
+    </Box>
+  );
+}
+
 function MetadataPanel({ rows }) {
   return (
     <Box
@@ -2586,6 +2740,7 @@ const defaultEvidenceFilters = {
   public_bioactivity_signal: '',
   patent_context_signal: '',
   local_similarity_signal: '',
+  active_neighborhood_signal: '',
   structural_alert_status: '',
   pains_alert: '',
   brenk_alert: '',
@@ -2606,6 +2761,7 @@ const evidenceFilterFields = [
   ['public_bioactivity_signal', 'Public bioactivity signal'],
   ['patent_context_signal', 'Patent-context signal'],
   ['local_similarity_signal', 'Local similarity signal'],
+  ['active_neighborhood_signal', 'Active-neighborhood signal'],
   ['structural_alert_status', 'Structural alerts'],
   ['pains_alert', 'PAINS alert'],
   ['brenk_alert', 'Brenk alert'],
@@ -3376,6 +3532,9 @@ function formatLookupSources(job) {
   if (isTrueValue(job.patent_lookup_requested)) {
     sources.push('SureChEMBL');
   }
+  if (isTrueValue(job.target_reference_discovery_requested)) {
+    sources.push('Target references');
+  }
   return sources.length > 0 ? sources.join(', ') : 'None requested';
 }
 
@@ -3529,6 +3688,26 @@ function formatNearestNeighbor(row) {
   return `${neighbor}${row.nearest_neighbor_similarity}`;
 }
 
+function formatTargetReferenceActivity(row) {
+  if (!row) {
+    return 'Not available';
+  }
+  const type = row.nearest_active_activity_type || 'activity';
+  const value = row.nearest_active_activity_value;
+  const units = row.nearest_active_activity_units;
+  if (value === null || value === undefined || value === '') {
+    return formatDetailValue(row.nearest_active_activity_class);
+  }
+  return `${type}: ${value}${units ? ` ${units}` : ''}`;
+}
+
+function formatTargetReferenceSet(targetReferences) {
+  if (!targetReferences || !targetReferences.enabled) {
+    return 'Not requested';
+  }
+  return `${targetReferences.reference_count ?? 0} references; ${targetReferences.source ?? 'unknown source'}; ${targetReferences.lookup_status ?? 'not available'}`;
+}
+
 function buildChemicalSpaceSummary(rows) {
   const plottedRows = (rows ?? []).filter(
     (row) => numericValue(row.chemical_space_x) !== null && numericValue(row.chemical_space_y) !== null,
@@ -3589,6 +3768,17 @@ function chemicalSpaceTooltip(row) {
     `Evidence: ${formatEvidenceCategory(row.evidence_summary_category)}`,
     `Review status: ${formatReviewStatus(row.review_status)}`,
     `Nearest neighbor similarity: ${formatNearestNeighbor(row)}`,
+    `Active-neighborhood signal: ${formatEvidenceCategory(row.active_neighborhood_signal)}`,
+  ].join('\n');
+}
+
+function targetReferenceTooltip(reference) {
+  return [
+    `Reference: ${formatDetailValue(reference.compound_name || reference.reference_id)}`,
+    `Source: ${formatDetailValue(reference.reference_source)}`,
+    `Activity class: ${formatEvidenceCategory(reference.activity_class)}`,
+    `Activity: ${formatDetailValue(reference.activity_type)} ${formatDetailValue(reference.activity_value)} ${formatDetailValue(reference.activity_units)}`,
+    `Mechanism: ${formatEvidenceCategory(reference.mechanism_class)}`,
   ].join('\n');
 }
 
@@ -3755,6 +3945,12 @@ function buildComparisonRow(key, rowA, rowB) {
     patent_context_signal_b: rowB?.patent_context_signal ?? '',
     local_similarity_signal_a: rowA?.local_similarity_signal ?? '',
     local_similarity_signal_b: rowB?.local_similarity_signal ?? '',
+    active_neighborhood_signal_a: rowA?.active_neighborhood_signal ?? '',
+    active_neighborhood_signal_b: rowB?.active_neighborhood_signal ?? '',
+    nearest_active_compound_name_a: rowA?.nearest_active_compound_name ?? '',
+    nearest_active_compound_name_b: rowB?.nearest_active_compound_name ?? '',
+    nearest_active_similarity_a: rowA?.nearest_active_similarity ?? '',
+    nearest_active_similarity_b: rowB?.nearest_active_similarity ?? '',
     bbb_prediction_a: rowA?.bbb_prediction ?? '',
     bbb_prediction_b: rowB?.bbb_prediction ?? '',
     bbb_probability_a: rowA?.bbb_probability ?? '',
@@ -3769,6 +3965,7 @@ function buildComparisonRow(key, rowA, rowB) {
       ? valuesDiffer(rowA.public_identity_signal, rowB.public_identity_signal)
         || valuesDiffer(rowA.public_bioactivity_signal, rowB.public_bioactivity_signal)
         || valuesDiffer(rowA.patent_context_signal, rowB.patent_context_signal)
+        || valuesDiffer(rowA.active_neighborhood_signal, rowB.active_neighborhood_signal)
       : false,
     changed_bbb_prediction: rowA && rowB ? valuesDiffer(rowA.bbb_prediction, rowB.bbb_prediction) : false,
   };
@@ -3867,6 +4064,12 @@ const runComparisonExportColumns = [
   'patent_context_signal_b',
   'local_similarity_signal_a',
   'local_similarity_signal_b',
+  'active_neighborhood_signal_a',
+  'active_neighborhood_signal_b',
+  'nearest_active_compound_name_a',
+  'nearest_active_compound_name_b',
+  'nearest_active_similarity_a',
+  'nearest_active_similarity_b',
   'bbb_prediction_a',
   'bbb_prediction_b',
   'bbb_probability_a',
@@ -3973,6 +4176,19 @@ const candidateExportColumns = [
   'local_similarity_signal',
   'biopharma_context_level',
   'recommended_review_focus',
+  'target_reference_status',
+  'target_reference_source',
+  'target_reference_count',
+  'nearest_active_reference_id',
+  'nearest_active_compound_name',
+  'nearest_active_similarity',
+  'nearest_active_activity_class',
+  'nearest_active_mechanism_class',
+  'nearest_active_activity_type',
+  'nearest_active_activity_value',
+  'nearest_active_activity_units',
+  'active_neighborhood_signal',
+  'active_neighborhood_summary',
   'structural_alert_status',
   'structural_alert_count',
   'structural_alert_categories',
@@ -4100,6 +4316,12 @@ function buildCandidatePackageMarkdown(rows) {
         ['Evidence summary', formatEvidenceCategory(row.evidence_summary_category)],
         ['Biopharma context level', formatEvidenceCategory(row.biopharma_context_level)],
         ['Recommended review focus', row.recommended_review_focus],
+        ['Nearest active/reference compound', row.nearest_active_compound_name],
+        ['Nearest active/reference similarity', row.nearest_active_similarity],
+        ['Active-neighborhood signal', formatEvidenceCategory(row.active_neighborhood_signal)],
+        ['Reference activity', formatTargetReferenceActivity(row)],
+        ['Reference mechanism class', row.nearest_active_mechanism_class],
+        ['Reference source', row.target_reference_source],
         ['Structural alerts', formatStructuralAlertStatus(row)],
         ['PAINS alert', formatBooleanLabel(row.pains_alert)],
         ['Brenk alert', formatBooleanLabel(row.brenk_alert)],
@@ -4169,6 +4391,12 @@ function buildCompoundMarkdownReport(compound) {
       ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
       ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
       ['Recommended review focus', compound.recommended_review_focus],
+      ['Nearest active/reference compound', compound.nearest_active_compound_name],
+      ['Nearest active/reference similarity', compound.nearest_active_similarity],
+      ['Active-neighborhood signal', formatEvidenceCategory(compound.active_neighborhood_signal)],
+      ['Reference activity', formatTargetReferenceActivity(compound)],
+      ['Reference mechanism class', compound.nearest_active_mechanism_class],
+      ['Reference source', compound.target_reference_source],
       ['Structural alerts', formatStructuralAlertStatus(compound)],
       ['PAINS alert', formatBooleanLabel(compound.pains_alert)],
       ['Brenk alert', formatBooleanLabel(compound.brenk_alert)],

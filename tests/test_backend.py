@@ -207,6 +207,16 @@ def test_sdf_export_writes_key_properties():
                     "chemical_space_y": -0.5,
                     "chemical_space_status": "projected",
                     "chemical_space_method": "morgan_fingerprint_pca",
+                    "target_reference_status": "references_found",
+                    "target_reference_source": "local_curated",
+                    "target_reference_count": 3,
+                    "nearest_active_reference_id": "REF1",
+                    "nearest_active_compound_name": "Active Ref",
+                    "nearest_active_similarity": 0.87,
+                    "nearest_active_activity_class": "active",
+                    "nearest_active_mechanism_class": "PAM",
+                    "active_neighborhood_signal": "near_known_active_space",
+                    "active_neighborhood_summary": "Nearest target reference is Active Ref.",
                     "review_status": "watchlist",
                     "review_note": "Review public data.",
                 }
@@ -227,6 +237,9 @@ def test_sdf_export_writes_key_properties():
     assert ">  <nearest_neighbor_similarity>" in sdf_text
     assert ">  <chemical_space_x>" in sdf_text
     assert ">  <chemical_space_method>" in sdf_text
+    assert ">  <nearest_active_compound_name>" in sdf_text
+    assert ">  <active_neighborhood_signal>" in sdf_text
+    assert "near_known_active_space" in sdf_text
     assert ">  <structural_alert_status>" in sdf_text
     assert ">  <pains_alert>" in sdf_text
     assert "Screening signal only." in sdf_text

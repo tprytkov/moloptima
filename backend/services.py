@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import inspect
 import io
 import json
 import shutil
@@ -82,6 +83,19 @@ SDF_EXPORT_PROPERTIES = [
     "chemical_space_status",
     "chemical_space_method",
     "chemical_space_warning",
+    "target_reference_status",
+    "target_reference_source",
+    "target_reference_count",
+    "nearest_active_reference_id",
+    "nearest_active_compound_name",
+    "nearest_active_similarity",
+    "nearest_active_activity_class",
+    "nearest_active_mechanism_class",
+    "nearest_active_activity_type",
+    "nearest_active_activity_value",
+    "nearest_active_activity_units",
+    "active_neighborhood_signal",
+    "active_neighborhood_summary",
     "review_status",
     "review_note",
 ]
@@ -197,6 +211,8 @@ def run_prioritization_job(
     enable_pubchem_lookup: bool | None = None,
     enable_chembl_lookup: bool = False,
     enable_patent_lookup: bool = False,
+    enable_target_reference_discovery: bool = False,
+    target_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Run the existing molecular prioritization pipeline for one upload."""
 
@@ -206,6 +222,8 @@ def run_prioritization_job(
     job_dir = JOB_OUTPUT_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     output_path = job_dir / "ranked_results.csv"
+    target_reference_output_path = job_dir / "target_references.json"
+    clean_target_context = sanitize_target_context(target_context)
     metadata = {
         "job_id": job_id,
         "upload_id": upload_id,
@@ -220,17 +238,23 @@ def run_prioritization_job(
         "pubchem_lookup_requested": pubchem_lookup_requested,
         "chembl_lookup_requested": enable_chembl_lookup,
         "patent_lookup_requested": enable_patent_lookup,
+        "target_reference_discovery_requested": enable_target_reference_discovery,
+        "target_context": clean_target_context,
+        "target_reference_file": relative_path(target_reference_output_path),
     }
     write_job_metadata(metadata)
 
     try:
-        rows = prioritize_csv(
+        rows = call_prioritize_csv(
             input_path,
             output_path,
             enable_public_lookup=enable_public_lookup,
             enable_pubchem_lookup=pubchem_lookup_requested,
             enable_chembl_lookup=enable_chembl_lookup,
             enable_patent_lookup=enable_patent_lookup,
+            enable_target_reference_discovery=enable_target_reference_discovery,
+            target_context=clean_target_context,
+            target_reference_output_path=target_reference_output_path,
         )
     except Exception as exc:
         metadata.update(
@@ -263,6 +287,18 @@ def run_prioritization_job(
     return metadata
 
 
+def call_prioritize_csv(input_path: Path, output_path: Path, **options: object) -> list[dict[str, object]]:
+    """Call the pipeline while keeping older test doubles compatible."""
+
+    signature = inspect.signature(prioritize_csv)
+    accepted_options = {
+        key: value
+        for key, value in options.items()
+        if key in signature.parameters
+    }
+    return prioritize_csv(input_path, output_path, **accepted_options)
+
+
 def get_result(job_id: str) -> dict[str, object]:
     """Return result metadata and rows for a completed job."""
 
@@ -290,6 +326,7 @@ def get_result(job_id: str) -> dict[str, object]:
         **job,
         "row_count": len(rows),
         "results": rows,
+        "target_references": read_target_reference_metadata(job),
     }
 
 
@@ -411,6 +448,7 @@ def history_metadata(metadata: dict[str, object]) -> dict[str, object]:
     pubchem_requested = bool(metadata.get("pubchem_lookup_requested"))
     chembl_requested = bool(metadata.get("chembl_lookup_requested"))
     patent_requested = bool(metadata.get("patent_lookup_requested"))
+    target_reference_requested = bool(metadata.get("target_reference_discovery_requested"))
     return {
         "job_id": metadata.get("job_id"),
         "created_at": metadata.get("created_at"),
@@ -428,7 +466,66 @@ def history_metadata(metadata: dict[str, object]) -> dict[str, object]:
         "pubchem_lookup_requested": pubchem_requested,
         "chembl_lookup_requested": chembl_requested,
         "patent_lookup_requested": patent_requested,
+        "target_reference_discovery_requested": target_reference_requested,
+        "target_context": metadata.get("target_context") if isinstance(metadata.get("target_context"), dict) else {},
     }
+
+
+def sanitize_target_context(target_context: dict[str, object] | None) -> dict[str, str]:
+    """Normalize optional target-context fields stored in job metadata."""
+
+    allowed_fields = [
+        "target_name",
+        "target_gene_symbol",
+        "target_uniprot_id",
+        "target_chembl_id",
+        "pdb_id",
+        "organism",
+        "disease_context",
+        "mechanism_context",
+        "docking_protocol_notes",
+        "binding_site_notes",
+    ]
+    values = target_context or {}
+    return {field: str(values.get(field) or "").strip() for field in allowed_fields}
+
+
+def read_target_reference_metadata(job: dict[str, object]) -> dict[str, object]:
+    """Return target-reference sidecar metadata for a completed job."""
+
+    reference_file = str(job.get("target_reference_file") or "").strip()
+    if not reference_file:
+        return {
+            "enabled": False,
+            "lookup_status": "not_requested",
+            "cache_status": "not_used",
+            "source": "not_used",
+            "reference_count": 0,
+            "references": [],
+        }
+    path = PROJECT_ROOT / reference_file
+    if not path.exists():
+        return {
+            "enabled": bool(job.get("target_reference_discovery_requested")),
+            "lookup_status": "not_available",
+            "cache_status": "not_used",
+            "source": "not_used",
+            "reference_count": 0,
+            "references": [],
+        }
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except json.JSONDecodeError:
+        return {
+            "enabled": bool(job.get("target_reference_discovery_requested")),
+            "lookup_status": "malformed_reference_metadata",
+            "cache_status": "not_used",
+            "source": "not_used",
+            "reference_count": 0,
+            "references": [],
+        }
+    return payload if isinstance(payload, dict) else {}
 
 
 def validate_molecule_csv(path: Path) -> int:

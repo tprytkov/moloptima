@@ -78,6 +78,19 @@ def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
             enable_pubchem_lookup=request.enable_pubchem_lookup or request.enable_public_lookup,
             enable_chembl_lookup=request.enable_chembl_lookup,
             enable_patent_lookup=request.enable_patent_lookup,
+            enable_target_reference_discovery=request.enable_target_reference_discovery,
+            target_context={
+                "target_name": request.target_name,
+                "target_gene_symbol": request.target_gene_symbol,
+                "target_uniprot_id": request.target_uniprot_id,
+                "target_chembl_id": request.target_chembl_id,
+                "pdb_id": request.pdb_id,
+                "organism": request.organism,
+                "disease_context": request.disease_context,
+                "mechanism_context": request.mechanism_context,
+                "docking_protocol_notes": request.docking_protocol_notes,
+                "binding_site_notes": request.binding_site_notes,
+            },
         )
     )
 

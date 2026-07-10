@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from pathlib import Path
 
 from biopharma_intelligence.identity import check_known_compound_identity
@@ -14,6 +15,15 @@ from biopharma_intelligence.public_lookup import (
     chembl_not_requested_result,
     not_requested_result,
     patent_not_requested_result,
+)
+from biopharma_intelligence.evidence_synthesis import synthesize_evidence
+from biopharma_intelligence.target_references import (
+    TARGET_REFERENCE_COLUMNS,
+    TargetReferenceClient,
+    add_target_reference_analysis,
+    empty_target_reference_fields,
+    target_context_from_mapping,
+    target_reference_metadata,
 )
 from biopharma_intelligence.similarity import find_closest_known_compound
 from molecular_prioritization.bbb_predictor import load_bbb_predictor
@@ -45,9 +55,12 @@ def prioritize_smiles(
     enable_pubchem_lookup: bool | None = None,
     enable_chembl_lookup: bool = False,
     enable_patent_lookup: bool = False,
+    enable_target_reference_discovery: bool = False,
+    target_context: dict[str, object] | None = None,
     public_lookup_client: object | None = None,
     chembl_lookup_client: object | None = None,
     patent_lookup_client: object | None = None,
+    target_reference_client: object | None = None,
 ) -> list[dict[str, object]]:
     """Prioritize molecule records with molecule_id and smiles fields."""
 
@@ -56,6 +69,7 @@ def prioritize_smiles(
     active_public_lookup_client = public_lookup_client or PubChemClient()
     active_chembl_lookup_client = chembl_lookup_client or ChEMBLClient()
     active_patent_lookup_client = patent_lookup_client or SureChEMBLPatentClient()
+    active_target_reference_client = target_reference_client or TargetReferenceClient()
     ranked_records: list[dict[str, object]] = []
 
     for index, record in enumerate(records, start=1):
@@ -144,7 +158,25 @@ def prioritize_smiles(
         reverse=True,
     )
     docking_scored_records = add_docking_informed_scores(sorted_records)
-    return add_diversity_analysis(docking_scored_records)
+    diversity_records = add_diversity_analysis(docking_scored_records)
+
+    if enable_target_reference_discovery:
+        reference_set = active_target_reference_client.discover_references(
+            target_context_from_mapping(target_context)
+        )
+        target_records, reference_points = add_target_reference_analysis(diversity_records, reference_set)
+        resynthesized_records = [_resynthesize_evidence(row) for row in target_records]
+        setattr(
+            prioritize_smiles,
+            "latest_target_reference_metadata",
+            target_reference_metadata(reference_set, reference_points),
+        )
+        return resynthesized_records
+
+    for row in diversity_records:
+        row.update(empty_target_reference_fields())
+    setattr(prioritize_smiles, "latest_target_reference_metadata", target_reference_metadata(None))
+    return diversity_records
 
 
 def prioritize_csv(
@@ -155,6 +187,9 @@ def prioritize_csv(
     enable_pubchem_lookup: bool | None = None,
     enable_chembl_lookup: bool = False,
     enable_patent_lookup: bool = False,
+    enable_target_reference_discovery: bool = False,
+    target_context: dict[str, object] | None = None,
+    target_reference_output_path: str | Path | None = None,
 ) -> list[dict[str, object]]:
     """Read molecule records from CSV, write ranked results, and return rows."""
 
@@ -170,6 +205,13 @@ def prioritize_csv(
         enable_pubchem_lookup=enable_pubchem_lookup,
         enable_chembl_lookup=enable_chembl_lookup,
         enable_patent_lookup=enable_patent_lookup,
+        enable_target_reference_discovery=enable_target_reference_discovery,
+        target_context=target_context,
+    )
+    reference_metadata = getattr(
+        prioritize_smiles,
+        "latest_target_reference_metadata",
+        target_reference_metadata(None),
     )
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -232,6 +274,7 @@ def prioritize_csv(
             "biopharma_context_level",
             "recommended_review_focus",
             *STRUCTURAL_ALERT_COLUMNS,
+            *TARGET_REFERENCE_COLUMNS,
             *DIVERSITY_COLUMNS,
             *CHEMICAL_SPACE_COLUMNS,
             "docking_score",
@@ -259,7 +302,21 @@ def prioritize_csv(
         writer.writeheader()
         writer.writerows(ranked_records)
 
+    if target_reference_output_path is not None:
+        reference_output = Path(target_reference_output_path)
+        reference_output.parent.mkdir(parents=True, exist_ok=True)
+        with reference_output.open("w", encoding="utf-8") as handle:
+            json.dump(reference_metadata, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+
     return ranked_records
+
+
+def _resynthesize_evidence(row: dict[str, object]) -> dict[str, object]:
+    synthesis = synthesize_evidence(row)
+    updated = {**row}
+    updated.update(synthesis)
+    return updated
 
 
 def parse_args() -> argparse.Namespace:

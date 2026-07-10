@@ -26,6 +26,17 @@ class PrioritizationRequest(BaseModel):
     enable_pubchem_lookup: bool = False
     enable_chembl_lookup: bool = False
     enable_patent_lookup: bool = False
+    enable_target_reference_discovery: bool = False
+    target_name: str = ""
+    target_gene_symbol: str = ""
+    target_uniprot_id: str = ""
+    target_chembl_id: str = ""
+    pdb_id: str = ""
+    organism: str = ""
+    disease_context: str = ""
+    mechanism_context: str = ""
+    docking_protocol_notes: str = ""
+    binding_site_notes: str = ""
 
 
 class JobResponse(BaseModel):
@@ -50,6 +61,7 @@ class ResultResponse(BaseModel):
     error_message: str = ""
     row_count: int
     results: list[dict[str, Any]]
+    target_references: dict[str, Any] | None = None
 
 
 class LatestJobResponse(BaseModel):

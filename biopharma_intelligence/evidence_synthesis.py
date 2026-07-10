@@ -28,6 +28,7 @@ def synthesize_evidence(row: dict[str, object]) -> dict[str, object]:
     public_bioactivity_signal = _public_bioactivity_signal(row)
     patent_context_signal = _patent_context_signal(row)
     local_similarity_signal = _local_similarity_signal(row)
+    active_neighborhood_signal = str(row.get("active_neighborhood_signal") or "")
 
     if public_identity_signal in {"local_identity_signal_present", "public_identity_signal_present"}:
         signals.append("identity")
@@ -37,6 +38,8 @@ def synthesize_evidence(row: dict[str, object]) -> dict[str, object]:
         signals.append("patent_context")
     if local_similarity_signal == "high_local_similarity_signal_present":
         signals.append("local_similarity")
+    if active_neighborhood_signal in {"near_known_active_space", "moderate_active_space_overlap"}:
+        signals.append("target_reference_overlap")
 
     _append_signal_notes(
         notes,
@@ -52,6 +55,7 @@ def synthesize_evidence(row: dict[str, object]) -> dict[str, object]:
         public_bioactivity_signal,
         patent_context_signal,
         local_similarity_signal,
+        active_neighborhood_signal,
     )
     context_level = _context_level(signals)
 
@@ -177,12 +181,25 @@ def _append_signal_notes(
         similarity = row.get("closest_known_compound_similarity")
         notes.append(f"Local similarity signal: closest local reference is {name} ({similarity}).")
 
+    active_neighborhood_signal = str(row.get("active_neighborhood_signal") or "")
+    if active_neighborhood_signal == "near_known_active_space":
+        notes.append("Target-reference signal: molecule is near known target-active reference space.")
+    elif active_neighborhood_signal == "moderate_active_space_overlap":
+        notes.append("Target-reference signal: molecule has moderate overlap with target-active reference space.")
+    elif active_neighborhood_signal == "distant_from_known_actives":
+        notes.append("Target-reference signal: molecule is distant from available target-active references.")
+    elif active_neighborhood_signal == "no_reference_actives_available":
+        notes.append("Target-reference discovery found no usable active/reference compounds.")
+    elif active_neighborhood_signal == "target_reference_lookup_failed":
+        notes.append("Target-reference lookup failed; missing data is not interpreted as no overlap.")
+
 
 def _summary_category(
     public_identity_signal: str,
     public_bioactivity_signal: str,
     patent_context_signal: str,
     local_similarity_signal: str,
+    active_neighborhood_signal: str = "",
 ) -> str:
     public_signal_count = sum(
         [
@@ -201,6 +218,8 @@ def _summary_category(
         return "patent_context_signal"
     if local_similarity_signal == "high_local_similarity_signal_present":
         return "local_similarity_context"
+    if active_neighborhood_signal in {"near_known_active_space", "moderate_active_space_overlap"}:
+        return "target_active_reference_context"
     return "limited_public_context"
 
 
@@ -220,6 +239,7 @@ def _recommended_review_focus(category: str) -> str:
         "public_bioactivity_context": "Review ChEMBL activity and target context for computational screening relevance.",
         "patent_context_signal": "Review SureChEMBL returned records as public patent-associated evidence only.",
         "local_similarity_context": "Review local closest-reference analog context before prioritization decisions.",
+        "target_active_reference_context": "Review nearest target-active references and confirm target-context relevance.",
         "limited_public_context": "Review descriptors and local scoring; optional public lookups may add context.",
     }[category]
 
