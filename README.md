@@ -156,6 +156,8 @@ npm.cmd run package
 
 The packaged app is written under `desktop/dist/`, which is ignored by Git. See [docs/desktop_app.md](docs/desktop_app.md) and [docs/windows_packaging.md](docs/windows_packaging.md) for details. This is a first Windows desktop package, not a fully standalone scientific runtime, and it does not bundle Python, RDKit, BBB model weights, or local cache files.
 
+The desktop app includes `MolOptima > Runtime Diagnostics` for checking `MOLOPTIMA_PYTHON`, backend health, frontend mode, app-data access, and cache paths.
+
 ## Test And Build Commands
 
 Run all Python tests from the repository root:
