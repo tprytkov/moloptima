@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import shutil
 from pathlib import Path
@@ -10,6 +11,9 @@ from uuid import uuid4
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, UploadFile, status
+from rdkit import Chem
+from rdkit.Chem import rdDepictor
+from rdkit.Chem.Draw import rdMolDraw2D
 
 from molecular_prioritization import model_sources
 from molecular_prioritization.pipeline import prioritize_csv
@@ -24,6 +28,38 @@ JOB_ANNOTATION_DIR = BACKEND_DIR / "job_annotations"
 REQUIRED_COLUMNS = {"molecule_id", "smiles"}
 REVIEW_STATUSES = {"unreviewed", "selected", "watchlist", "deprioritized", "rejected"}
 MAX_REVIEW_NOTE_LENGTH = 500
+SDF_EXPORT_PROPERTIES = [
+    "molecule_id",
+    "priority_score",
+    "valid_molecule",
+    "bbb_prediction",
+    "bbb_probability",
+    "bbb_model_status",
+    "mw",
+    "tpsa",
+    "hba",
+    "hbd",
+    "qed",
+    "lipinski_pass",
+    "synthetic_feasibility_category",
+    "docking_score",
+    "known_compound_match",
+    "known_compound_name",
+    "closest_known_compound_name",
+    "closest_known_compound_similarity",
+    "pubchem_cid",
+    "pubchem_preferred_name",
+    "chembl_molecule_id",
+    "chembl_pref_name",
+    "chembl_activity_count",
+    "patent_public_evidence_match",
+    "patent_record_count",
+    "evidence_summary_category",
+    "biopharma_context_level",
+    "recommended_review_focus",
+    "review_status",
+    "review_note",
+]
 
 
 def save_upload(file: UploadFile) -> dict[str, object]:
@@ -52,6 +88,80 @@ def save_upload(file: UploadFile) -> dict[str, object]:
         "filename": filename,
         "rows": rows,
         "path": relative_path(upload_path),
+    }
+
+
+def render_molecule_structure_svg(smiles: str, width: int = 280, height: int = 220) -> str:
+    """Render a SMILES string to a lightweight 2D SVG structure preview."""
+
+    clean_smiles = (smiles or "").strip()
+    if not clean_smiles:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="SMILES is required for structure rendering.",
+        )
+
+    molecule = Chem.MolFromSmiles(clean_smiles)
+    if molecule is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid or unavailable structure for the provided SMILES.",
+        )
+
+    rdDepictor.Compute2DCoords(molecule)
+    drawer = rdMolDraw2D.MolDraw2DSVG(width, height)
+    drawer.DrawMolecule(molecule)
+    drawer.FinishDrawing()
+    return drawer.GetDrawingText()
+
+
+def export_candidates_sdf(candidates: list[dict[str, object]]) -> dict[str, object]:
+    """Build an SDF string for candidate rows with usable SMILES."""
+
+    if not candidates:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Candidate list is empty.",
+        )
+
+    output = io.StringIO()
+    writer = Chem.SDWriter(output)
+    exported = 0
+    skipped = 0
+
+    for row in candidates:
+        smiles = str(row.get("canonical_smiles") or row.get("input_smiles") or "").strip()
+        if not smiles:
+            skipped += 1
+            continue
+
+        molecule = Chem.MolFromSmiles(smiles)
+        if molecule is None:
+            skipped += 1
+            continue
+
+        rdDepictor.Compute2DCoords(molecule)
+        molecule.SetProp("_Name", str(row.get("molecule_id") or f"candidate_{exported + 1}"))
+        molecule.SetProp("source_smiles", smiles)
+        for property_name in SDF_EXPORT_PROPERTIES:
+            value = row.get(property_name)
+            if value is None or value == "":
+                continue
+            molecule.SetProp(property_name, str(value))
+        writer.write(molecule)
+        exported += 1
+
+    writer.close()
+    if exported == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"No valid candidate structures were available for SDF export. Skipped {skipped} row(s).",
+        )
+
+    return {
+        "sdf": output.getvalue(),
+        "exported": exported,
+        "skipped": skipped,
     }
 
 

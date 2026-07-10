@@ -1107,6 +1107,7 @@ function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReview
             annotationsState={annotationsState}
             onSaveReviewAnnotation={onSaveReviewAnnotation}
           />
+          <StructurePreview compound={compound} />
           <MetadataPanel
             rows={[
               ['Review status', formatReviewStatus(compound.review_status)],
@@ -1562,6 +1563,7 @@ function RunComparisonTable({ rows }) {
         <TableHead>
           <TableRow>
             <TableCell>molecule_id</TableCell>
+            <TableCell>2D structure</TableCell>
             <TableCell>presence</TableCell>
             <TableCell>priority_score_a</TableCell>
             <TableCell>priority_score_b</TableCell>
@@ -1590,6 +1592,9 @@ function RunComparisonTable({ rows }) {
           {rows.map((row) => (
             <TableRow key={row.comparison_key}>
               <TableCell>{formatDetailValue(row.molecule_id)}</TableCell>
+              <TableCell>
+                <StructureThumbnail smiles={row.canonical_smiles_a || row.canonical_smiles_b || row.input_smiles_a || row.input_smiles_b} />
+              </TableCell>
               <TableCell>{formatEvidenceCategory(row.presence)}</TableCell>
               <TableCell>{formatDetailValue(row.priority_score_a)}</TableCell>
               <TableCell>{formatDetailValue(row.priority_score_b)}</TableCell>
@@ -1755,11 +1760,14 @@ function ReportsPage({ latestRunState, annotationsState, onSaveReviewAnnotation 
             />
             <CandidateExportPanel rows={filteredRows} />
             {selectedCompound && (
-              <ReviewAnnotationControls
-                compound={selectedCompound}
-                annotationsState={annotationsState}
-                onSaveReviewAnnotation={onSaveReviewAnnotation}
-              />
+              <Stack spacing={2}>
+                <StructurePreview compound={selectedCompound} />
+                <ReviewAnnotationControls
+                  compound={selectedCompound}
+                  annotationsState={annotationsState}
+                  onSaveReviewAnnotation={onSaveReviewAnnotation}
+                />
+              </Stack>
             )}
             <ReportsCompoundTable
               rows={filteredRows}
@@ -2006,6 +2014,7 @@ function UploadMoleculesPage({ uploadState, setUploadState, onUpload }) {
 }
 
 function CandidateExportPanel({ rows }) {
+  const [sdfExportState, setSdfExportState] = useState({ loading: false, message: '', error: '' });
   const selectedRows = candidateRowsForStatuses(rows, ['selected']);
   const watchlistRows = candidateRowsForStatuses(rows, ['watchlist']);
   const combinedRows = candidateRowsForStatuses(rows, ['selected', 'watchlist']);
@@ -2058,6 +2067,34 @@ function CandidateExportPanel({ rows }) {
             Markdown handoff summary
           </Button>
         </Stack>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} flexWrap="wrap" useFlexGap>
+          <Button
+            variant="outlined"
+            startIcon={<DownloadOutlinedIcon />}
+            disabled={sdfExportState.loading || selectedRows.length === 0}
+            onClick={() => downloadCandidatePackageSdf(selectedRows, 'moloptima-selected-candidates.sdf', setSdfExportState)}
+          >
+            Export selected candidates as SDF
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<DownloadOutlinedIcon />}
+            disabled={sdfExportState.loading || watchlistRows.length === 0}
+            onClick={() => downloadCandidatePackageSdf(watchlistRows, 'moloptima-watchlist-candidates.sdf', setSdfExportState)}
+          >
+            Export watchlist candidates as SDF
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<DownloadOutlinedIcon />}
+            disabled={sdfExportState.loading || combinedRows.length === 0}
+            onClick={() => downloadCandidatePackageSdf(combinedRows, 'moloptima-selected-watchlist-candidates.sdf', setSdfExportState)}
+          >
+            Export selected + watchlist as SDF
+          </Button>
+        </Stack>
+        {sdfExportState.message && <Alert severity="success">{sdfExportState.message}</Alert>}
+        {sdfExportState.error && <Alert severity="warning">{sdfExportState.error}</Alert>}
         {combinedRows.length === 0 && (
           <Alert severity="info">
             Mark molecules as Selected or Watchlist to create a candidate handoff package.
@@ -2499,6 +2536,100 @@ function ReviewAnnotationControls({ compound, annotationsState, onSaveReviewAnno
   );
 }
 
+function StructurePreview({ compound }) {
+  const smiles = structurePreviewSmiles(compound);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [smiles]);
+
+  if (!smiles || failed) {
+    return <Alert severity="info">Invalid or unavailable structure.</Alert>;
+  }
+
+  return (
+    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+      <Stack spacing={1.25}>
+        <Stack spacing={0.25}>
+          <Typography variant="h2">2D structure</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Structure preview generated from SMILES.
+          </Typography>
+        </Stack>
+        <Box
+          sx={{
+            bgcolor: '#fff',
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 1,
+            display: 'flex',
+            justifyContent: 'center',
+            minHeight: 220,
+            p: 1,
+          }}
+        >
+          <Box
+            component="img"
+            src={structureImageUrl(smiles, 360, 240)}
+            alt="2D chemical structure generated from SMILES"
+            onError={() => setFailed(true)}
+            sx={{ maxWidth: '100%', height: 'auto' }}
+          />
+        </Box>
+      </Stack>
+    </Box>
+  );
+}
+
+function StructureThumbnail({ smiles }) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [smiles]);
+
+  if (!smiles || failed) {
+    return (
+      <Typography variant="caption" color="text.secondary">
+        Unavailable
+      </Typography>
+    );
+  }
+
+  return (
+    <Box
+      component="img"
+      src={structureImageUrl(smiles, 140, 110)}
+      alt="2D structure thumbnail"
+      onError={() => setFailed(true)}
+      sx={{
+        bgcolor: '#fff',
+        border: '1px solid',
+        borderColor: 'divider',
+        borderRadius: 1,
+        display: 'block',
+        height: 'auto',
+        maxWidth: '100%',
+        width: 140,
+      }}
+    />
+  );
+}
+
+function structurePreviewSmiles(compound) {
+  return compound?.canonical_smiles || compound?.input_smiles || '';
+}
+
+function structureImageUrl(smiles, width, height) {
+  const params = new URLSearchParams({
+    smiles,
+    width: String(width),
+    height: String(height),
+  });
+  return `${apiBaseUrl}/api/molecules/structure?${params.toString()}`;
+}
+
 function FilterTextInput({ label, value, maxLength, onChange }) {
   return (
     <Box component="label" sx={{ display: 'grid', gap: 0.5 }}>
@@ -2701,6 +2832,7 @@ function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotatio
             annotationsState={annotationsState}
             onSaveReviewAnnotation={onSaveReviewAnnotation}
           />
+          <StructurePreview compound={compound} />
 
           <Box
             sx={{
@@ -3357,6 +3489,40 @@ function downloadCandidatePackageMarkdown(rows, filename) {
   downloadTextFile(buildCandidatePackageMarkdown(rows), filename, 'text/markdown;charset=utf-8');
 }
 
+async function downloadCandidatePackageSdf(rows, filename, setSdfExportState) {
+  if (rows.length === 0) {
+    return;
+  }
+  setSdfExportState({ loading: true, message: '', error: '' });
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/candidates/export-sdf`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidates: rows }),
+    });
+    const exported = response.headers.get('X-MolOptima-SDF-Exported') ?? '0';
+    const skipped = response.headers.get('X-MolOptima-SDF-Skipped') ?? '0';
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const detail = payload.detail || `HTTP ${response.status}`;
+      throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    }
+    const blob = await response.blob();
+    downloadBlob(blob, filename);
+    setSdfExportState({
+      loading: false,
+      message: `SDF export complete: ${exported} structure(s) exported, ${skipped} row(s) skipped.`,
+      error: '',
+    });
+  } catch (error) {
+    setSdfExportState({
+      loading: false,
+      message: '',
+      error: readableError(error),
+    });
+  }
+}
+
 function buildCandidatePackageMarkdown(rows) {
   const selectedCount = candidateRowsForStatuses(rows, ['selected']).length;
   const watchlistCount = candidateRowsForStatuses(rows, ['watchlist']).length;
@@ -3408,6 +3574,10 @@ function buildCandidatePackageMarkdown(rows) {
 
 function downloadTextFile(text, filename, mimeType) {
   const blob = new Blob([text], { type: mimeType });
+  downloadBlob(blob, filename);
+}
+
+function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

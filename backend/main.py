@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend import services
 from backend.schemas import (
+    CandidateSdfExportRequest,
     HealthResponse,
     JobAnnotationsRequest,
     JobAnnotationsResponse,
@@ -42,6 +43,30 @@ def health() -> HealthResponse:
 @app.post("/api/molecules/upload", response_model=UploadResponse)
 def upload_molecules(file: UploadFile = File(...)) -> UploadResponse:
     return UploadResponse(**services.save_upload(file))
+
+
+@app.get("/api/molecules/structure")
+def get_molecule_structure(
+    smiles: str = Query(..., min_length=1),
+    width: int = Query(280, ge=120, le=800),
+    height: int = Query(220, ge=120, le=800),
+) -> Response:
+    svg = services.render_molecule_structure_svg(smiles, width=width, height=height)
+    return Response(content=svg, media_type="image/svg+xml")
+
+
+@app.post("/api/candidates/export-sdf")
+def export_candidates_sdf(request: CandidateSdfExportRequest) -> Response:
+    payload = services.export_candidates_sdf(request.candidates)
+    return Response(
+        content=str(payload["sdf"]),
+        media_type="chemical/x-mdl-sdfile",
+        headers={
+            "Content-Disposition": 'attachment; filename="moloptima-candidates.sdf"',
+            "X-MolOptima-SDF-Exported": str(payload["exported"]),
+            "X-MolOptima-SDF-Skipped": str(payload["skipped"]),
+        },
+    )
 
 
 @app.post("/api/jobs/prioritization", response_model=JobResponse)

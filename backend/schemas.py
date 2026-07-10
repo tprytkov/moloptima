@@ -70,6 +70,10 @@ class JobAnnotationsRequest(BaseModel):
     annotations: dict[str, dict[str, str]]
 
 
+class CandidateSdfExportRequest(BaseModel):
+    candidates: list[dict[str, Any]]
+
+
 class SourceStatusResponse(BaseModel):
     model_manifest: dict[str, Any]
     public_data_manifest: dict[str, Any]

@@ -74,6 +74,140 @@ def test_health_endpoint():
     assert response.json() == {"status": "ok", "service": "moloptima-backend"}
 
 
+def test_structure_endpoint_returns_svg_for_valid_smiles():
+    client = TestClient(app)
+
+    response = client.get("/api/molecules/structure", params={"smiles": "CCO"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in response.text
+    assert "</svg>" in response.text
+
+
+def test_structure_endpoint_handles_invalid_smiles_gracefully():
+    client = TestClient(app)
+
+    response = client.get("/api/molecules/structure", params={"smiles": "not-a-smiles"})
+
+    assert response.status_code == 422
+    assert "Invalid or unavailable structure" in response.json()["detail"]
+
+
+def test_structure_endpoint_handles_missing_smiles_safely():
+    client = TestClient(app)
+
+    response = client.get("/api/molecules/structure")
+
+    assert response.status_code == 422
+
+
+def test_sdf_export_returns_sdf_for_valid_candidate():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/candidates/export-sdf",
+        json={
+            "candidates": [
+                {
+                    "molecule_id": "ethanol",
+                    "canonical_smiles": "CCO",
+                    "priority_score": 0.81,
+                    "review_status": "selected",
+                    "review_note": "Include in handoff.",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("chemical/x-mdl-sdfile")
+    assert response.headers["x-moloptima-sdf-exported"] == "1"
+    assert response.headers["x-moloptima-sdf-skipped"] == "0"
+    assert "$$$$" in response.text
+    assert ">  <molecule_id>" in response.text
+    assert "ethanol" in response.text
+
+
+def test_sdf_export_supports_multiple_molecules():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/candidates/export-sdf",
+        json={
+            "candidates": [
+                {"molecule_id": "ethanol", "canonical_smiles": "CCO"},
+                {"molecule_id": "benzene", "input_smiles": "c1ccccc1"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-moloptima-sdf-exported"] == "2"
+    assert response.text.count("$$$$") == 2
+
+
+def test_sdf_export_skips_invalid_molecules_when_valid_rows_exist():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/candidates/export-sdf",
+        json={
+            "candidates": [
+                {"molecule_id": "invalid", "canonical_smiles": "not-a-smiles"},
+                {"molecule_id": "ethanol", "canonical_smiles": "CCO"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-moloptima-sdf-exported"] == "1"
+    assert response.headers["x-moloptima-sdf-skipped"] == "1"
+    assert "ethanol" in response.text
+    assert "invalid" not in response.text
+
+
+def test_sdf_export_writes_key_properties():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/candidates/export-sdf",
+        json={
+            "candidates": [
+                {
+                    "molecule_id": "mol_1",
+                    "canonical_smiles": "CCO",
+                    "bbb_prediction": "likely_crosses",
+                    "mw": 46.07,
+                    "tpsa": 20.23,
+                    "chembl_molecule_id": "CHEMBL123",
+                    "evidence_summary_category": "public_identity_context",
+                    "review_status": "watchlist",
+                    "review_note": "Review public data.",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    sdf_text = response.text
+    assert ">  <bbb_prediction>" in sdf_text
+    assert "likely_crosses" in sdf_text
+    assert ">  <chembl_molecule_id>" in sdf_text
+    assert "CHEMBL123" in sdf_text
+    assert ">  <review_note>" in sdf_text
+    assert "Review public data." in sdf_text
+
+
+def test_sdf_export_empty_candidate_list_handled_safely():
+    client = TestClient(app)
+
+    response = client.post("/api/candidates/export-sdf", json={"candidates": []})
+
+    assert response.status_code == 422
+    assert "Candidate list is empty" in response.json()["detail"]
+
+
 def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(services, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(services, "UPLOAD_DIR", tmp_path / "backend" / "uploads")
