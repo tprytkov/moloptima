@@ -5,10 +5,86 @@
   "description": "Phase 5A Electron desktop launcher for MolOptima.",
   "main": "main.js",
   "scripts": {
+    "build:frontend": "cd ../frontend && npm.cmd run build",
     "dev": "electron .",
-    "start": "electron ."
+    "start": "electron .",
+    "package": "npm run build:frontend && electron-builder --win dir",
+    "dist": "npm run build:frontend && electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "local.moloptima.desktop",
+    "productName": "MolOptima",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist",
+        "to": "frontend-dist"
+      },
+      {
+        "from": "../backend",
+        "to": "moloptima-app/backend",
+        "filter": [
+          "**/*",
+          "!uploads/**",
+          "!job_outputs/**",
+          "!job_metadata/**",
+          "!job_annotations/**",
+          "!__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../molecular_prioritization",
+        "to": "moloptima-app/molecular_prioritization",
+        "filter": [
+          "**/*",
+          "!__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../biopharma_intelligence",
+        "to": "moloptima-app/biopharma_intelligence",
+        "filter": [
+          "**/*",
+          "!__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../data",
+        "to": "moloptima-app/data"
+      },
+      {
+        "from": "../app_data",
+        "to": "moloptima-app/app_data",
+        "filter": [
+          "**/.gitkeep"
+        ]
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "dir",
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "devDependencies": {
-    "electron": "^33.4.11"
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
   }
 }

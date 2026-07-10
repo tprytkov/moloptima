@@ -146,7 +146,15 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-See [docs/desktop_app.md](docs/desktop_app.md) for details. This is a development launcher, not a signed installer, and it does not bundle BBB model weights or local cache files.
+Create an unpacked Windows desktop package:
+
+```bat
+cd MolOptima
+cd desktop
+npm.cmd run package
+```
+
+The packaged app is written under `desktop/dist/`, which is ignored by Git. See [docs/desktop_app.md](docs/desktop_app.md) and [docs/windows_packaging.md](docs/windows_packaging.md) for details. This is a first Windows desktop package, not a fully standalone scientific runtime, and it does not bundle Python, RDKit, BBB model weights, or local cache files.
 
 ## Test And Build Commands
 

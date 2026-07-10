@@ -1,20 +1,35 @@
 const { app, BrowserWindow, dialog } = require('electron');
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
-const projectRoot = path.resolve(__dirname, '..');
 const backendUrl = process.env.MOLOPTIMA_BACKEND_URL || 'http://127.0.0.1:8000';
 const frontendUrl = process.env.MOLOPTIMA_FRONTEND_URL || 'http://127.0.0.1:5173';
 const pythonExecutable = process.env.MOLOPTIMA_PYTHON || 'python';
-const startFrontend = process.env.MOLOPTIMA_START_FRONTEND !== '0' && !process.env.MOLOPTIMA_FRONTEND_URL;
+const startFrontend =
+  !app.isPackaged && process.env.MOLOPTIMA_START_FRONTEND !== '0' && !process.env.MOLOPTIMA_FRONTEND_URL;
 
 let backendProcess = null;
 let frontendProcess = null;
 let mainWindow = null;
 
+function getProjectRoot() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'moloptima-app');
+  }
+  return path.resolve(__dirname, '..');
+}
+
+function getFrontendIndexPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'frontend-dist', 'index.html');
+  }
+  return path.join(getProjectRoot(), 'frontend', 'dist', 'index.html');
+}
+
 function spawnProcess(command, args, options = {}) {
   const child = spawn(command, args, {
-    cwd: projectRoot,
+    cwd: getProjectRoot(),
     env: process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -32,6 +47,15 @@ function spawnProcess(command, args, options = {}) {
 }
 
 function startBackend() {
+  if (app.isPackaged && !process.env.MOLOPTIMA_PYTHON) {
+    throw new Error(
+      'MOLOPTIMA_PYTHON is required for the packaged desktop app. Set it to the MolOptima Conda environment python.exe.',
+    );
+  }
+  if (process.env.MOLOPTIMA_PYTHON && !fs.existsSync(process.env.MOLOPTIMA_PYTHON)) {
+    throw new Error(`MOLOPTIMA_PYTHON does not exist: ${process.env.MOLOPTIMA_PYTHON}`);
+  }
+
   backendProcess = spawnProcess(pythonExecutable, [
     '-m',
     'uvicorn',
@@ -52,7 +76,7 @@ function startBackend() {
 function startFrontendDevServer() {
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   frontendProcess = spawnProcess(npmCommand, ['run', 'dev', '--', '--host', '127.0.0.1'], {
-    cwd: path.join(projectRoot, 'frontend'),
+    cwd: path.join(getProjectRoot(), 'frontend'),
     shell: process.platform === 'win32',
   });
 }
@@ -91,6 +115,11 @@ async function createWindow() {
     },
   });
 
+  if (app.isPackaged && !process.env.MOLOPTIMA_FRONTEND_URL) {
+    await mainWindow.loadFile(getFrontendIndexPath());
+    return;
+  }
+
   await mainWindow.loadURL(frontendUrl);
 }
 
@@ -120,10 +149,16 @@ async function startMolOptima() {
     timeoutMs: Number(process.env.MOLOPTIMA_BACKEND_TIMEOUT_MS || 45000),
     label: 'FastAPI backend',
   });
-  await waitForUrl(frontendUrl, {
-    timeoutMs: Number(process.env.MOLOPTIMA_FRONTEND_TIMEOUT_MS || 45000),
-    label: 'React frontend',
-  });
+
+  if (!app.isPackaged || process.env.MOLOPTIMA_FRONTEND_URL) {
+    await waitForUrl(frontendUrl, {
+      timeoutMs: Number(process.env.MOLOPTIMA_FRONTEND_TIMEOUT_MS || 45000),
+      label: 'React frontend',
+    });
+  } else if (!fs.existsSync(getFrontendIndexPath())) {
+    throw new Error(`Built frontend was not found at ${getFrontendIndexPath()}`);
+  }
+
   await createWindow();
 }
 
