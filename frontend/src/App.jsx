@@ -1478,6 +1478,7 @@ function ReportsPage({ latestRunState, annotationsState, onSaveReviewAnnotation 
               onReset={() => setFilters(defaultEvidenceFilters)}
               exportFilename="moloptima-reports-filtered.csv"
             />
+            <CandidateExportPanel rows={filteredRows} />
             {selectedCompound && (
               <ReviewAnnotationControls
                 compound={selectedCompound}
@@ -1726,6 +1727,69 @@ function UploadMoleculesPage({ uploadState, setUploadState, onUpload }) {
         </Stack>
       </Paper>
     </Stack>
+  );
+}
+
+function CandidateExportPanel({ rows }) {
+  const selectedRows = candidateRowsForStatuses(rows, ['selected']);
+  const watchlistRows = candidateRowsForStatuses(rows, ['watchlist']);
+  const combinedRows = candidateRowsForStatuses(rows, ['selected', 'watchlist']);
+
+  return (
+    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+      <Stack spacing={2}>
+        <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+          <Stack spacing={0.25}>
+            <Typography variant="h2">Candidate Export</Typography>
+            <Typography color="text.secondary">
+              Scientific handoff package for reviewed candidates. Review status and notes included.
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Available in current view: Selected {selectedRows.length}, Watchlist {watchlistRows.length}
+            </Typography>
+          </Stack>
+        </Stack>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} flexWrap="wrap" useFlexGap>
+          <Button
+            variant="outlined"
+            startIcon={<DownloadOutlinedIcon />}
+            disabled={selectedRows.length === 0}
+            onClick={() => downloadCandidatePackageCsv(selectedRows, 'moloptima-selected-candidates.csv')}
+          >
+            Export selected candidates
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<DownloadOutlinedIcon />}
+            disabled={watchlistRows.length === 0}
+            onClick={() => downloadCandidatePackageCsv(watchlistRows, 'moloptima-watchlist-candidates.csv')}
+          >
+            Export watchlist
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<DownloadOutlinedIcon />}
+            disabled={combinedRows.length === 0}
+            onClick={() => downloadCandidatePackageCsv(combinedRows, 'moloptima-selected-watchlist-candidates.csv')}
+          >
+            Export selected + watchlist candidates
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<DownloadOutlinedIcon />}
+            disabled={combinedRows.length === 0}
+            onClick={() => downloadCandidatePackageMarkdown(combinedRows, 'moloptima-candidate-handoff-summary.md')}
+          >
+            Markdown handoff summary
+          </Button>
+        </Stack>
+        {combinedRows.length === 0 && (
+          <Alert severity="info">
+            Mark molecules as Selected or Watchlist to create a candidate handoff package.
+          </Alert>
+        )}
+      </Stack>
+    </Box>
   );
 }
 
@@ -2696,6 +2760,162 @@ function downloadRowsCsv(rows, filename) {
     ...rows.map((row) => columns.map((column) => csvCell(row[column])).join(',')),
   ];
   const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+const candidateExportColumns = [
+  'molecule_id',
+  'input_smiles',
+  'canonical_smiles',
+  'priority_score',
+  'bbb_prediction',
+  'bbb_probability',
+  'bbb_model_status',
+  'bbb_model_name',
+  'mw',
+  'logp',
+  'hba',
+  'hbd',
+  'tpsa',
+  'rotatable_bonds',
+  'qed',
+  'lipinski_pass',
+  'sa_score',
+  'synthetic_feasibility_category',
+  'synthetic_feasibility_status',
+  'known_compound_match',
+  'known_compound_name',
+  'known_compound_id',
+  'known_compound_source',
+  'identity_check_status',
+  'closest_known_compound_name',
+  'closest_known_compound_id',
+  'closest_known_compound_similarity',
+  'closest_known_compound_source',
+  'similarity_check_status',
+  'pubchem_exact_match',
+  'pubchem_cid',
+  'pubchem_preferred_name',
+  'pubchem_lookup_status',
+  'pubchem_cache_status',
+  'pubchem_warning',
+  'chembl_exact_match',
+  'chembl_molecule_id',
+  'chembl_pref_name',
+  'chembl_lookup_status',
+  'chembl_cache_status',
+  'chembl_warning',
+  'chembl_activity_count',
+  'chembl_target_count',
+  'chembl_target_summary',
+  'chembl_similarity_match',
+  'chembl_similarity_score',
+  'chembl_similarity_molecule_id',
+  'chembl_similarity_pref_name',
+  'chembl_similarity_status',
+  'patent_public_evidence_match',
+  'patent_source',
+  'patent_lookup_status',
+  'patent_cache_status',
+  'patent_record_count',
+  'patent_top_record_id',
+  'patent_top_record_title',
+  'patent_top_record_url',
+  'patent_query_identifier',
+  'patent_warning',
+  'evidence_summary_category',
+  'evidence_summary_notes',
+  'public_identity_signal',
+  'public_bioactivity_signal',
+  'patent_context_signal',
+  'local_similarity_signal',
+  'biopharma_context_level',
+  'recommended_review_focus',
+  'review_status',
+  'review_note',
+];
+
+function candidateRowsForStatuses(rows, statuses) {
+  const acceptedStatuses = new Set(statuses);
+  return rows.filter((row) => acceptedStatuses.has(row.review_status || 'unreviewed'));
+}
+
+function downloadCandidatePackageCsv(rows, filename) {
+  if (rows.length === 0) {
+    return;
+  }
+  const csvLines = [
+    candidateExportColumns.map(csvCell).join(','),
+    ...rows.map((row) => candidateExportColumns.map((column) => csvCell(row[column])).join(',')),
+  ];
+  downloadTextFile(csvLines.join('\n'), filename, 'text/csv;charset=utf-8');
+}
+
+function downloadCandidatePackageMarkdown(rows, filename) {
+  if (rows.length === 0) {
+    return;
+  }
+  downloadTextFile(buildCandidatePackageMarkdown(rows), filename, 'text/markdown;charset=utf-8');
+}
+
+function buildCandidatePackageMarkdown(rows) {
+  const selectedCount = candidateRowsForStatuses(rows, ['selected']).length;
+  const watchlistCount = candidateRowsForStatuses(rows, ['watchlist']).length;
+  const lines = [
+    '# MolOptima Candidate Handoff Package',
+    '',
+    'Computational screening summary for reviewed candidates. This package is not a clinical, legal, regulatory, safety, efficacy, ownership, commercialization, freedom-to-operate, patentability, or infringement conclusion.',
+    '',
+    '## Package summary',
+    markdownRows([
+      ['Candidate rows', rows.length],
+      ['Selected', selectedCount],
+      ['Watchlist', watchlistCount],
+      ['Included review metadata', 'Review status and notes included'],
+    ]),
+    '',
+  ];
+
+  rows.forEach((row, index) => {
+    lines.push(
+      `## ${index + 1}. ${markdownValue(row.molecule_id)}`,
+      markdownRows([
+        ['Review status', formatReviewStatus(row.review_status)],
+        ['Review note', row.review_note],
+        ['Priority score', row.priority_score],
+        ['Input SMILES', row.input_smiles],
+        ['Canonical SMILES', row.canonical_smiles],
+        ['BBB prediction', row.bbb_prediction],
+        ['BBB probability', row.bbb_probability],
+        ['Molecular weight', row.mw],
+        ['LogP', row.logp],
+        ['TPSA', row.tpsa],
+        ['QED', row.qed],
+        ['Known compound match', row.known_compound_match],
+        ['Closest known compound', formatClosestKnownCompound(row)],
+        ['PubChem match', formatPubChemMatch(row)],
+        ['ChEMBL context', formatChEMBLMatch(row)],
+        ['Patent-context signal', formatPatentSignal(row)],
+        ['Evidence summary', formatEvidenceCategory(row.evidence_summary_category)],
+        ['Biopharma context level', formatEvidenceCategory(row.biopharma_context_level)],
+        ['Recommended review focus', row.recommended_review_focus],
+      ]),
+      '',
+    );
+  });
+
+  return lines.join('\n');
+}
+
+function downloadTextFile(text, filename, mimeType) {
+  const blob = new Blob([text], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
