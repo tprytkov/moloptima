@@ -171,6 +171,9 @@ def test_prioritize_smiles_keeps_invalid_records_in_ranked_output():
     assert invalid["pubchem_lookup_status"] == "not_requested"
     assert invalid["chembl_lookup_status"] == "not_requested"
     assert invalid["patent_lookup_status"] == "not_requested"
+    assert invalid["structural_alert_status"] == "not_run_invalid_molecule"
+    assert invalid["pains_alert"] is False
+    assert invalid["brenk_alert"] is False
     assert invalid["evidence_summary_category"] == "invalid_molecule"
     assert invalid["biopharma_context_level"] == "invalid_molecule"
     assert ranked[0]["priority_score"] >= ranked[-1]["priority_score"]
@@ -233,6 +236,26 @@ def test_prioritize_smiles_adds_diversity_columns():
     assert ethanol["chemical_space_x"] is not None
     assert ethanol["chemical_space_y"] is not None
     assert invalid["chemical_space_status"] == "not_run_invalid_molecule"
+
+
+def test_prioritize_smiles_adds_structural_alert_columns():
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+    row = ranked[0]
+
+    assert row["structural_alert_status"] in {
+        "no_alerts",
+        "alerts_detected",
+        "alert_catalog_unavailable",
+    }
+    assert "structural_alert_count" in row
+    assert "structural_alert_categories" in row
+    assert "structural_alert_names" in row
+    assert row["pains_alert"] in {True, False}
+    assert row["brenk_alert"] in {True, False}
+    assert row["medchem_alert_summary"]
 
 
 def test_prioritize_smiles_adds_exact_known_compound_identity_match():
@@ -538,6 +561,13 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "patent_top_record_url" in header
     assert "patent_query_identifier" in header
     assert "patent_warning" in header
+    assert "structural_alert_status" in header
+    assert "structural_alert_count" in header
+    assert "structural_alert_categories" in header
+    assert "structural_alert_names" in header
+    assert "pains_alert" in header
+    assert "brenk_alert" in header
+    assert "medchem_alert_summary" in header
     assert "evidence_summary_category" in header
     assert "evidence_summary_notes" in header
     assert "public_identity_signal" in header

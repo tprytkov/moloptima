@@ -182,6 +182,13 @@ def test_sdf_export_writes_key_properties():
                     "tpsa": 20.23,
                     "chembl_molecule_id": "CHEMBL123",
                     "evidence_summary_category": "public_identity_context",
+                    "structural_alert_status": "alerts_detected",
+                    "structural_alert_count": 1,
+                    "structural_alert_categories": "PAINS",
+                    "structural_alert_names": "fake_alert",
+                    "pains_alert": True,
+                    "brenk_alert": False,
+                    "medchem_alert_summary": "Screening signal only.",
                     "diversity_cluster_id": 1,
                     "diversity_cluster_size": 2,
                     "diversity_representative": True,
@@ -209,6 +216,9 @@ def test_sdf_export_writes_key_properties():
     assert ">  <nearest_neighbor_similarity>" in sdf_text
     assert ">  <chemical_space_x>" in sdf_text
     assert ">  <chemical_space_method>" in sdf_text
+    assert ">  <structural_alert_status>" in sdf_text
+    assert ">  <pains_alert>" in sdf_text
+    assert "Screening signal only." in sdf_text
     assert ">  <review_note>" in sdf_text
     assert "Review public data." in sdf_text
 

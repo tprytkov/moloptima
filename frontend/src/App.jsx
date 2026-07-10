@@ -966,6 +966,11 @@ function BiopharmaIntelligencePage({ latestRunState, annotationsState, onSaveRev
                 value={summary.patentSignals}
                 detail={summary.patentLookupDetail}
               />
+              <RunSummaryCard
+                label="Structural alerts"
+                value={summary.structuralAlertCount}
+                detail={`${summary.painsAlertCount} PAINS, ${summary.brenkAlertCount} Brenk`}
+              />
               <RunSummaryCard label="No exact matches" value={summary.noExactMatches} />
               <RunSummaryCard
                 label="Avg closest-known similarity"
@@ -1035,6 +1040,9 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>review_note</TableCell>
             <TableCell>evidence_summary_category</TableCell>
             <TableCell>biopharma_context_level</TableCell>
+            <TableCell>structural_alerts</TableCell>
+            <TableCell>pains_alert</TableCell>
+            <TableCell>brenk_alert</TableCell>
             <TableCell>diversity_cluster</TableCell>
             <TableCell>cluster_representative</TableCell>
             <TableCell>nearest_neighbor_similarity</TableCell>
@@ -1080,6 +1088,9 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.biopharma_context_level)}</TableCell>
+                <TableCell>{formatStructuralAlertStatus(row)}</TableCell>
+                <TableCell>{formatBooleanLabel(row.pains_alert)}</TableCell>
+                <TableCell>{formatBooleanLabel(row.brenk_alert)}</TableCell>
                 <TableCell>{formatDiversityCluster(row)}</TableCell>
                 <TableCell>{formatBooleanLabel(row.diversity_representative)}</TableCell>
                 <TableCell>{formatNearestNeighbor(row)}</TableCell>
@@ -1141,6 +1152,10 @@ function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReview
               ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
               ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
               ['Recommended review focus', compound.recommended_review_focus],
+              ['Structural alerts', formatStructuralAlertStatus(compound)],
+              ['PAINS alert', formatBooleanLabel(compound.pains_alert)],
+              ['Brenk alert', formatBooleanLabel(compound.brenk_alert)],
+              ['Potential liability signal', compound.medchem_alert_summary],
               ['Diversity cluster', formatDiversityCluster(compound)],
               ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
               ['Nearest neighbor similarity', formatNearestNeighbor(compound)],
@@ -1194,6 +1209,7 @@ function buildBiopharmaSummary(rows) {
   const topEvidenceCategory = topCountLabel(evidenceCategoryCounts);
   const reviewSummary = formatReviewCounts(rows);
   const diversitySummary = buildDiversitySummary(rows);
+  const structuralAlertSummary = buildStructuralAlertSummary(rows);
   const highSimilarityCompounds = similarities.filter((value) => value >= highSimilarityThreshold).length;
   const averageSimilarity =
     similarities.length > 0
@@ -1209,6 +1225,9 @@ function buildBiopharmaSummary(rows) {
     patentSignals,
     patentLookupDetail: formatCounts(patentStatusCounts) || 'Patent-context lookup not run',
     reviewSummary,
+    structuralAlertCount: structuralAlertSummary.alertMoleculeCount,
+    painsAlertCount: structuralAlertSummary.painsAlertCount,
+    brenkAlertCount: structuralAlertSummary.brenkAlertCount,
     diversityClusterCount: diversitySummary.clusterCount,
     largestDiversityClusterSize: diversitySummary.largestClusterSize,
     evidenceSummaryTopCategory: topEvidenceCategory ? formatEvidenceCategory(topEvidenceCategory) : 'Not available',
@@ -1921,6 +1940,11 @@ function ReportsPage({ latestRunState, annotationsState, onSaveReviewAnnotation 
                   detail={summary.patentLookupDetail}
                 />
                 <RunSummaryCard
+                  label="Structural alerts"
+                  value={summary.structuralAlertCount}
+                  detail={`${summary.painsAlertCount} PAINS, ${summary.brenkAlertCount} Brenk`}
+                />
+                <RunSummaryCard
                   label="High-similarity compounds"
                   value={summary.highSimilarityCompounds}
                   detail={`Threshold >= ${highSimilarityThreshold.toFixed(2)}`}
@@ -2003,6 +2027,9 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>review_status</TableCell>
             <TableCell>review_note</TableCell>
             <TableCell>evidence_summary_category</TableCell>
+            <TableCell>structural_alerts</TableCell>
+            <TableCell>pains_alert</TableCell>
+            <TableCell>brenk_alert</TableCell>
             <TableCell>diversity_cluster</TableCell>
             <TableCell>cluster_representative</TableCell>
             <TableCell>nearest_neighbor_similarity</TableCell>
@@ -2041,6 +2068,9 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatReviewStatus(row.review_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
+                <TableCell>{formatStructuralAlertStatus(row)}</TableCell>
+                <TableCell>{formatBooleanLabel(row.pains_alert)}</TableCell>
+                <TableCell>{formatBooleanLabel(row.brenk_alert)}</TableCell>
                 <TableCell>{formatDiversityCluster(row)}</TableCell>
                 <TableCell>{formatBooleanLabel(row.diversity_representative)}</TableCell>
                 <TableCell>{formatNearestNeighbor(row)}</TableCell>
@@ -2079,6 +2109,8 @@ function buildReportsSummary(latestRunState) {
   const evidenceCategoryCounts = countValues(rows.map((row) => row.evidence_summary_category).filter(Boolean));
   const topEvidenceCategory = topCountLabel(evidenceCategoryCounts);
   const reviewSummary = formatReviewCounts(rows);
+  const diversitySummary = buildDiversitySummary(rows);
+  const structuralAlertSummary = buildStructuralAlertSummary(rows);
 
   return {
     jobId: latestRunState.job?.job_id ?? latestRunState.result?.job_id ?? 'Not available',
@@ -2095,6 +2127,9 @@ function buildReportsSummary(latestRunState) {
     patentSignals: rows.filter((row) => isTrueValue(row.patent_public_evidence_match)).length,
     patentLookupDetail: formatCounts(countValues(rows.map((row) => row.patent_lookup_status).filter(Boolean))) || 'Patent-context lookup not run',
     reviewSummary,
+    structuralAlertCount: structuralAlertSummary.alertMoleculeCount,
+    painsAlertCount: structuralAlertSummary.painsAlertCount,
+    brenkAlertCount: structuralAlertSummary.brenkAlertCount,
     diversityClusterCount: diversitySummary.clusterCount,
     largestDiversityClusterSize: diversitySummary.largestClusterSize,
     evidenceSummaryTopCategory: topEvidenceCategory ? formatEvidenceCategory(topEvidenceCategory) : 'Not available',
@@ -2251,6 +2286,9 @@ function CandidateExportPanel({ rows }) {
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Chemical diversity: {formatDiversitySummary(combinedRows)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Medicinal chemistry alerts: {formatStructuralAlertSummary(combinedRows)}
             </Typography>
           </Stack>
         </Stack>
@@ -2535,6 +2573,9 @@ const defaultEvidenceFilters = {
   public_bioactivity_signal: '',
   patent_context_signal: '',
   local_similarity_signal: '',
+  structural_alert_status: '',
+  pains_alert: '',
+  brenk_alert: '',
   priority_score_min: '',
   bbb_prediction: '',
   bbb_model_status: '',
@@ -2550,6 +2591,9 @@ const evidenceFilterFields = [
   ['public_bioactivity_signal', 'Public bioactivity signal'],
   ['patent_context_signal', 'Patent-context signal'],
   ['local_similarity_signal', 'Local similarity signal'],
+  ['structural_alert_status', 'Structural alerts'],
+  ['pains_alert', 'PAINS alert'],
+  ['brenk_alert', 'Brenk alert'],
   ['bbb_prediction', 'BBB prediction'],
   ['bbb_model_status', 'BBB status'],
   ['review_status', 'Review status'],
@@ -2575,6 +2619,9 @@ function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onReset, e
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Chemical diversity: {formatDiversitySummary(rows)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Medicinal chemistry alerts: {formatStructuralAlertSummary(rows)}
             </Typography>
           </Stack>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
@@ -2943,6 +2990,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   const hasPatentStatus = rows.some((row) => row.patent_lookup_status !== undefined);
   const hasEvidenceSynthesis = rows.some((row) => row.evidence_summary_category !== undefined);
   const hasDiversity = rows.some((row) => row.diversity_status !== undefined);
+  const hasStructuralAlerts = rows.some((row) => row.structural_alert_status !== undefined);
 
   return (
     <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -2955,6 +3003,9 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>Review status</TableCell>
             <TableCell>Review note</TableCell>
             {hasEvidenceSynthesis && <TableCell>Evidence summary</TableCell>}
+            {hasStructuralAlerts && <TableCell>Structural alerts</TableCell>}
+            {hasStructuralAlerts && <TableCell>PAINS alert</TableCell>}
+            {hasStructuralAlerts && <TableCell>Brenk alert</TableCell>}
             {hasDiversity && <TableCell>Diversity cluster</TableCell>}
             {hasDiversity && <TableCell>Nearest neighbor similarity</TableCell>}
             {hasIdentityStatus && <TableCell>Identity</TableCell>}
@@ -2994,6 +3045,15 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 {hasEvidenceSynthesis && (
                   <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
+                )}
+                {hasStructuralAlerts && (
+                  <TableCell>{formatStructuralAlertStatus(row)}</TableCell>
+                )}
+                {hasStructuralAlerts && (
+                  <TableCell>{formatBooleanLabel(row.pains_alert)}</TableCell>
+                )}
+                {hasStructuralAlerts && (
+                  <TableCell>{formatBooleanLabel(row.brenk_alert)}</TableCell>
                 )}
                 {hasDiversity && (
                   <TableCell>{formatDiversityCluster(row)}</TableCell>
@@ -3090,6 +3150,10 @@ function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotatio
                 ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
                 ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
                 ['Recommended review focus', compound.recommended_review_focus],
+                ['Structural alerts', formatStructuralAlertStatus(compound)],
+                ['PAINS alert', formatBooleanLabel(compound.pains_alert)],
+                ['Brenk alert', formatBooleanLabel(compound.brenk_alert)],
+                ['Potential liability signal', compound.medchem_alert_summary],
                 ['Diversity cluster', formatDiversityCluster(compound)],
                 ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
                 ['Nearest neighbor similarity', formatNearestNeighbor(compound)],
@@ -3370,6 +3434,37 @@ function formatDiversitySummary(rows) {
     return 'No diversity clusters available';
   }
   return `${summary.clusterCount} clusters, largest cluster ${summary.largestClusterSize}, ${summary.representativeCount} representatives`;
+}
+
+function buildStructuralAlertSummary(rows) {
+  const alertRows = rows ?? [];
+  return {
+    alertMoleculeCount: alertRows.filter(
+      (row) => row.structural_alert_status === 'alerts_detected' || numericValue(row.structural_alert_count) > 0,
+    ).length,
+    noAlertCount: alertRows.filter((row) => row.structural_alert_status === 'no_alerts').length,
+    painsAlertCount: alertRows.filter((row) => isTrueValue(row.pains_alert)).length,
+    brenkAlertCount: alertRows.filter((row) => isTrueValue(row.brenk_alert)).length,
+  };
+}
+
+function formatStructuralAlertSummary(rows) {
+  if (!rows || rows.length === 0) {
+    return 'Not available';
+  }
+  const summary = buildStructuralAlertSummary(rows);
+  return `${summary.alertMoleculeCount} with alerts, ${summary.noAlertCount} with no alerts, ${summary.painsAlertCount} PAINS, ${summary.brenkAlertCount} Brenk`;
+}
+
+function formatStructuralAlertStatus(row) {
+  if (!row || row.structural_alert_status === null || row.structural_alert_status === undefined || row.structural_alert_status === '') {
+    return 'Not available';
+  }
+  if (row.structural_alert_status === 'alerts_detected') {
+    const categories = row.structural_alert_categories ? `: ${row.structural_alert_categories}` : '';
+    return `${formatDetailValue(row.structural_alert_count)} alert(s)${categories}`;
+  }
+  return formatEvidenceCategory(row.structural_alert_status);
 }
 
 function formatDiversityCluster(row) {
@@ -3825,6 +3920,13 @@ const candidateExportColumns = [
   'local_similarity_signal',
   'biopharma_context_level',
   'recommended_review_focus',
+  'structural_alert_status',
+  'structural_alert_count',
+  'structural_alert_categories',
+  'structural_alert_names',
+  'pains_alert',
+  'brenk_alert',
+  'medchem_alert_summary',
   'diversity_cluster_id',
   'diversity_cluster_size',
   'diversity_representative',
@@ -3938,6 +4040,10 @@ function buildCandidatePackageMarkdown(rows) {
         ['Evidence summary', formatEvidenceCategory(row.evidence_summary_category)],
         ['Biopharma context level', formatEvidenceCategory(row.biopharma_context_level)],
         ['Recommended review focus', row.recommended_review_focus],
+        ['Structural alerts', formatStructuralAlertStatus(row)],
+        ['PAINS alert', formatBooleanLabel(row.pains_alert)],
+        ['Brenk alert', formatBooleanLabel(row.brenk_alert)],
+        ['Potential liability signal', row.medchem_alert_summary],
         ['Diversity cluster', formatDiversityCluster(row)],
         ['Cluster representative', formatBooleanLabel(row.diversity_representative)],
         ['Nearest neighbor similarity', formatNearestNeighbor(row)],
@@ -4003,6 +4109,10 @@ function buildCompoundMarkdownReport(compound) {
       ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
       ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
       ['Recommended review focus', compound.recommended_review_focus],
+      ['Structural alerts', formatStructuralAlertStatus(compound)],
+      ['PAINS alert', formatBooleanLabel(compound.pains_alert)],
+      ['Brenk alert', formatBooleanLabel(compound.brenk_alert)],
+      ['Potential liability signal', compound.medchem_alert_summary],
       ['Diversity cluster', formatDiversityCluster(compound)],
       ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
       ['Nearest neighbor similarity', formatNearestNeighbor(compound)],

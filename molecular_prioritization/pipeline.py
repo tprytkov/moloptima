@@ -26,6 +26,10 @@ from molecular_prioritization.diversity import (
 from molecular_prioritization.docking import parse_precomputed_docking_score
 from molecular_prioritization.prioritization import build_priority_record
 from molecular_prioritization.standardize import standardize_smiles
+from molecular_prioritization.structural_alerts import (
+    STRUCTURAL_ALERT_COLUMNS,
+    screen_structural_alerts,
+)
 from molecular_prioritization.synthetic_accessibility import heuristic_synthetic_accessibility
 
 
@@ -105,6 +109,10 @@ def prioritize_smiles(
             if enable_patent_lookup
             else patent_not_requested_result()
         )
+        structural_alerts = screen_structural_alerts(
+            standardized.canonical_smiles,
+            standardized.valid_molecule,
+        )
 
         ranked_records.append(
             build_priority_record(
@@ -121,6 +129,7 @@ def prioritize_smiles(
                 public_identity_match=public_identity_match,
                 chembl_bioactivity_match=chembl_bioactivity_match,
                 patent_context_match=patent_context_match,
+                structural_alerts=structural_alerts,
                 error=standardized.error,
             )
         )
@@ -217,6 +226,7 @@ def prioritize_csv(
             "local_similarity_signal",
             "biopharma_context_level",
             "recommended_review_focus",
+            *STRUCTURAL_ALERT_COLUMNS,
             *DIVERSITY_COLUMNS,
             *CHEMICAL_SPACE_COLUMNS,
             "docking_score",

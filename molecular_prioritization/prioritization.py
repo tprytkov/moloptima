@@ -18,6 +18,7 @@ from biopharma_intelligence.similarity import SimilarityMatchResult
 from molecular_prioritization.bbb_predictor import BBBPrediction
 from molecular_prioritization.descriptors import MolecularDescriptors
 from molecular_prioritization.docking import DockingResult
+from molecular_prioritization.structural_alerts import StructuralAlertResult
 from molecular_prioritization.synthetic_accessibility import SyntheticAccessibilityResult
 
 
@@ -67,6 +68,7 @@ def build_priority_record(
     public_identity_match: PublicIdentityResult | None = None,
     chembl_bioactivity_match: ChEMBLBioactivityResult | None = None,
     patent_context_match: PatentContextResult | None = None,
+    structural_alerts: StructuralAlertResult | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     """Build one row for a ranked molecular prioritization result."""
@@ -119,6 +121,15 @@ def build_priority_record(
     public_identity_values = public_identity_match or not_requested_result()
     chembl_bioactivity_values = chembl_bioactivity_match or chembl_not_requested_result()
     patent_context_values = patent_context_match or patent_not_requested_result()
+    structural_alert_values = structural_alerts or StructuralAlertResult(
+        structural_alert_status="not_run",
+        structural_alert_count=None,
+        structural_alert_categories="",
+        structural_alert_names="",
+        pains_alert=False,
+        brenk_alert=False,
+        medchem_alert_summary="Structural-alert screening was not run.",
+    )
 
     record = {
         "molecule_id": molecule_id,
@@ -173,6 +184,13 @@ def build_priority_record(
         "patent_top_record_url": patent_context_values.patent_top_record_url,
         "patent_query_identifier": patent_context_values.patent_query_identifier,
         "patent_warning": patent_context_values.patent_warning,
+        "structural_alert_status": structural_alert_values.structural_alert_status,
+        "structural_alert_count": structural_alert_values.structural_alert_count,
+        "structural_alert_categories": structural_alert_values.structural_alert_categories,
+        "structural_alert_names": structural_alert_values.structural_alert_names,
+        "pains_alert": structural_alert_values.pains_alert,
+        "brenk_alert": structural_alert_values.brenk_alert,
+        "medchem_alert_summary": structural_alert_values.medchem_alert_summary,
         "docking_score": docking_values.docking_score,
         "docking_status": docking_values.docking_status,
         "sa_score": synthetic_accessibility_values.sa_score,

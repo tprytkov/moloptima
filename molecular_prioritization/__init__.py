@@ -6,4 +6,5 @@ __all__ = [
     "pipeline",
     "prioritization",
     "standardize",
+    "structural_alerts",
 ]
