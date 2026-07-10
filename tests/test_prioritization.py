@@ -228,6 +228,11 @@ def test_prioritize_smiles_adds_diversity_columns():
     assert ethanol["diversity_cluster_size"] == 2
     assert duplicate["nearest_neighbor_similarity"] == 1.0
     assert invalid["diversity_status"] == "not_run_invalid_molecule"
+    assert ethanol["chemical_space_status"] == "projected"
+    assert ethanol["chemical_space_method"] == "morgan_fingerprint_pca"
+    assert ethanol["chemical_space_x"] is not None
+    assert ethanol["chemical_space_y"] is not None
+    assert invalid["chemical_space_status"] == "not_run_invalid_molecule"
 
 
 def test_prioritize_smiles_adds_exact_known_compound_identity_match():
@@ -547,6 +552,11 @@ def test_prioritize_csv_empty_input_keeps_synthetic_accessibility_schema(tmp_pat
     assert "nearest_neighbor_molecule_id" in header
     assert "nearest_neighbor_similarity" in header
     assert "diversity_status" in header
+    assert "chemical_space_x" in header
+    assert "chemical_space_y" in header
+    assert "chemical_space_status" in header
+    assert "chemical_space_method" in header
+    assert "chemical_space_warning" in header
 
 
 def test_prioritize_csv_writes_precomputed_docking_columns(tmp_path):

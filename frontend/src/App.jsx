@@ -47,6 +47,7 @@ const navigationItems = [
   { label: 'Molecular Prioritization', icon: ScienceOutlinedIcon },
   { label: 'Run History', icon: AssessmentOutlinedIcon },
   { label: 'Run Comparison', icon: AssessmentOutlinedIcon },
+  { label: 'Chemical Space', icon: InsightsOutlinedIcon },
   { label: 'Biopharma Intelligence', icon: InsightsOutlinedIcon },
   { label: 'Reports', icon: DescriptionOutlinedIcon },
   { label: 'Settings', icon: SettingsOutlinedIcon },
@@ -679,6 +680,16 @@ function ActivePage({
     );
   }
 
+  if (activeItem === 'Chemical Space') {
+    return (
+      <ChemicalSpacePage
+        latestRunState={latestRunState}
+        annotationsState={annotationsState}
+        onSaveReviewAnnotation={onSaveReviewAnnotation}
+      />
+    );
+  }
+
   if (activeItem === 'Reports') {
     return (
       <ReportsPage
@@ -1134,6 +1145,10 @@ function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReview
               ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
               ['Nearest neighbor similarity', formatNearestNeighbor(compound)],
               ['Diversity status', formatEvidenceCategory(compound.diversity_status)],
+              ['Chemical-space X', compound.chemical_space_x],
+              ['Chemical-space Y', compound.chemical_space_y],
+              ['Chemical-space method', compound.chemical_space_method],
+              ['Chemical-space status', formatEvidenceCategory(compound.chemical_space_status)],
               ['Exact known compound', compound.known_compound_name],
               ['PubChem exact match', formatPubChemMatch(compound)],
               ['PubChem lookup status', compound.pubchem_lookup_status],
@@ -1639,6 +1654,178 @@ function RunComparisonTable({ rows }) {
           ))}
         </TableBody>
       </Table>
+    </Box>
+  );
+}
+
+function ChemicalSpacePage({ latestRunState, annotationsState, onSaveReviewAnnotation }) {
+  const rows = latestRunState.result?.results ?? [];
+  const plottedRows = rows.filter(
+    (row) => numericValue(row.chemical_space_x) !== null && numericValue(row.chemical_space_y) !== null,
+  );
+  const skippedRows = rows.filter((row) => row.chemical_space_status === 'not_run_invalid_molecule').length;
+  const summary = buildChemicalSpaceSummary(rows);
+  const [selectedCompoundKey, setSelectedCompoundKey] = useState('');
+  const selectedCompound =
+    plottedRows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? plottedRows[0] ?? null;
+
+  useEffect(() => {
+    setSelectedCompoundKey('');
+  }, [latestRunState.result?.output_file]);
+
+  return (
+    <Stack spacing={3}>
+      <PageIntro
+        title="Chemical Space"
+        description="Inspect a 2D structural diversity map generated from Morgan fingerprints. This visualization is a cheminformatics triage view, not a biological activity map, clinical prediction, or legal conclusion."
+      />
+
+      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2.5}>
+          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+            <Stack spacing={0.75}>
+              <Typography variant="h2">Structural Diversity Map</Typography>
+              <Typography color="text.secondary">
+                {latestRunState.loading
+                  ? 'Loading latest completed prioritization run...'
+                  : rows.length > 0
+                  ? `${plottedRows.length} molecules plotted from the loaded run.`
+                  : 'Run molecular prioritization or load a saved run to generate a chemical-space map.'}
+              </Typography>
+            </Stack>
+            {latestRunState.job?.job_id && (
+              <Chip label={`Loaded run: ${latestRunState.job.job_id}`} color="secondary" variant="outlined" />
+            )}
+          </Stack>
+
+          {latestRunState.error && <Alert severity="warning">{latestRunState.error}</Alert>}
+
+          {rows.length > 0 ? (
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' },
+                gap: 1.5,
+              }}
+            >
+              <RunSummaryCard label="Plotted molecules" value={summary.plottedCount} />
+              <RunSummaryCard label="Skipped molecules" value={summary.skippedCount} detail="Invalid or unavailable structures" />
+              <RunSummaryCard label="Diversity clusters" value={summary.clusterCount} />
+              <RunSummaryCard label="Selected candidates" value={summary.selectedCount} detail="Selected or watchlist" />
+            </Box>
+          ) : !latestRunState.loading && (
+            <Alert severity="info">No loaded result rows are available for chemical-space visualization.</Alert>
+          )}
+        </Stack>
+      </Paper>
+
+      {rows.length > 0 && (
+        <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+          <Stack spacing={2}>
+            <Stack spacing={0.5}>
+              <Typography variant="h2">Morgan Fingerprint PCA Map</Typography>
+              <Typography color="text.secondary">
+                Point color follows diversity cluster, point size follows priority score, and outlined points mark selected/watchlist candidates. Generated from Morgan fingerprints.
+              </Typography>
+            </Stack>
+            {plottedRows.length > 0 ? (
+              <ChemicalSpacePlot
+                rows={plottedRows}
+                selectedCompoundKey={selectedCompound ? compoundRowKey(selectedCompound, plottedRows.indexOf(selectedCompound)) : ''}
+                onSelectCompound={setSelectedCompoundKey}
+              />
+            ) : (
+              <Alert severity="info">
+                No valid molecules have chemical-space coordinates. Invalid molecules were skipped.
+              </Alert>
+            )}
+            <Typography variant="caption" color="text.secondary">
+              Plotted {plottedRows.length} molecules, skipped {skippedRows}. Coordinates are a 2D PCA projection of fingerprint bits.
+            </Typography>
+          </Stack>
+        </Paper>
+      )}
+
+      {selectedCompound && (
+        <CompoundDetailPanel
+          compound={selectedCompound}
+          annotationsState={annotationsState}
+          onSaveReviewAnnotation={onSaveReviewAnnotation}
+        />
+      )}
+    </Stack>
+  );
+}
+
+function ChemicalSpacePlot({ rows, selectedCompoundKey, onSelectCompound }) {
+  const width = 760;
+  const height = 430;
+  const padding = 42;
+  const xValues = rows.map((row) => numericValue(row.chemical_space_x)).filter((value) => value !== null);
+  const yValues = rows.map((row) => numericValue(row.chemical_space_y)).filter((value) => value !== null);
+  const xDomain = paddedDomain(xValues);
+  const yDomain = paddedDomain(yValues);
+
+  return (
+    <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1, bgcolor: '#ffffff' }}>
+      <Box
+        component="svg"
+        role="img"
+        aria-label="Chemical-space scatter plot"
+        viewBox={`0 0 ${width} ${height}`}
+        sx={{ display: 'block', minWidth: 680, width: '100%', height: 'auto' }}
+      >
+        <rect x="0" y="0" width={width} height={height} fill="#ffffff" />
+        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#d9e2ea" />
+        <line x1={padding} y1={padding} x2={padding} y2={height - padding} stroke="#d9e2ea" />
+        <text x={padding} y={24} fill="#5b6777" fontSize="13">
+          Chemical space: Morgan fingerprint PCA
+        </text>
+        {rows.map((row, index) => {
+          const rowKey = compoundRowKey(row, index);
+          const xValue = numericValue(row.chemical_space_x) ?? 0;
+          const yValue = numericValue(row.chemical_space_y) ?? 0;
+          const priorityScore = numericValue(row.priority_score) ?? 0;
+          const x = scaleLinear(xValue, xDomain, [padding, width - padding]);
+          const y = scaleLinear(yValue, yDomain, [height - padding, padding]);
+          const radius = 5 + priorityScore * 7;
+          const selected = selectedCompoundKey === rowKey;
+          const candidateReviewed = row.review_status === 'selected' || row.review_status === 'watchlist';
+          return (
+            <g key={rowKey}>
+              <circle
+                cx={x}
+                cy={y}
+                r={selected ? radius + 3 : radius}
+                fill={chemicalClusterColor(row.diversity_cluster_id)}
+                stroke={candidateReviewed ? '#18232f' : selected ? '#145f74' : '#ffffff'}
+                strokeWidth={candidateReviewed || selected ? 2.5 : 1}
+                opacity={0.86}
+                tabIndex={0}
+                role="button"
+                onClick={() => onSelectCompound(rowKey)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelectCompound(rowKey);
+                  }
+                }}
+                style={{ cursor: 'pointer' }}
+              >
+                <title>{chemicalSpaceTooltip(row)}</title>
+              </circle>
+              {row.diversity_representative === true && (
+                <text x={x + radius + 3} y={y - radius - 3} fill="#18232f" fontSize="12" fontWeight="700">
+                  R
+                </text>
+              )}
+            </g>
+          );
+        })}
+        <text x={width - padding - 116} y={height - 14} fill="#5b6777" fontSize="12">
+          priority = point size
+        </text>
+      </Box>
     </Box>
   );
 }
@@ -2907,6 +3094,10 @@ function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotatio
                 ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
                 ['Nearest neighbor similarity', formatNearestNeighbor(compound)],
                 ['Diversity status', formatEvidenceCategory(compound.diversity_status)],
+                ['Chemical-space X', compound.chemical_space_x],
+                ['Chemical-space Y', compound.chemical_space_y],
+                ['Chemical-space method', compound.chemical_space_method],
+                ['Chemical-space status', formatEvidenceCategory(compound.chemical_space_status)],
               ]}
             />
             <DetailTable
@@ -3197,6 +3388,69 @@ function formatNearestNeighbor(row) {
   }
   const neighbor = row.nearest_neighbor_molecule_id ? `${row.nearest_neighbor_molecule_id}: ` : '';
   return `${neighbor}${row.nearest_neighbor_similarity}`;
+}
+
+function buildChemicalSpaceSummary(rows) {
+  const plottedRows = (rows ?? []).filter(
+    (row) => numericValue(row.chemical_space_x) !== null && numericValue(row.chemical_space_y) !== null,
+  );
+  const skippedCount = (rows ?? []).filter((row) => row.chemical_space_status === 'not_run_invalid_molecule').length;
+  const clusterIds = new Set(
+    plottedRows
+      .map((row) => row.diversity_cluster_id)
+      .filter((value) => value !== null && value !== undefined && value !== ''),
+  );
+  const selectedCount = plottedRows.filter(
+    (row) => row.review_status === 'selected' || row.review_status === 'watchlist',
+  ).length;
+  return {
+    plottedCount: plottedRows.length,
+    skippedCount,
+    clusterCount: clusterIds.size,
+    selectedCount,
+  };
+}
+
+function paddedDomain(values) {
+  if (!values || values.length === 0) {
+    return [-1, 1];
+  }
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  if (minValue === maxValue) {
+    return [minValue - 1, maxValue + 1];
+  }
+  const padding = (maxValue - minValue) * 0.08;
+  return [minValue - padding, maxValue + padding];
+}
+
+function scaleLinear(value, domain, range) {
+  const [domainMin, domainMax] = domain;
+  const [rangeMin, rangeMax] = range;
+  if (domainMax === domainMin) {
+    return (rangeMin + rangeMax) / 2;
+  }
+  return rangeMin + ((value - domainMin) / (domainMax - domainMin)) * (rangeMax - rangeMin);
+}
+
+function chemicalClusterColor(clusterId) {
+  const palette = ['#145f74', '#2f8f6f', '#7c5cbd', '#c77d2f', '#b84a62', '#5c7899', '#638a3c', '#9d6b2f'];
+  const numericCluster = Number(clusterId);
+  if (!Number.isFinite(numericCluster) || numericCluster <= 0) {
+    return '#8a97a8';
+  }
+  return palette[(numericCluster - 1) % palette.length];
+}
+
+function chemicalSpaceTooltip(row) {
+  return [
+    `Molecule: ${formatDetailValue(row.molecule_id)}`,
+    `Priority score: ${formatDetailValue(row.priority_score)}`,
+    `Diversity cluster: ${formatDiversityCluster(row)}`,
+    `Evidence: ${formatEvidenceCategory(row.evidence_summary_category)}`,
+    `Review status: ${formatReviewStatus(row.review_status)}`,
+    `Nearest neighbor similarity: ${formatNearestNeighbor(row)}`,
+  ].join('\n');
 }
 
 function formatEvidenceCategory(value) {
@@ -3577,6 +3831,11 @@ const candidateExportColumns = [
   'nearest_neighbor_molecule_id',
   'nearest_neighbor_similarity',
   'diversity_status',
+  'chemical_space_x',
+  'chemical_space_y',
+  'chemical_space_status',
+  'chemical_space_method',
+  'chemical_space_warning',
   'review_status',
   'review_note',
 ];
@@ -3682,6 +3941,9 @@ function buildCandidatePackageMarkdown(rows) {
         ['Diversity cluster', formatDiversityCluster(row)],
         ['Cluster representative', formatBooleanLabel(row.diversity_representative)],
         ['Nearest neighbor similarity', formatNearestNeighbor(row)],
+        ['Chemical-space X', row.chemical_space_x],
+        ['Chemical-space Y', row.chemical_space_y],
+        ['Chemical-space method', row.chemical_space_method],
       ]),
       '',
     );
@@ -3745,6 +4007,10 @@ function buildCompoundMarkdownReport(compound) {
       ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
       ['Nearest neighbor similarity', formatNearestNeighbor(compound)],
       ['Diversity status', formatEvidenceCategory(compound.diversity_status)],
+      ['Chemical-space X', compound.chemical_space_x],
+      ['Chemical-space Y', compound.chemical_space_y],
+      ['Chemical-space method', compound.chemical_space_method],
+      ['Chemical-space status', formatEvidenceCategory(compound.chemical_space_status)],
     ]),
     '',
     '## BBB prediction',

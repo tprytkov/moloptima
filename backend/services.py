@@ -63,6 +63,11 @@ SDF_EXPORT_PROPERTIES = [
     "nearest_neighbor_molecule_id",
     "nearest_neighbor_similarity",
     "diversity_status",
+    "chemical_space_x",
+    "chemical_space_y",
+    "chemical_space_status",
+    "chemical_space_method",
+    "chemical_space_warning",
     "review_status",
     "review_note",
 ]

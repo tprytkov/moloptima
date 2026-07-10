@@ -26,6 +26,21 @@ def test_diversity_analysis_adds_clusters_and_nearest_neighbors_for_valid_molecu
     assert all(row["nearest_neighbor_similarity"] is not None for row in analyzed)
 
 
+def test_chemical_space_coordinates_generated_for_multiple_valid_molecules():
+    rows = [
+        base_row("ethanol", "CCO", 0.7),
+        base_row("propanol", "CCCO", 0.6),
+        base_row("benzene", "c1ccccc1", 0.8),
+    ]
+
+    analyzed = add_diversity_analysis(rows)
+
+    assert all(row["chemical_space_status"] == "projected" for row in analyzed)
+    assert all(row["chemical_space_method"] == "morgan_fingerprint_pca" for row in analyzed)
+    assert all(row["chemical_space_x"] is not None for row in analyzed)
+    assert all(row["chemical_space_y"] is not None for row in analyzed)
+
+
 def test_identical_molecules_group_together_with_one_representative():
     rows = [
         base_row("duplicate_low", "CCO", 0.4),
@@ -49,6 +64,9 @@ def test_invalid_molecule_receives_not_run_status():
     assert analyzed[0]["diversity_cluster_id"] is None
     assert analyzed[0]["diversity_representative"] is False
     assert analyzed[0]["nearest_neighbor_similarity"] is None
+    assert analyzed[0]["chemical_space_status"] == "not_run_invalid_molecule"
+    assert analyzed[0]["chemical_space_x"] is None
+    assert analyzed[0]["chemical_space_y"] is None
 
 
 def test_diversity_cluster_assignment_is_deterministic():
@@ -68,6 +86,9 @@ def test_diversity_cluster_assignment_is_deterministic():
             row["diversity_representative"],
             row["nearest_neighbor_molecule_id"],
             row["nearest_neighbor_similarity"],
+            row["chemical_space_x"],
+            row["chemical_space_y"],
+            row["chemical_space_status"],
         )
         for row in first
     ] == [
@@ -77,6 +98,9 @@ def test_diversity_cluster_assignment_is_deterministic():
             row["diversity_representative"],
             row["nearest_neighbor_molecule_id"],
             row["nearest_neighbor_similarity"],
+            row["chemical_space_x"],
+            row["chemical_space_y"],
+            row["chemical_space_status"],
         )
         for row in second
     ]

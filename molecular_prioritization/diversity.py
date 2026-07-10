@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 from rdkit import Chem, DataStructs
 from rdkit.Chem import AllChem
 from rdkit.ML.Cluster import Butina
@@ -15,6 +16,14 @@ DIVERSITY_COLUMNS = [
     "nearest_neighbor_similarity",
     "diversity_status",
 ]
+CHEMICAL_SPACE_COLUMNS = [
+    "chemical_space_x",
+    "chemical_space_y",
+    "chemical_space_status",
+    "chemical_space_method",
+    "chemical_space_warning",
+]
+CHEMICAL_SPACE_METHOD = "morgan_fingerprint_pca"
 
 
 def add_diversity_analysis(
@@ -31,11 +40,13 @@ def add_diversity_analysis(
         smiles = str(row.get("canonical_smiles") or row.get("input_smiles") or "").strip()
         if row.get("valid_molecule") is not True or not smiles:
             row.update(_invalid_diversity_fields())
+            row.update(_invalid_chemical_space_fields())
             continue
 
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             row.update(_invalid_diversity_fields())
+            row.update(_invalid_chemical_space_fields())
             continue
 
         fingerprint = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
@@ -44,6 +55,7 @@ def add_diversity_analysis(
     if not valid_items:
         return annotated_rows
 
+    _add_chemical_space_coordinates(valid_items, annotated_rows)
     nearest_neighbors = _nearest_neighbors(valid_items, annotated_rows)
     clusters = _butina_clusters(valid_items, similarity_threshold=similarity_threshold)
     sorted_clusters = sorted(
@@ -79,6 +91,61 @@ def _invalid_diversity_fields() -> dict[str, object]:
         "nearest_neighbor_similarity": None,
         "diversity_status": "not_run_invalid_molecule",
     }
+
+
+def _invalid_chemical_space_fields() -> dict[str, object]:
+    return {
+        "chemical_space_x": None,
+        "chemical_space_y": None,
+        "chemical_space_status": "not_run_invalid_molecule",
+        "chemical_space_method": CHEMICAL_SPACE_METHOD,
+        "chemical_space_warning": "Chemical-space projection skipped for invalid molecule.",
+    }
+
+
+def _add_chemical_space_coordinates(
+    valid_items: list[tuple[int, object]],
+    rows: list[dict[str, object]],
+) -> None:
+    if len(valid_items) == 1:
+        row_index, _fingerprint = valid_items[0]
+        rows[row_index].update(
+            {
+                "chemical_space_x": 0.0,
+                "chemical_space_y": 0.0,
+                "chemical_space_status": "projected",
+                "chemical_space_method": CHEMICAL_SPACE_METHOD,
+                "chemical_space_warning": "Only one valid molecule available; point placed at origin.",
+            }
+        )
+        return
+
+    matrix = np.vstack([_fingerprint_array(fingerprint) for _, fingerprint in valid_items])
+    centered = matrix - matrix.mean(axis=0)
+    _u, singular_values, vt = np.linalg.svd(centered, full_matrices=False)
+    components = vt[:2]
+    coordinates = centered @ components.T
+    if coordinates.shape[1] == 1:
+        coordinates = np.column_stack([coordinates[:, 0], np.zeros(coordinates.shape[0])])
+
+    for coordinate_index, (row_index, _fingerprint) in enumerate(valid_items):
+        x_value = float(coordinates[coordinate_index, 0])
+        y_value = float(coordinates[coordinate_index, 1]) if coordinates.shape[1] > 1 else 0.0
+        rows[row_index].update(
+            {
+                "chemical_space_x": round(x_value, 6),
+                "chemical_space_y": round(y_value, 6),
+                "chemical_space_status": "projected",
+                "chemical_space_method": CHEMICAL_SPACE_METHOD,
+                "chemical_space_warning": "",
+            }
+        )
+
+
+def _fingerprint_array(fingerprint: object) -> np.ndarray:
+    array = np.zeros((2048,), dtype=float)
+    DataStructs.ConvertToNumpyArray(fingerprint, array)
+    return array
 
 
 def _nearest_neighbors(

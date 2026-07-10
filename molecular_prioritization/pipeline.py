@@ -18,7 +18,11 @@ from biopharma_intelligence.public_lookup import (
 from biopharma_intelligence.similarity import find_closest_known_compound
 from molecular_prioritization.bbb_predictor import load_bbb_predictor
 from molecular_prioritization.descriptors import calculate_descriptors
-from molecular_prioritization.diversity import DIVERSITY_COLUMNS, add_diversity_analysis
+from molecular_prioritization.diversity import (
+    CHEMICAL_SPACE_COLUMNS,
+    DIVERSITY_COLUMNS,
+    add_diversity_analysis,
+)
 from molecular_prioritization.docking import parse_precomputed_docking_score
 from molecular_prioritization.prioritization import build_priority_record
 from molecular_prioritization.standardize import standardize_smiles
@@ -214,6 +218,7 @@ def prioritize_csv(
             "biopharma_context_level",
             "recommended_review_focus",
             *DIVERSITY_COLUMNS,
+            *CHEMICAL_SPACE_COLUMNS,
             "docking_score",
             "docking_status",
             "sa_score",

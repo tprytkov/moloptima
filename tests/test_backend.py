@@ -188,6 +188,10 @@ def test_sdf_export_writes_key_properties():
                     "nearest_neighbor_molecule_id": "mol_2",
                     "nearest_neighbor_similarity": 0.91,
                     "diversity_status": "clustered",
+                    "chemical_space_x": 1.25,
+                    "chemical_space_y": -0.5,
+                    "chemical_space_status": "projected",
+                    "chemical_space_method": "morgan_fingerprint_pca",
                     "review_status": "watchlist",
                     "review_note": "Review public data.",
                 }
@@ -203,6 +207,8 @@ def test_sdf_export_writes_key_properties():
     assert "CHEMBL123" in sdf_text
     assert ">  <diversity_cluster_id>" in sdf_text
     assert ">  <nearest_neighbor_similarity>" in sdf_text
+    assert ">  <chemical_space_x>" in sdf_text
+    assert ">  <chemical_space_method>" in sdf_text
     assert ">  <review_note>" in sdf_text
     assert "Review public data." in sdf_text
 
