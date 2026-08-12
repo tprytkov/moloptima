@@ -6,6 +6,11 @@ from fastapi.testclient import TestClient
 
 from backend import services
 from backend.main import app
+from backend.schemas import ADMET_ENDPOINT_NAMES, ResultResponse
+from molecular_prioritization.admet_multitask_predictor import (
+    FROZEN_ENDPOINT_DEFINITIONS,
+    unavailable_admet_prediction,
+)
 
 
 def configure_temp_app_data(tmp_path: Path, monkeypatch):
@@ -355,6 +360,88 @@ def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
     assert latest_run["fallback_placeholder_used"] is True
     assert latest_run["bbb_model_status_values"] == ["model_unavailable"]
     assert latest_run["public_lookup_requested"] is False
+
+
+def test_result_api_preserves_all_ten_admet_endpoints(tmp_path: Path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    job_id = "admet-job"
+    output_path = services.JOB_OUTPUT_DIR / job_id / "ranked_results.csv"
+    output_path.parent.mkdir(parents=True)
+    endpoint_payload = unavailable_admet_prediction(
+        "CCO", prediction_status="available", warning=""
+    )["endpoints"]
+    for index, endpoint in enumerate(endpoint_payload.values()):
+        endpoint.update(
+            {
+                "raw_logit": float(index),
+                "raw_probability": 0.1 + index / 100,
+                "calibrated_probability": 0.2 + index / 100,
+                "binary_prediction": int(index % 2 == 0),
+            }
+        )
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "molecule_id",
+                "canonical_smiles",
+                "priority_score",
+                "admet_model_status",
+                "admet_warning",
+                "admet_predictions",
+            ],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "molecule_id": "ethanol",
+                "canonical_smiles": "CCO",
+                "priority_score": 0.629,
+                "admet_model_status": "model_available",
+                "admet_warning": "",
+                "admet_predictions": json.dumps(endpoint_payload),
+            }
+        )
+    write_completed_job(job_id)
+
+    response = TestClient(app).get(f"/api/results/{job_id}")
+
+    assert response.status_code == 200
+    row = response.json()["results"][0]
+    assert row["admet_model_status"] == "model_available"
+    assert row["admet_warning"] == ""
+    assert set(row["admet_predictions"]) == ADMET_ENDPOINT_NAMES
+    assert row["admet_predictions"] == endpoint_payload
+
+
+def test_result_schema_preserves_unavailable_and_invalid_admet_results():
+    for status in ("model_unavailable", "not_run_invalid_molecule"):
+        endpoints = unavailable_admet_prediction(
+            None, prediction_status=status, warning=f"{status} warning"
+        )["endpoints"]
+        response = ResultResponse(
+            job_id="job",
+            status="completed",
+            input_file="input.csv",
+            output_file="output.csv",
+            created_at="2026-01-01T00:00:00+00:00",
+            row_count=1,
+            results=[
+                {
+                    "admet_model_status": status,
+                    "admet_warning": f"{status} warning",
+                    "admet_predictions": endpoints,
+                }
+            ],
+        )
+
+        serialized = response.model_dump()["results"][0]
+        assert serialized["admet_model_status"] == status
+        assert set(serialized["admet_predictions"]) == set(FROZEN_ENDPOINT_DEFINITIONS)
+        assert all(
+            endpoint["calibrated_probability"] is None
+            for endpoint in serialized["admet_predictions"].values()
+        )
 
 
 def test_latest_job_endpoint_returns_latest_completed_job(tmp_path: Path, monkeypatch):

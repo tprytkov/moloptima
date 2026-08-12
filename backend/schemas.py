@@ -4,7 +4,49 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+ADMET_ENDPOINT_NAMES = {
+    "hia_hou",
+    "pgp_broccatelli",
+    "bbb_martins",
+    "cyp1a2_veith",
+    "cyp2c19_veith",
+    "cyp2c9_veith",
+    "cyp2d6_veith",
+    "cyp3a4_veith",
+    "herg_karim",
+    "ames",
+}
+
+
+class ADMETEndpointPrediction(BaseModel):
+    raw_logit: float | None = None
+    raw_probability: float | None
+    calibrated_probability: float | None
+    binary_prediction: int | None
+    display_name: str
+    positive_class_meaning: str
+    evidence_status: str
+    warning: str
+
+
+class MoleculeAnalysisResult(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    admet_model_status: str
+    admet_warning: str
+    admet_predictions: dict[str, ADMETEndpointPrediction]
+
+    @field_validator("admet_predictions")
+    @classmethod
+    def validate_frozen_endpoint_set(
+        cls, value: dict[str, ADMETEndpointPrediction]
+    ) -> dict[str, ADMETEndpointPrediction]:
+        if set(value) != ADMET_ENDPOINT_NAMES:
+            raise ValueError("ADMET predictions must contain the frozen 10-endpoint set")
+        return value
 
 
 class HealthResponse(BaseModel):
@@ -60,7 +102,7 @@ class ResultResponse(BaseModel):
     completed_at: str | None = None
     error_message: str = ""
     row_count: int
-    results: list[dict[str, Any]]
+    results: list[MoleculeAnalysisResult]
     target_references: dict[str, Any] | None = None
 
 

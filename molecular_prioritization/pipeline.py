@@ -27,6 +27,10 @@ from biopharma_intelligence.target_references import (
 )
 from biopharma_intelligence.similarity import find_closest_known_compound
 from molecular_prioritization.bbb_predictor import load_bbb_predictor
+from molecular_prioritization.admet_multitask_predictor import (
+    load_admet_multitask_predictor,
+    unavailable_admet_prediction,
+)
 from molecular_prioritization.descriptors import calculate_descriptors
 from molecular_prioritization.diversity import (
     CHEMICAL_SPACE_COLUMNS,
@@ -51,6 +55,7 @@ def prioritize_smiles(
     records: list[dict[str, str]],
     *,
     bbb_predictor: object | None = None,
+    admet_predictor: object | None = None,
     enable_public_lookup: bool = False,
     enable_pubchem_lookup: bool | None = None,
     enable_chembl_lookup: bool = False,
@@ -65,6 +70,15 @@ def prioritize_smiles(
     """Prioritize molecule records with molecule_id and smiles fields."""
 
     active_bbb_predictor = bbb_predictor or load_bbb_predictor()
+    admet_load_warning = ""
+    if admet_predictor is not None:
+        active_admet_predictor = admet_predictor
+    else:
+        try:
+            active_admet_predictor = load_admet_multitask_predictor()
+        except Exception as exc:
+            active_admet_predictor = None
+            admet_load_warning = f"Frozen ADMET model unavailable: {exc}"
     pubchem_lookup_enabled = enable_public_lookup if enable_pubchem_lookup is None else enable_pubchem_lookup
     active_public_lookup_client = public_lookup_client or PubChemClient()
     active_chembl_lookup_client = chembl_lookup_client or ChEMBLClient()
@@ -85,6 +99,37 @@ def prioritize_smiles(
             standardized.canonical_smiles,
             standardized.valid_molecule,
         )
+        if not standardized.valid_molecule or not standardized.canonical_smiles:
+            admet_prediction = unavailable_admet_prediction(
+                standardized.canonical_smiles,
+                prediction_status="not_run_invalid_molecule",
+                warning="ADMET prediction skipped for invalid molecule.",
+            )
+            admet_model_status = "not_run_invalid_molecule"
+            admet_warning = "ADMET prediction skipped for invalid molecule."
+        elif active_admet_predictor is None:
+            admet_prediction = unavailable_admet_prediction(
+                standardized.canonical_smiles,
+                prediction_status="model_unavailable",
+                warning=admet_load_warning,
+            )
+            admet_model_status = "model_unavailable"
+            admet_warning = admet_load_warning
+        else:
+            try:
+                admet_prediction = active_admet_predictor.predict(
+                    standardized.canonical_smiles
+                )
+                admet_model_status = "model_available"
+                admet_warning = ""
+            except Exception as exc:
+                admet_warning = f"Frozen ADMET prediction unavailable: {exc}"
+                admet_prediction = unavailable_admet_prediction(
+                    standardized.canonical_smiles,
+                    prediction_status="model_unavailable",
+                    warning=admet_warning,
+                )
+                admet_model_status = "model_unavailable"
         synthetic_accessibility = heuristic_synthetic_accessibility(
             standardized.canonical_smiles,
             standardized.valid_molecule,
@@ -132,25 +177,31 @@ def prioritize_smiles(
             standardized.valid_molecule,
         )
 
-        ranked_records.append(
-            build_priority_record(
-                molecule_id=molecule_id,
-                input_smiles=input_smiles,
-                canonical_smiles=standardized.canonical_smiles,
-                valid_molecule=standardized.valid_molecule,
-                descriptors=descriptors,
-                bbb_prediction=bbb_prediction,
-                synthetic_accessibility=synthetic_accessibility,
-                docking=docking,
-                identity_match=identity_match,
-                similarity_match=similarity_match,
-                public_identity_match=public_identity_match,
-                chembl_bioactivity_match=chembl_bioactivity_match,
-                patent_context_match=patent_context_match,
-                structural_alerts=structural_alerts,
-                error=standardized.error,
-            )
+        priority_record = build_priority_record(
+            molecule_id=molecule_id,
+            input_smiles=input_smiles,
+            canonical_smiles=standardized.canonical_smiles,
+            valid_molecule=standardized.valid_molecule,
+            descriptors=descriptors,
+            bbb_prediction=bbb_prediction,
+            synthetic_accessibility=synthetic_accessibility,
+            docking=docking,
+            identity_match=identity_match,
+            similarity_match=similarity_match,
+            public_identity_match=public_identity_match,
+            chembl_bioactivity_match=chembl_bioactivity_match,
+            patent_context_match=patent_context_match,
+            structural_alerts=structural_alerts,
+            error=standardized.error,
         )
+        priority_record.update(
+            {
+                "admet_model_status": admet_model_status,
+                "admet_warning": admet_warning,
+                "admet_predictions": admet_prediction["endpoints"],
+            }
+        )
+        ranked_records.append(priority_record)
 
     sorted_records = sorted(
         ranked_records,
@@ -287,6 +338,9 @@ def prioritize_csv(
             "bbb_probability",
             "bbb_model_status",
             "bbb_warning",
+            "admet_model_status",
+            "admet_warning",
+            "admet_predictions",
             "mw",
             "tpsa",
             "hba",
@@ -300,7 +354,15 @@ def prioritize_csv(
     with output_file.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(ranked_records)
+        writer.writerows(
+            {
+                key: json.dumps(value, separators=(",", ":"))
+                if isinstance(value, (dict, list))
+                else value
+                for key, value in row.items()
+            }
+            for row in ranked_records
+        )
 
     if target_reference_output_path is not None:
         reference_output = Path(target_reference_output_path)

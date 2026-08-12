@@ -38,6 +38,7 @@ import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
+import AdmetResultsSection from './AdmetResultsSection.jsx';
 
 const drawerWidth = 256;
 const apiBaseUrl = 'http://localhost:8000';
@@ -3317,6 +3318,7 @@ function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotatio
             onSaveReviewAnnotation={onSaveReviewAnnotation}
           />
           <StructurePreview compound={compound} />
+          <AdmetResultsSection compound={compound} />
 
           <Box
             sx={{

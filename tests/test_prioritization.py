@@ -1,3 +1,11 @@
+import pytest
+
+from molecular_prioritization import pipeline as pipeline_module
+from molecular_prioritization.admet_multitask_predictor import (
+    ADMETBundleError,
+    FROZEN_ENDPOINT_DEFINITIONS,
+    unavailable_admet_prediction,
+)
 from molecular_prioritization.bbb_predictor import BBBPrediction, UnavailableBBBPredictor
 from molecular_prioritization.descriptors import calculate_descriptors
 from molecular_prioritization.pipeline import prioritize_csv, prioritize_smiles
@@ -24,6 +32,38 @@ class FakeBBBPredictor:
             bbb_model_status="model_available",
             bbb_warning="",
         )
+
+
+class FakeADMETPredictor:
+    def __init__(self):
+        self.calls = []
+
+    def predict(self, smiles):
+        self.calls.append(smiles)
+        result = unavailable_admet_prediction(
+            smiles,
+            prediction_status="available",
+            warning="",
+        )
+        for index, endpoint in enumerate(result["endpoints"].values()):
+            endpoint.update(
+                {
+                    "raw_logit": float(index),
+                    "raw_probability": 0.25,
+                    "calibrated_probability": 0.75,
+                    "binary_prediction": 1,
+                }
+            )
+        return result
+
+
+@pytest.fixture(autouse=True)
+def use_synthetic_admet_predictor(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_admet_multitask_predictor",
+        lambda: FakeADMETPredictor(),
+    )
 
 
 class FakePublicLookupClient:
@@ -200,6 +240,69 @@ def test_prioritize_smiles_adds_bbb_placeholder_when_model_unavailable():
     assert ranked[0]["bbb_probability"] is None
     assert ranked[0]["bbb_model_status"] == "model_unavailable"
     assert ranked[0]["bbb_warning"] == "model cache missing"
+
+
+def test_prioritize_smiles_exposes_all_frozen_admet_endpoints():
+    admet_predictor = FakeADMETPredictor()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        admet_predictor=admet_predictor,
+    )
+
+    row = ranked[0]
+    assert admet_predictor.calls == ["CCO"]
+    assert row["admet_model_status"] == "model_available"
+    assert tuple(row["admet_predictions"]) == tuple(FROZEN_ENDPOINT_DEFINITIONS)
+    for endpoint in row["admet_predictions"].values():
+        assert endpoint["calibrated_probability"] == 0.75
+        assert endpoint["raw_probability"] == 0.25
+        assert endpoint["binary_prediction"] == 1
+        assert "evidence_status" in endpoint
+        assert "warning" in endpoint
+
+
+def test_prioritize_smiles_does_not_call_admet_model_for_invalid_molecule():
+    admet_predictor = FakeADMETPredictor()
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "invalid", "smiles": "C1CC"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+        admet_predictor=admet_predictor,
+    )
+
+    assert admet_predictor.calls == []
+    assert ranked[0]["admet_model_status"] == "not_run_invalid_molecule"
+    assert len(ranked[0]["admet_predictions"]) == 10
+    assert all(
+        endpoint["calibrated_probability"] is None
+        for endpoint in ranked[0]["admet_predictions"].values()
+    )
+
+
+def test_prioritize_smiles_degrades_when_admet_bundle_is_unavailable(monkeypatch):
+    def unavailable_loader():
+        raise ADMETBundleError("synthetic bundle failure")
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_admet_multitask_predictor",
+        unavailable_loader,
+    )
+
+    ranked = prioritize_smiles(
+        [{"molecule_id": "ethanol", "smiles": "CCO"}],
+        bbb_predictor=UnavailableBBBPredictor("model cache missing"),
+    )
+
+    assert ranked[0]["admet_model_status"] == "model_unavailable"
+    assert "synthetic bundle failure" in ranked[0]["admet_warning"]
+    assert len(ranked[0]["admet_predictions"]) == 10
+    assert all(
+        endpoint["binary_prediction"] is None
+        for endpoint in ranked[0]["admet_predictions"].values()
+    )
 
 
 def test_prioritize_smiles_adds_synthetic_accessibility_columns_for_valid_molecule():

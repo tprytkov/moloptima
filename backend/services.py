@@ -17,6 +17,9 @@ from rdkit.Chem import rdDepictor
 from rdkit.Chem.Draw import rdMolDraw2D
 
 from molecular_prioritization import model_sources
+from molecular_prioritization.admet_multitask_predictor import (
+    unavailable_admet_prediction,
+)
 from molecular_prioritization.pipeline import prioritize_csv
 
 
@@ -320,7 +323,7 @@ def get_result(job_id: str) -> dict[str, object]:
         )
 
     with output_path.open(newline="", encoding="utf-8") as handle:
-        rows = list(csv.DictReader(handle))
+        rows = [_deserialize_result_row(row) for row in csv.DictReader(handle)]
 
     return {
         **job,
@@ -328,6 +331,38 @@ def get_result(job_id: str) -> dict[str, object]:
         "results": rows,
         "target_references": read_target_reference_metadata(job),
     }
+
+
+def _deserialize_result_row(row: dict[str, str]) -> dict[str, object]:
+    """Restore nested ADMET output stored in the pipeline result CSV."""
+
+    restored: dict[str, object] = dict(row)
+    status_value = str(row.get("admet_model_status") or "model_unavailable")
+    warning_value = str(
+        row.get("admet_warning")
+        or "Frozen ADMET result was unavailable in the stored pipeline output."
+    )
+    fallback = unavailable_admet_prediction(
+        row.get("canonical_smiles"),
+        prediction_status=status_value,
+        warning=warning_value,
+    )["endpoints"]
+    serialized = row.get("admet_predictions", "")
+    if serialized:
+        try:
+            decoded = json.loads(serialized)
+        except (TypeError, json.JSONDecodeError):
+            decoded = None
+        if isinstance(decoded, dict):
+            for endpoint_name, endpoint_value in decoded.items():
+                if endpoint_name in fallback and isinstance(endpoint_value, dict):
+                    fallback[endpoint_name].update(endpoint_value)
+    restored["admet_model_status"] = status_value
+    restored["admet_warning"] = warning_value if status_value != "model_available" else str(
+        row.get("admet_warning") or ""
+    )
+    restored["admet_predictions"] = fallback
+    return restored
 
 
 def get_latest_completed_job() -> dict[str, object]:
