@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 ADMET_ENDPOINT_NAMES = {
     "hia_hou",
     "pgp_broccatelli",
-    "bbb_martins",
     "cyp1a2_veith",
     "cyp2c19_veith",
     "cyp2c9_veith",
@@ -18,6 +17,9 @@ ADMET_ENDPOINT_NAMES = {
     "cyp3a4_veith",
     "herg_karim",
     "ames",
+}
+ADMET_REGRESSION_ENDPOINT_NAMES = {
+    "caco2_wang", "lipophilicity_astrazeneca", "solubility_aqsoldb", "ppbr_az", "vdss_lombardo",
 }
 
 JobStatus = Literal[
@@ -51,12 +53,44 @@ class ADMETEndpointPrediction(BaseModel):
     warning: str
 
 
+class GMCBBBResult(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str = "model_unavailable"
+    seed_probabilities: dict[str, float] = Field(default_factory=dict)
+    ensemble_probability: float | None = None
+    ensemble_standard_deviation: float | None = None
+    threshold: Literal[0.5] = 0.5
+    threshold_status: Literal["provisional_raw"] = "provisional_raw"
+    raw_classification: Literal["BBB+", "BBB-"] | None = None
+    calibration_status: Literal["not_frozen"] = "not_frozen"
+    prediction: Literal["BBB+", "BBB-", "unavailable"] | None = None
+    warning: str = ""
+
+
+class ADMETRegressionResult(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str = "model_unavailable"
+    endpoints: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    @field_validator("endpoints")
+    @classmethod
+    def validate_regression_endpoint_set(cls, value: dict[str, dict[str, Any]]):
+        if value and set(value) != ADMET_REGRESSION_ENDPOINT_NAMES:
+            raise ValueError("ADMET regression must contain the frozen 5-endpoint set")
+        return value
+
+
 class MoleculeAnalysisResult(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     admet_model_status: str
     admet_warning: str
     admet_predictions: dict[str, ADMETEndpointPrediction]
+    bbb_result: GMCBBBResult = Field(default_factory=GMCBBBResult)
+    admet_regression: ADMETRegressionResult = Field(default_factory=ADMETRegressionResult)
+    admet_family_status: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("admet_predictions")
     @classmethod
@@ -64,7 +98,7 @@ class MoleculeAnalysisResult(BaseModel):
         cls, value: dict[str, ADMETEndpointPrediction]
     ) -> dict[str, ADMETEndpointPrediction]:
         if set(value) != ADMET_ENDPOINT_NAMES:
-            raise ValueError("ADMET predictions must contain the frozen 10-endpoint set")
+            raise ValueError("ADMET classification must contain the frozen 9-endpoint set")
         return value
 
 

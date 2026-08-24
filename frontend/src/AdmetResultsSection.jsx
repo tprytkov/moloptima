@@ -4,11 +4,19 @@ import { Alert, Box, Chip, Stack, Typography } from '@mui/material';
 export const ADMET_GROUPS = [
   {
     label: 'Absorption',
-    endpoints: ['hia_hou', 'pgp_broccatelli'],
+    endpoints: ['hia_hou', 'pgp_broccatelli', 'regression:caco2_wang'],
   },
   {
     label: 'Distribution',
-    endpoints: ['bbb_martins'],
+    endpoints: ['bbb:gmc_mpnn_bbb'],
+  },
+  {
+    label: 'Distribution / physicochemical',
+    endpoints: ['regression:ppbr_az', 'regression:vdss_lombardo', 'regression:lipophilicity_astrazeneca'],
+  },
+  {
+    label: 'Solubility',
+    endpoints: ['regression:solubility_aqsoldb'],
   },
   {
     label: 'Metabolism',
@@ -29,7 +37,12 @@ export const ADMET_GROUPS = [
 const ENDPOINT_LABELS = {
   hia_hou: 'HIA',
   pgp_broccatelli: 'P-gp inhibition',
-  bbb_martins: 'BBB',
+  gmc_mpnn_bbb: 'BBB permeability',
+  caco2_wang: 'Caco2 permeability',
+  lipophilicity_astrazeneca: 'Lipophilicity',
+  solubility_aqsoldb: 'Solubility',
+  ppbr_az: 'Plasma protein binding',
+  vdss_lombardo: 'Volume of distribution',
   cyp1a2_veith: 'CYP1A2 inhibition',
   cyp2c19_veith: 'CYP2C19 inhibition',
   cyp2c9_veith: 'CYP2C9 inhibition',
@@ -72,13 +85,52 @@ function formatBinaryPrediction(value) {
 }
 
 function evidenceLabel(endpointName, evidenceStatus) {
-  if (endpointName === 'bbb_martins') {
-    return 'Experimental / Low confidence';
-  }
   if (endpointName === 'hia_hou') {
     return 'Limited support';
   }
   return EVIDENCE_LABELS[evidenceStatus] ?? String(evidenceStatus || 'Evidence not specified');
+}
+
+function firstEnsembleValue(endpoint) {
+  const key = Object.keys(endpoint || {}).find((name) => name.startsWith('ensemble_mean_'));
+  return key ? endpoint[key] : null;
+}
+
+function RegressionEndpointCard({ endpointName, endpoint }) {
+  const value = firstEnsembleValue(endpoint);
+  const uncertaintyKey = Object.keys(endpoint || {}).find((name) => name.startsWith('seed_standard_deviation_'));
+  return (
+    <Box data-testid={`admet-endpoint-${endpointName}`} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2, bgcolor: 'background.paper' }}>
+      <Stack spacing={1}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>{ENDPOINT_LABELS[endpointName]}</Typography>
+        <Typography variant="h5" sx={{ fontWeight: 750 }}>{value ?? 'Not available'} {endpoint?.unit || ''}</Typography>
+        <Typography variant="caption" color="text.secondary">
+          Ensemble SD: {uncertaintyKey ? endpoint[uncertaintyKey] : 'Not available'} · {endpoint?.representation || 'representation unavailable'}
+        </Typography>
+        {endpoint?.warning ? <Alert severity="warning">{endpoint.warning}</Alert> : null}
+      </Stack>
+    </Box>
+  );
+}
+
+function BBBEndpointCard({ endpoint }) {
+  const rawClassification = endpoint?.raw_classification || endpoint?.prediction;
+  const threshold = Number(endpoint?.threshold ?? 0.5).toFixed(2);
+  const thresholdStatus = endpoint?.threshold_status === 'provisional_raw' ? 'Provisional raw' : 'Not specified';
+  const calibrationStatus = endpoint?.calibration_status === 'not_frozen' ? 'Not frozen' : 'Not specified';
+  return (
+    <Box data-testid="admet-endpoint-gmc_mpnn_bbb" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2, bgcolor: 'background.paper' }}>
+      <Stack spacing={1}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>BBB permeability · GMC-MPNN</Typography>
+        <Typography variant="caption" color="text.secondary">Raw ensemble probability</Typography>
+        <Typography variant="h5" sx={{ fontWeight: 750 }}>{formatCalibratedProbability(endpoint?.ensemble_probability)}</Typography>
+        <Typography variant="body2">Raw classification at {threshold}: {rawClassification || 'Not available'}</Typography>
+        <Typography variant="caption" color="text.secondary">Model disagreement / seed SD: {endpoint?.ensemble_standard_deviation ?? 'Not available'}</Typography>
+        <Typography variant="caption" color="text.secondary">Threshold status: {thresholdStatus} · Calibration status: {calibrationStatus}</Typography>
+        {endpoint?.warning || endpoint?.error_message ? <Alert severity="warning">{endpoint.warning || endpoint.error_message}</Alert> : null}
+      </Stack>
+    </Box>
+  );
 }
 
 function ADMETEndpointCard({ endpointName, endpoint }) {
@@ -110,7 +162,7 @@ function ADMETEndpointCard({ endpointName, endpoint }) {
           <Chip
             size="small"
             variant="outlined"
-            color={endpointName === 'bbb_martins' || endpointName === 'hia_hou' ? 'warning' : 'default'}
+            color={endpointName === 'hia_hou' ? 'warning' : 'default'}
             label={badgeLabel}
           />
         </Stack>
@@ -139,10 +191,10 @@ export default function AdmetResultsSection({ compound }) {
   const predictions = compound?.admet_predictions;
   const hasPredictions = predictions && typeof predictions === 'object' && !Array.isArray(predictions);
 
-  if (status === 'model_unavailable') {
+  if (status === 'model_unavailable' && !compound?.bbb_result && !compound?.admet_regression) {
     return (
       <Box aria-label="ADMET classification">
-        <Typography variant="h2" sx={{ mb: 1.25 }}>ADMET Classification</Typography>
+        <Typography variant="h2" sx={{ mb: 1.25 }}>ADMET Results</Typography>
         <Alert severity="warning">
           ADMET model unavailable. {compound?.admet_warning || 'Predictions are not available for this molecule.'}
         </Alert>
@@ -153,7 +205,7 @@ export default function AdmetResultsSection({ compound }) {
   if (status === 'not_run_invalid_molecule') {
     return (
       <Box aria-label="ADMET classification">
-        <Typography variant="h2" sx={{ mb: 1.25 }}>ADMET Classification</Typography>
+        <Typography variant="h2" sx={{ mb: 1.25 }}>ADMET Results</Typography>
         <Alert severity="info">
           ADMET prediction was not run because the molecule is invalid.
         </Alert>
@@ -164,7 +216,7 @@ export default function AdmetResultsSection({ compound }) {
   if (!hasPredictions) {
     return (
       <Box aria-label="ADMET classification">
-        <Typography variant="h2" sx={{ mb: 1.25 }}>ADMET Classification</Typography>
+        <Typography variant="h2" sx={{ mb: 1.25 }}>ADMET Results</Typography>
         <Alert severity="info">ADMET data is not available for this result.</Alert>
       </Box>
     );
@@ -173,9 +225,9 @@ export default function AdmetResultsSection({ compound }) {
   return (
     <Box aria-label="ADMET classification">
       <Stack spacing={0.75} sx={{ mb: 2 }}>
-        <Typography variant="h2">ADMET Classification</Typography>
+        <Typography variant="h2">ADMET Results</Typography>
         <Typography variant="body2" color="text.secondary">
-          Calibrated model probabilities are computational research signals, not clinical conclusions.
+          Model probabilities are computational research signals, not clinical conclusions. GMC BBB is shown as a raw, uncalibrated ensemble.
         </Typography>
         {compound?.admet_warning ? <Alert severity="warning">{compound.admet_warning}</Alert> : null}
       </Stack>
@@ -192,13 +244,16 @@ export default function AdmetResultsSection({ compound }) {
                 gap: 1.5,
               }}
             >
-              {group.endpoints.map((endpointName) => (
-                <ADMETEndpointCard
-                  key={endpointName}
-                  endpointName={endpointName}
-                  endpoint={predictions[endpointName]}
-                />
-              ))}
+              {group.endpoints.map((endpointKey) => {
+                if (endpointKey.startsWith('bbb:')) {
+                  return <BBBEndpointCard key={endpointKey} endpoint={compound?.bbb_result} />;
+                }
+                if (endpointKey.startsWith('regression:')) {
+                  const endpointName = endpointKey.split(':')[1];
+                  return <RegressionEndpointCard key={endpointKey} endpointName={endpointName} endpoint={compound?.admet_regression?.endpoints?.[endpointName]} />;
+                }
+                return <ADMETEndpointCard key={endpointKey} endpointName={endpointKey} endpoint={predictions[endpointKey]} />;
+              })}
             </Box>
           </Box>
         ))}

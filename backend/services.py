@@ -22,6 +22,7 @@ from molecular_prioritization import model_sources
 from molecular_prioritization.admet_multitask_predictor import (
     unavailable_admet_prediction,
 )
+from molecular_prioritization.admet_registry import CLASSIFICATION_ENDPOINTS
 from molecular_prioritization.pipeline import prioritize_csv
 from backend import job_runner
 
@@ -311,7 +312,13 @@ def _execute_prioritization_job(
         started_at=utc_timestamp(),
     )
     try:
-        rows = call_prioritize_csv(input_path, output_path, **options)
+        def progress_callback(**values: object) -> None:
+            update_job_metadata(job_id, **values)
+
+        rows = call_prioritize_csv(
+            input_path, output_path, progress_callback=progress_callback, **options
+        )
+        update_job_metadata(job_id, stage="prioritization")
         valid_count = sum(row.get("valid_molecule") is True for row in rows)
         invalid_count = len(rows) - valid_count
         admet_success_count = sum(
@@ -431,6 +438,7 @@ def _deserialize_result_row(row: dict[str, str]) -> dict[str, object]:
         prediction_status=status_value,
         warning=warning_value,
     )["endpoints"]
+    fallback = {name: fallback[name] for name in CLASSIFICATION_ENDPOINTS}
     serialized = row.get("admet_predictions", "")
     if serialized:
         try:
@@ -446,6 +454,16 @@ def _deserialize_result_row(row: dict[str, str]) -> dict[str, object]:
         row.get("admet_warning") or ""
     )
     restored["admet_predictions"] = fallback
+    for field in ("bbb_result", "admet_regression", "admet_family_status"):
+        serialized_nested = row.get(field, "")
+        if serialized_nested:
+            try:
+                decoded_nested = json.loads(serialized_nested)
+            except (TypeError, json.JSONDecodeError):
+                decoded_nested = {}
+            restored[field] = decoded_nested if isinstance(decoded_nested, dict) else {}
+        else:
+            restored[field] = {}
     return restored
 
 

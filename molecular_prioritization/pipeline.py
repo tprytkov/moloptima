@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 from pathlib import Path
+from typing import Callable
 
 from biopharma_intelligence.identity import check_known_compound_identity
 from biopharma_intelligence.public_lookup import (
@@ -26,7 +27,8 @@ from biopharma_intelligence.target_references import (
     target_reference_metadata,
 )
 from biopharma_intelligence.similarity import find_closest_known_compound
-from molecular_prioritization.bbb_predictor import load_bbb_predictor
+from molecular_prioritization.bbb_predictor import BBBPrediction, load_bbb_predictor
+from molecular_prioritization.admet_registry import ADMETRegistry, invalid_admet_result
 from molecular_prioritization.admet_multitask_predictor import (
     load_admet_multitask_predictor,
     unavailable_admet_prediction,
@@ -66,19 +68,24 @@ def prioritize_smiles(
     chembl_lookup_client: object | None = None,
     patent_lookup_client: object | None = None,
     target_reference_client: object | None = None,
+    admet_registry: object | None = None,
+    progress_callback: Callable[..., None] | None = None,
 ) -> list[dict[str, object]]:
     """Prioritize molecule records with molecule_id and smiles fields."""
 
-    active_bbb_predictor = bbb_predictor or load_bbb_predictor()
+    use_legacy_adapters = bbb_predictor is not None or admet_predictor is not None
+    active_bbb_predictor = (bbb_predictor or load_bbb_predictor()) if use_legacy_adapters else None
     admet_load_warning = ""
     if admet_predictor is not None:
         active_admet_predictor = admet_predictor
-    else:
+    elif use_legacy_adapters:
         try:
             active_admet_predictor = load_admet_multitask_predictor()
         except Exception as exc:
             active_admet_predictor = None
             admet_load_warning = f"Frozen ADMET model unavailable: {exc}"
+    else:
+        active_admet_predictor = None
     pubchem_lookup_enabled = enable_public_lookup if enable_pubchem_lookup is None else enable_pubchem_lookup
     active_public_lookup_client = public_lookup_client or PubChemClient()
     active_chembl_lookup_client = chembl_lookup_client or ChEMBLClient()
@@ -86,27 +93,85 @@ def prioritize_smiles(
     active_target_reference_client = target_reference_client or TargetReferenceClient()
     ranked_records: list[dict[str, object]] = []
 
+    prepared_records = []
     for index, record in enumerate(records, start=1):
         molecule_id = record.get("molecule_id") or f"mol_{index}"
+        standardized = standardize_smiles(record.get("smiles", ""))
+        prepared_records.append((record, molecule_id, standardized))
+
+    valid_prepared = [
+        item for item in prepared_records if item[2].valid_molecule and item[2].canonical_smiles
+    ]
+    valid_count = len(valid_prepared)
+    invalid_count = len(prepared_records) - valid_count
+    if progress_callback:
+        progress_callback(
+            stage="admet", valid_count=valid_count, invalid_count=invalid_count,
+            processed_count=invalid_count, admet_success_count=0, admet_failure_count=0,
+        )
+
+    common_by_index: dict[int, dict[str, object]] = {}
+    if not use_legacy_adapters and valid_prepared:
+        engine = admet_registry or ADMETRegistry()
+        valid_results = engine.predict_batch(
+            [str(item[1]) for item in valid_prepared],
+            [str(item[2].canonical_smiles) for item in valid_prepared],
+        )
+        valid_positions = [
+            index for index, item in enumerate(prepared_records)
+            if item[2].valid_molecule and item[2].canonical_smiles
+        ]
+        common_by_index = dict(zip(valid_positions, valid_results, strict=True))
+        successes = sum(item.get("status") == "success" for item in valid_results)
+        if progress_callback:
+            progress_callback(
+                stage="admet", valid_count=valid_count, invalid_count=invalid_count,
+                processed_count=len(prepared_records), admet_success_count=successes,
+                admet_failure_count=valid_count - successes,
+            )
+
+    for prepared_index, (record, molecule_id, standardized) in enumerate(prepared_records):
         input_smiles = record.get("smiles", "")
-        standardized = standardize_smiles(input_smiles)
         descriptors = (
             calculate_descriptors(standardized.canonical_smiles)
             if standardized.canonical_smiles
             else None
         )
-        bbb_prediction = active_bbb_predictor.predict(
-            standardized.canonical_smiles,
-            standardized.valid_molecule,
-        )
+        common_admet = None
+        if use_legacy_adapters:
+            bbb_prediction = active_bbb_predictor.predict(
+                standardized.canonical_smiles, standardized.valid_molecule,
+            )
+        else:
+            common_admet = (
+                common_by_index.get(prepared_index)
+                if standardized.valid_molecule and standardized.canonical_smiles
+                else invalid_admet_result(str(molecule_id), standardized.canonical_smiles)
+            )
+            bbb_result = common_admet["bbb"]
+            bbb_label = bbb_result.get("raw_classification") or bbb_result.get("prediction")
+            bbb_prediction = BBBPrediction(
+                bbb_prediction="high" if bbb_label == "BBB+" else "low" if bbb_label == "BBB-" else "unavailable",
+                bbb_probability=bbb_result.get("ensemble_probability"),
+                bbb_model_status="model_available" if bbb_result.get("status") == "success" else str(bbb_result.get("status")),
+                bbb_warning=str(bbb_result.get("warning") or bbb_result.get("error_message") or ""),
+            )
         if not standardized.valid_molecule or not standardized.canonical_smiles:
-            admet_prediction = unavailable_admet_prediction(
-                standardized.canonical_smiles,
-                prediction_status="not_run_invalid_molecule",
-                warning="ADMET prediction skipped for invalid molecule.",
+            admet_prediction = (
+                common_admet["classification"]
+                if common_admet
+                else unavailable_admet_prediction(
+                    standardized.canonical_smiles,
+                    prediction_status="not_run_invalid_molecule",
+                    warning="ADMET prediction skipped for invalid molecule.",
+                )
             )
             admet_model_status = "not_run_invalid_molecule"
             admet_warning = "ADMET prediction skipped for invalid molecule."
+        elif not use_legacy_adapters:
+            admet_prediction = common_admet["classification"]
+            admet_model_status = "model_available" if common_admet["status"] == "success" else str(common_admet["status"])
+            admet_warning = str(common_admet.get("warning") or "")
         elif active_admet_predictor is None:
             admet_prediction = unavailable_admet_prediction(
                 standardized.canonical_smiles,
@@ -199,6 +264,9 @@ def prioritize_smiles(
                 "admet_model_status": admet_model_status,
                 "admet_warning": admet_warning,
                 "admet_predictions": admet_prediction["endpoints"],
+                "bbb_result": common_admet["bbb"] if common_admet else {},
+                "admet_regression": common_admet["regression"] if common_admet else {},
+                "admet_family_status": common_admet["family_status"] if common_admet else {},
             }
         )
         ranked_records.append(priority_record)
@@ -241,6 +309,7 @@ def prioritize_csv(
     enable_target_reference_discovery: bool = False,
     target_context: dict[str, object] | None = None,
     target_reference_output_path: str | Path | None = None,
+    progress_callback: Callable[..., None] | None = None,
 ) -> list[dict[str, object]]:
     """Read molecule records from CSV, write ranked results, and return rows."""
 
@@ -258,6 +327,7 @@ def prioritize_csv(
         enable_patent_lookup=enable_patent_lookup,
         enable_target_reference_discovery=enable_target_reference_discovery,
         target_context=target_context,
+        progress_callback=progress_callback,
     )
     reference_metadata = getattr(
         prioritize_smiles,

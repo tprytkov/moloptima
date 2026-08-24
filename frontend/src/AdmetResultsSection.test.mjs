@@ -42,7 +42,6 @@ function completeCompound() {
     admet_predictions: {
       hia_hou: endpoint('HIA', 0.938686, 'limited_support', 'Limited support for HIA.'),
       pgp_broccatelli: endpoint('P-gp inhibition', 0.029999, 'moderate'),
-      bbb_martins: endpoint('BBB', 0.877144, 'experimental_low_confidence', 'Experimental BBB evidence.'),
       cyp1a2_veith: endpoint('CYP1A2 inhibition', 0.048598, 'strong'),
       cyp2c19_veith: endpoint('CYP2C19 inhibition', 0.025956, 'strong'),
       cyp2c9_veith: endpoint('CYP2C9 inhibition', 0.022443, 'strong_ranking'),
@@ -51,6 +50,27 @@ function completeCompound() {
       herg_karim: endpoint('hERG liability', 0.149816, 'moderate_good'),
       ames: endpoint('AMES mutagenicity', 0.218461, 'moderate'),
     },
+    bbb_result: {
+      status: 'success', ensemble_probability: 0.877144,
+      ensemble_standard_deviation: 0.04, threshold: 0.5,
+      threshold_status: 'provisional_raw', raw_classification: 'BBB+',
+      calibration_status: 'not_frozen', prediction: 'BBB+',
+    },
+    admet_regression: {
+      status: 'success',
+      endpoints: Object.fromEntries([
+        ['caco2_wang', 'log10_papp_cm_per_s'],
+        ['lipophilicity_astrazeneca', 'log_ratio'],
+        ['solubility_aqsoldb', 'log_mol_per_l'],
+        ['ppbr_az', 'percent_bound'],
+        ['vdss_lombardo', 'l_per_kg'],
+      ].map(([name, suffix]) => [name, {
+        [`ensemble_mean_${suffix}`]: 1.25,
+        [`seed_standard_deviation_${suffix}`]: 0.1,
+        unit: suffix,
+        representation: suffix,
+      }])),
+    },
   };
 }
 
@@ -58,7 +78,7 @@ function render(compound) {
   return renderToStaticMarkup(React.createElement(AdmetResultsSection, { compound }));
 }
 
-test('renders all four groups and all ten frozen endpoints', () => {
+test('renders the final ADMET groups and all 15 production endpoints', () => {
   const html = render(completeCompound());
 
   for (const group of ADMET_GROUPS) {
@@ -67,6 +87,11 @@ test('renders all four groups and all ten frozen endpoints', () => {
   for (const endpointName of Object.keys(completeCompound().admet_predictions)) {
     assert.match(html, new RegExp(`data-testid="admet-endpoint-${endpointName}"`));
   }
+  assert.match(html, /data-testid="admet-endpoint-gmc_mpnn_bbb"/);
+  for (const endpointName of Object.keys(completeCompound().admet_regression.endpoints)) {
+    assert.match(html, new RegExp(`data-testid="admet-endpoint-${endpointName}"`));
+  }
+  assert.doesNotMatch(html, /bbb_martins/);
 });
 
 test('renders calibrated probability as the primary percentage and omits raw probability', () => {
@@ -78,11 +103,16 @@ test('renders calibrated probability as the primary percentage and omits raw pro
   assert.doesNotMatch(html, /SAFE|UNSAFE/);
 });
 
-test('makes BBB low confidence and HIA limited support visible', () => {
+test('makes GMC BBB ensemble details and HIA limited support visible', () => {
   const html = render(completeCompound());
 
-  assert.match(html, /Experimental \/ Low confidence/);
-  assert.match(html, /Experimental BBB evidence\./);
+  assert.match(html, /GMC-MPNN/);
+  assert.match(html, /Raw ensemble probability/);
+  assert.match(html, /Raw classification at 0\.50: BBB\+/);
+  assert.match(html, /Model disagreement \/ seed SD: 0\.04/);
+  assert.match(html, /Threshold status: Provisional raw/);
+  assert.match(html, /Calibration status: Not frozen/);
+  assert.doesNotMatch(html, /production threshold|final threshold|optimized threshold/i);
   assert.match(html, /Limited support/);
   assert.match(html, /Limited support for HIA\./);
 });
