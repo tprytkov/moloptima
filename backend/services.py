@@ -6,7 +6,9 @@ import csv
 import inspect
 import io
 import json
+import os
 import shutil
+from threading import RLock
 from pathlib import Path
 from uuid import uuid4
 from datetime import datetime, timezone
@@ -21,6 +23,7 @@ from molecular_prioritization.admet_multitask_predictor import (
     unavailable_admet_prediction,
 )
 from molecular_prioritization.pipeline import prioritize_csv
+from backend import job_runner
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +33,14 @@ JOB_OUTPUT_DIR = BACKEND_DIR / "job_outputs"
 JOB_METADATA_DIR = BACKEND_DIR / "job_metadata"
 JOB_ANNOTATION_DIR = BACKEND_DIR / "job_annotations"
 REQUIRED_COLUMNS = {"molecule_id", "smiles"}
+MAX_BATCH_SIZE = 1000
+TERMINAL_JOB_STATUSES = {
+    "completed",
+    "completed_with_warnings",
+    "failed",
+    "cancelled",
+}
+_metadata_lock = RLock()
 REVIEW_STATUSES = {"unreviewed", "selected", "watchlist", "deprioritized", "rejected"}
 MAX_REVIEW_NOTE_LENGTH = 500
 SDF_EXPORT_PROPERTIES = [
@@ -122,7 +133,11 @@ def save_upload(file: UploadFile) -> dict[str, object]:
     with upload_path.open("wb") as handle:
         shutil.copyfileobj(file.file, handle)
 
-    rows = validate_molecule_csv(upload_path)
+    try:
+        rows = validate_molecule_csv(upload_path)
+    except Exception:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
 
     return {
         "upload_id": upload_id,
@@ -217,10 +232,11 @@ def run_prioritization_job(
     enable_target_reference_discovery: bool = False,
     target_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    """Run the existing molecular prioritization pipeline for one upload."""
+    """Create and enqueue one local molecular prioritization job."""
 
     pubchem_lookup_requested = enable_public_lookup if enable_pubchem_lookup is None else enable_pubchem_lookup
     input_path = find_upload_path(upload_id)
+    submitted_count = validate_molecule_csv(input_path)
     job_id = uuid4().hex
     job_dir = JOB_OUTPUT_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -230,13 +246,27 @@ def run_prioritization_job(
     metadata = {
         "job_id": job_id,
         "upload_id": upload_id,
-        "status": "running",
+        "status": "queued",
+        "stage": "queued",
         "input_file": relative_path(input_path),
         "output_file": relative_path(output_path),
         "created_at": utc_timestamp(),
+        "started_at": None,
         "completed_at": None,
         "error_message": "",
         "row_count": 0,
+        "submitted_count": submitted_count,
+        "valid_count": None,
+        "invalid_count": None,
+        "duplicate_count": None,
+        "processed_count": 0,
+        "total_count": submitted_count,
+        "admet_success_count": 0,
+        "admet_failure_count": 0,
+        "docking_success_count": 0,
+        "docking_failure_count": 0,
+        "warning_count": 0,
+        "cancellation_requested": False,
         "public_lookup_requested": pubchem_lookup_requested or enable_chembl_lookup or enable_patent_lookup,
         "pubchem_lookup_requested": pubchem_lookup_requested,
         "chembl_lookup_requested": enable_chembl_lookup,
@@ -246,48 +276,96 @@ def run_prioritization_job(
         "target_reference_file": relative_path(target_reference_output_path),
     }
     write_job_metadata(metadata)
+    job_runner.submit(
+        job_id,
+        _execute_prioritization_job,
+        job_id,
+        input_path,
+        output_path,
+        enable_public_lookup=enable_public_lookup,
+        enable_pubchem_lookup=pubchem_lookup_requested,
+        enable_chembl_lookup=enable_chembl_lookup,
+        enable_patent_lookup=enable_patent_lookup,
+        enable_target_reference_discovery=enable_target_reference_discovery,
+        target_context=clean_target_context,
+        target_reference_output_path=target_reference_output_path,
+    )
+    return metadata
 
+
+def _execute_prioritization_job(
+    job_id: str,
+    input_path: Path,
+    output_path: Path,
+    **options: object,
+) -> None:
+    """Run the unchanged scientific pipeline and persist terminal metadata."""
+
+    current = read_job_metadata(job_id)
+    if current is None or current.get("status") == "cancelled":
+        return
+    update_job_metadata(
+        job_id,
+        status="running",
+        stage="prioritization",
+        started_at=utc_timestamp(),
+    )
     try:
-        rows = call_prioritize_csv(
-            input_path,
-            output_path,
-            enable_public_lookup=enable_public_lookup,
-            enable_pubchem_lookup=pubchem_lookup_requested,
-            enable_chembl_lookup=enable_chembl_lookup,
-            enable_patent_lookup=enable_patent_lookup,
-            enable_target_reference_discovery=enable_target_reference_discovery,
-            target_context=clean_target_context,
-            target_reference_output_path=target_reference_output_path,
+        rows = call_prioritize_csv(input_path, output_path, **options)
+        valid_count = sum(row.get("valid_molecule") is True for row in rows)
+        invalid_count = len(rows) - valid_count
+        admet_success_count = sum(
+            row.get("admet_model_status") == "model_available" for row in rows
+        )
+        admet_failure_count = sum(
+            row.get("valid_molecule") is True
+            and row.get("admet_model_status") != "model_available"
+            for row in rows
+        )
+        warning_count = _pipeline_warning_count(rows)
+        metadata = read_job_metadata(job_id)
+        if metadata is None:  # pragma: no cover - job metadata is created before submission
+            raise RuntimeError(f"Job metadata disappeared during execution: {job_id}")
+        model_sources.update_run_manifest(
+            job_id=job_id,
+            output_file=str(metadata["output_file"]),
+            rows=rows,
+        )
+        update_job_metadata(
+            job_id,
+            status="completed_with_warnings" if warning_count else "completed",
+            stage="completed",
+            completed_at=utc_timestamp(),
+            row_count=len(rows),
+            valid_count=valid_count,
+            invalid_count=invalid_count,
+            processed_count=len(rows),
+            admet_success_count=admet_success_count,
+            admet_failure_count=admet_failure_count,
+            warning_count=warning_count,
         )
     except Exception as exc:
-        metadata.update(
-            {
-                "status": "failed",
-                "completed_at": utc_timestamp(),
-                "error_message": str(exc),
-                "row_count": 0,
-            }
+        update_job_metadata(
+            job_id,
+            status="failed",
+            stage="completed",
+            completed_at=utc_timestamp(),
+            error_message=str(exc),
         )
-        write_job_metadata(metadata)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Prioritization failed: {exc}",
-        ) from exc
 
-    metadata.update(
-        {
-            "status": "completed",
-            "completed_at": utc_timestamp(),
-            "row_count": len(rows),
-        }
-    )
-    model_sources.update_run_manifest(
-        job_id=job_id,
-        output_file=metadata["output_file"],
-        rows=rows,
-    )
-    write_job_metadata(metadata)
-    return metadata
+
+def _pipeline_warning_count(rows: list[dict[str, object]]) -> int:
+    """Count explicit current-pipeline failure/unavailable warning states."""
+
+    count = 0
+    for row in rows:
+        count += row.get("bbb_model_status") == "model_unavailable"
+        count += row.get("admet_model_status") == "model_unavailable"
+        count += row.get("pubchem_lookup_status") == "lookup_failed"
+        count += row.get("chembl_lookup_status") == "lookup_failed"
+        count += row.get("patent_lookup_status") == "lookup_failed"
+        count += row.get("structural_alert_status") == "alert_catalog_unavailable"
+    return int(count)
 
 
 def call_prioritize_csv(input_path: Path, output_path: Path, **options: object) -> list[dict[str, object]]:
@@ -312,8 +390,14 @@ def get_result(job_id: str) -> dict[str, object]:
             detail="Job not found.",
         )
 
-    if job["status"] == "failed":
+    if job["status"] in {"failed", "cancelled"}:
         return {**job, "results": []}
+
+    if job["status"] not in {"completed", "completed_with_warnings"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Results are not ready; job status is {job['status']}.",
+        )
 
     output_path = PROJECT_ROOT / str(job["output_file"])
     if not output_path.exists():
@@ -371,7 +455,8 @@ def get_latest_completed_job() -> dict[str, object]:
     completed_jobs = [
         metadata
         for metadata in read_all_job_metadata()
-        if metadata.get("status") == "completed" and metadata.get("completed_at")
+        if metadata.get("status") in {"completed", "completed_with_warnings"}
+        and metadata.get("completed_at")
     ]
     if not completed_jobs:
         return {"job": None}
@@ -381,21 +466,47 @@ def get_latest_completed_job() -> dict[str, object]:
 
 
 def get_job_history(limit: int = 25) -> dict[str, object]:
-    """Return recent completed prioritization job metadata without result rows."""
+    """Return recent prioritization job metadata for every supported status."""
 
-    completed_jobs = [
-        metadata
-        for metadata in read_all_job_metadata()
-        if metadata.get("status") == "completed" and metadata.get("completed_at")
-    ]
+    jobs = read_all_job_metadata()
     sorted_jobs = sorted(
-        completed_jobs,
-        key=lambda metadata: str(metadata.get("completed_at", "")),
+        jobs,
+        key=lambda metadata: str(metadata.get("created_at", "")),
         reverse=True,
     )
     return {
         "jobs": [history_metadata(metadata) for metadata in sorted_jobs[:limit]],
     }
+
+
+def get_job_status(job_id: str) -> dict[str, object]:
+    """Return the persisted current state for one job."""
+
+    validate_existing_job_id(job_id)
+    metadata = read_job_metadata(job_id)
+    if metadata is None:  # pragma: no cover - guarded by validation
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+    return metadata
+
+
+def request_job_cancellation(job_id: str) -> dict[str, object]:
+    """Persist a cancellation request and cancel only work that has not started."""
+
+    metadata = get_job_status(job_id)
+    if metadata.get("status") in TERMINAL_JOB_STATUSES:
+        return metadata
+
+    cancelled_before_start = job_runner.request_cancel(job_id)
+    updates: dict[str, object] = {"cancellation_requested": True}
+    if cancelled_before_start:
+        updates.update(
+            {
+                "status": "cancelled",
+                "stage": "completed",
+                "completed_at": utc_timestamp(),
+            }
+        )
+    return update_job_metadata(job_id, **updates)
 
 
 def get_job_annotations(job_id: str) -> dict[str, object]:
@@ -490,6 +601,21 @@ def history_metadata(metadata: dict[str, object]) -> dict[str, object]:
         "completed_at": metadata.get("completed_at"),
         "row_count": metadata.get("row_count", 0),
         "status": metadata.get("status"),
+        "stage": metadata.get("stage", "completed"),
+        "started_at": metadata.get("started_at"),
+        "submitted_count": metadata.get("submitted_count", metadata.get("row_count", 0)),
+        "valid_count": metadata.get("valid_count"),
+        "invalid_count": metadata.get("invalid_count"),
+        "duplicate_count": metadata.get("duplicate_count"),
+        "processed_count": metadata.get("processed_count", metadata.get("row_count", 0)),
+        "total_count": metadata.get("total_count", metadata.get("row_count", 0)),
+        "admet_success_count": metadata.get("admet_success_count", 0),
+        "admet_failure_count": metadata.get("admet_failure_count", 0),
+        "docking_success_count": metadata.get("docking_success_count", 0),
+        "docking_failure_count": metadata.get("docking_failure_count", 0),
+        "warning_count": metadata.get("warning_count", 0),
+        "cancellation_requested": bool(metadata.get("cancellation_requested")),
+        "error_message": metadata.get("error_message", ""),
         "input_file": metadata.get("input_file"),
         "output_file": metadata.get("output_file"),
         "public_lookup_requested": bool(
@@ -575,43 +701,99 @@ def validate_molecule_csv(path: Path) -> int:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"CSV is missing required columns: {', '.join(missing)}.",
             )
-        return sum(1 for _ in reader)
+        row_count = sum(1 for _ in reader)
+        if row_count > MAX_BATCH_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Maximum batch size is {MAX_BATCH_SIZE:,} molecules per analysis; "
+                    f"the submitted CSV contains {row_count:,} molecule records."
+                ),
+            )
+        return row_count
 
 
 def write_job_metadata(metadata: dict[str, object]) -> None:
-    JOB_METADATA_DIR.mkdir(parents=True, exist_ok=True)
-    metadata_path = JOB_METADATA_DIR / f"{metadata['job_id']}.json"
-    with metadata_path.open("w", encoding="utf-8") as handle:
-        json.dump(metadata, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    """Atomically persist one job metadata document."""
+
+    with _metadata_lock:
+        JOB_METADATA_DIR.mkdir(parents=True, exist_ok=True)
+        metadata_path = JOB_METADATA_DIR / f"{metadata['job_id']}.json"
+        temporary_path = JOB_METADATA_DIR / f".{metadata['job_id']}.{uuid4().hex}.tmp"
+        try:
+            with temporary_path.open("w", encoding="utf-8") as handle:
+                json.dump(metadata, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, metadata_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+
+
+def update_job_metadata(job_id: str, **updates: object) -> dict[str, object]:
+    """Read, update, and atomically rewrite one job metadata document."""
+
+    with _metadata_lock:
+        metadata = read_job_metadata(job_id)
+        if metadata is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        metadata.update(updates)
+        write_job_metadata(metadata)
+        return metadata
 
 
 def read_job_metadata(job_id: str) -> dict[str, object] | None:
-    metadata_path = JOB_METADATA_DIR / f"{job_id}.json"
-    if not metadata_path.exists():
-        return None
-    try:
-        with metadata_path.open("r", encoding="utf-8") as handle:
-            metadata = json.load(handle)
-    except json.JSONDecodeError:
-        return None
-    return metadata if isinstance(metadata, dict) else None
-
-
-def read_all_job_metadata() -> list[dict[str, object]]:
-    if not JOB_METADATA_DIR.exists():
-        return []
-
-    metadata_items: list[dict[str, object]] = []
-    for metadata_path in sorted(JOB_METADATA_DIR.glob("*.json")):
+    with _metadata_lock:
+        metadata_path = JOB_METADATA_DIR / f"{job_id}.json"
+        if not metadata_path.exists():
+            return None
         try:
             with metadata_path.open("r", encoding="utf-8") as handle:
                 metadata = json.load(handle)
         except json.JSONDecodeError:
-            continue
-        if isinstance(metadata, dict):
-            metadata_items.append(metadata)
-    return metadata_items
+            return None
+        return normalize_job_metadata(metadata) if isinstance(metadata, dict) else None
+
+
+def read_all_job_metadata() -> list[dict[str, object]]:
+    with _metadata_lock:
+        if not JOB_METADATA_DIR.exists():
+            return []
+
+        metadata_items: list[dict[str, object]] = []
+        for metadata_path in sorted(JOB_METADATA_DIR.glob("*.json")):
+            try:
+                with metadata_path.open("r", encoding="utf-8") as handle:
+                    metadata = json.load(handle)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(metadata, dict):
+                metadata_items.append(normalize_job_metadata(metadata))
+        return metadata_items
+
+
+def normalize_job_metadata(metadata: dict[str, object]) -> dict[str, object]:
+    """Supply progress defaults when reading metadata from older MolOptima runs."""
+
+    normalized = dict(metadata)
+    row_count = int(normalized.get("row_count") or 0)
+    status_value = str(normalized.get("status") or "failed")
+    normalized.setdefault("stage", "completed" if status_value in TERMINAL_JOB_STATUSES else "queued")
+    normalized.setdefault("started_at", normalized.get("created_at") if status_value != "queued" else None)
+    normalized.setdefault("submitted_count", row_count)
+    normalized.setdefault("valid_count", None)
+    normalized.setdefault("invalid_count", None)
+    normalized.setdefault("duplicate_count", None)
+    normalized.setdefault("processed_count", row_count if status_value in TERMINAL_JOB_STATUSES else 0)
+    normalized.setdefault("total_count", row_count)
+    normalized.setdefault("admet_success_count", 0)
+    normalized.setdefault("admet_failure_count", 0)
+    normalized.setdefault("docking_success_count", 0)
+    normalized.setdefault("docking_failure_count", 0)
+    normalized.setdefault("warning_count", 0)
+    normalized.setdefault("cancellation_requested", False)
+    return normalized
 
 
 def utc_timestamp() -> str:

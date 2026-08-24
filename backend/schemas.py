@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -19,6 +19,25 @@ ADMET_ENDPOINT_NAMES = {
     "herg_karim",
     "ames",
 }
+
+JobStatus = Literal[
+    "queued",
+    "running",
+    "completed",
+    "completed_with_warnings",
+    "failed",
+    "cancelled",
+]
+JobStage = Literal[
+    "queued",
+    "structure_processing",
+    "admet",
+    "docking",
+    "prioritization",
+    "evidence",
+    "packaging",
+    "completed",
+]
 
 
 class ADMETEndpointPrediction(BaseModel):
@@ -84,24 +103,52 @@ class PrioritizationRequest(BaseModel):
 class JobResponse(BaseModel):
     job_id: str
     upload_id: str
-    status: str
+    status: JobStatus
+    stage: JobStage = "queued"
     input_file: str
     output_file: str
     created_at: str
+    started_at: str | None = None
     completed_at: str | None = None
     error_message: str = ""
-    row_count: int
+    row_count: int = 0
+    submitted_count: int = 0
+    valid_count: int | None = None
+    invalid_count: int | None = None
+    duplicate_count: int | None = None
+    processed_count: int = 0
+    total_count: int = 0
+    admet_success_count: int = 0
+    admet_failure_count: int = 0
+    docking_success_count: int = 0
+    docking_failure_count: int = 0
+    warning_count: int = 0
+    cancellation_requested: bool = False
 
 
 class ResultResponse(BaseModel):
     job_id: str
-    status: str
+    status: JobStatus
+    stage: JobStage = "completed"
     input_file: str
     output_file: str
     created_at: str
+    started_at: str | None = None
     completed_at: str | None = None
     error_message: str = ""
     row_count: int
+    submitted_count: int = 0
+    valid_count: int | None = None
+    invalid_count: int | None = None
+    duplicate_count: int | None = None
+    processed_count: int = 0
+    total_count: int = 0
+    admet_success_count: int = 0
+    admet_failure_count: int = 0
+    docking_success_count: int = 0
+    docking_failure_count: int = 0
+    warning_count: int = 0
+    cancellation_requested: bool = False
     results: list[MoleculeAnalysisResult]
     target_references: dict[str, Any] | None = None
 

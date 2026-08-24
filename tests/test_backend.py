@@ -1,5 +1,7 @@
 import csv
 import json
+import threading
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -11,6 +13,21 @@ from molecular_prioritization.admet_multitask_predictor import (
     FROZEN_ENDPOINT_DEFINITIONS,
     unavailable_admet_prediction,
 )
+
+
+TERMINAL_STATUSES = {"completed", "completed_with_warnings", "failed", "cancelled"}
+
+
+def wait_for_job(client: TestClient, job_id: str, timeout: float = 5.0) -> dict[str, object]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/jobs/{job_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if payload["status"] in TERMINAL_STATUSES:
+            return payload
+        time.sleep(0.01)
+    raise AssertionError(f"Timed out waiting for job {job_id}")
 
 
 def configure_temp_app_data(tmp_path: Path, monkeypatch):
@@ -327,13 +344,21 @@ def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
 
     assert job_response.status_code == 200
     job_payload = job_response.json()
-    assert job_payload["status"] == "completed"
-    assert job_payload["row_count"] == 1
+    assert job_payload["status"] == "queued"
+    assert job_payload["stage"] == "queued"
+    assert job_payload["submitted_count"] == 1
+    assert job_payload["row_count"] == 0
     assert job_payload["input_file"].endswith("molecules.csv")
     assert job_payload["output_file"].endswith("ranked_results.csv")
     assert job_payload["created_at"]
-    assert job_payload["completed_at"]
+    assert job_payload["completed_at"] is None
     assert job_payload["error_message"] == ""
+    terminal_job = wait_for_job(client, job_payload["job_id"])
+    assert terminal_job["status"] == "completed_with_warnings"
+    assert terminal_job["row_count"] == 1
+    assert terminal_job["processed_count"] == 1
+    assert terminal_job["valid_count"] == 1
+    assert terminal_job["invalid_count"] == 0
     assert prioritize_options["enable_public_lookup"] is False
     assert prioritize_options["enable_pubchem_lookup"] is False
     assert prioritize_options["enable_chembl_lookup"] is False
@@ -342,14 +367,14 @@ def test_upload_run_and_get_results(tmp_path: Path, monkeypatch):
     metadata_path = services.JOB_METADATA_DIR / f"{job_payload['job_id']}.json"
     assert metadata_path.exists()
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    assert metadata["status"] == "completed"
+    assert metadata["status"] == "completed_with_warnings"
 
     result_response = client.get(f"/api/results/{job_payload['job_id']}")
 
     assert result_response.status_code == 200
     result_payload = result_response.json()
     assert result_payload["job_id"] == job_payload["job_id"]
-    assert result_payload["status"] == "completed"
+    assert result_payload["status"] == "completed_with_warnings"
     assert result_payload["results"][0]["molecule_id"] == "mol_1"
 
     run_manifest = json.loads(
@@ -584,12 +609,13 @@ def test_job_history_endpoint_returns_recent_completed_jobs(tmp_path: Path, monk
 
     assert history_response.status_code == 200
     jobs = history_response.json()["jobs"]
-    assert [job["job_id"] for job in jobs] == [latest_job_id, older_job_id]
-    assert jobs[0]["row_count"] == 1
-    assert jobs[0]["pubchem_lookup_requested"] is True
-    assert jobs[0]["chembl_lookup_requested"] is True
-    assert jobs[0]["patent_lookup_requested"] is False
-    assert jobs[1]["public_lookup_requested"] is False
+    assert [job["job_id"] for job in jobs] == [failed_job_id, latest_job_id, older_job_id]
+    assert jobs[0]["status"] == "failed"
+    assert jobs[1]["row_count"] == 1
+    assert jobs[1]["pubchem_lookup_requested"] is True
+    assert jobs[1]["chembl_lookup_requested"] is True
+    assert jobs[1]["patent_lookup_requested"] is False
+    assert jobs[2]["public_lookup_requested"] is False
     assert result_response.status_code == 200
     assert result_response.json()["results"][0]["molecule_id"] == "old_mol"
 
@@ -784,6 +810,7 @@ def test_prioritization_job_passes_public_lookup_flag(tmp_path: Path, monkeypatc
     )
 
     assert job_response.status_code == 200
+    wait_for_job(client, job_response.json()["job_id"])
     assert prioritize_options["enable_public_lookup"] is True
     assert prioritize_options["enable_pubchem_lookup"] is True
     assert prioritize_options["enable_chembl_lookup"] is False
@@ -853,6 +880,7 @@ def test_prioritization_job_passes_independent_chembl_flag(tmp_path: Path, monke
     )
 
     assert job_response.status_code == 200
+    wait_for_job(client, job_response.json()["job_id"])
     assert prioritize_options["enable_public_lookup"] is False
     assert prioritize_options["enable_pubchem_lookup"] is False
     assert prioritize_options["enable_chembl_lookup"] is True
@@ -923,6 +951,7 @@ def test_prioritization_job_passes_independent_patent_flag(tmp_path: Path, monke
     )
 
     assert job_response.status_code == 200
+    wait_for_job(client, job_response.json()["job_id"])
     assert prioritize_options["enable_public_lookup"] is False
     assert prioritize_options["enable_pubchem_lookup"] is False
     assert prioritize_options["enable_chembl_lookup"] is False
@@ -966,6 +995,112 @@ def test_upload_rejects_missing_required_columns(tmp_path: Path, monkeypatch):
     assert "missing required columns" in response.json()["detail"]
 
 
+def _molecule_csv_bytes(row_count: int) -> bytes:
+    lines = ["molecule_id,smiles"]
+    lines.extend(f"mol_{index},CCO" for index in range(1, row_count + 1))
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def test_upload_accepts_exactly_1000_molecule_records(tmp_path: Path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/molecules/upload",
+        files={"file": ("molecules.csv", _molecule_csv_bytes(1000), "text/csv")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["rows"] == 1000
+
+
+def test_upload_rejects_1001_molecule_records_without_truncation(tmp_path: Path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/molecules/upload",
+        files={"file": ("molecules.csv", _molecule_csv_bytes(1001), "text/csv")},
+    )
+
+    assert response.status_code == 400
+    assert "Maximum batch size is 1,000" in response.json()["detail"]
+    assert "1,001 molecule records" in response.json()["detail"]
+    assert not list(services.UPLOAD_DIR.glob("*/molecules.csv"))
+
+
+def test_job_creation_returns_before_background_pipeline_finishes(tmp_path: Path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    configure_temp_app_data(tmp_path, monkeypatch)
+    pipeline_started = threading.Event()
+    release_pipeline = threading.Event()
+
+    def blocking_prioritize_csv(input_path, output_path, **options):
+        pipeline_started.set()
+        assert release_pipeline.wait(timeout=5)
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_text("molecule_id,valid_molecule\n", encoding="utf-8")
+        return []
+
+    monkeypatch.setattr(services, "prioritize_csv", blocking_prioritize_csv)
+    client = TestClient(app)
+    upload = client.post(
+        "/api/molecules/upload",
+        files={"file": ("molecules.csv", _molecule_csv_bytes(1), "text/csv")},
+    ).json()
+
+    response = client.post("/api/jobs/prioritization", json={"upload_id": upload["upload_id"]})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "queued"
+    assert payload["stage"] == "queued"
+    assert payload["submitted_count"] == 1
+    assert pipeline_started.wait(timeout=2)
+    current = client.get(f"/api/jobs/{payload['job_id']}").json()
+    assert current["status"] == "running"
+    assert current["stage"] == "prioritization"
+    cancellation = client.post(f"/api/jobs/{payload['job_id']}/cancel")
+    assert cancellation.status_code == 200
+    assert cancellation.json()["status"] == "running"
+    assert cancellation.json()["cancellation_requested"] is True
+    release_pipeline.set()
+    terminal = wait_for_job(client, payload["job_id"])
+    assert terminal["status"] == "completed"
+    assert terminal["stage"] == "completed"
+    assert terminal["cancellation_requested"] is True
+
+
+def test_job_history_includes_non_completed_statuses(tmp_path: Path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    for index, job_status in enumerate(("queued", "running", "failed", "cancelled"), start=1):
+        services.write_job_metadata(
+            {
+                "job_id": f"job-{index}",
+                "upload_id": "upload",
+                "status": job_status,
+                "stage": "queued" if job_status == "queued" else "prioritization",
+                "input_file": "input.csv",
+                "output_file": "output.csv",
+                "created_at": f"2026-01-0{index}T00:00:00+00:00",
+                "completed_at": None,
+                "error_message": "",
+                "row_count": 0,
+            }
+        )
+    client = TestClient(app)
+
+    response = client.get("/api/jobs/history")
+
+    assert response.status_code == 200
+    assert {job["status"] for job in response.json()["jobs"]} == {
+        "queued",
+        "running",
+        "failed",
+        "cancelled",
+    }
+
+
 def test_get_results_returns_404_for_unknown_job(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(services, "JOB_METADATA_DIR", tmp_path / "backend" / "job_metadata")
     client = TestClient(app)
@@ -1006,8 +1141,12 @@ def test_prioritization_failure_writes_failed_metadata(tmp_path: Path, monkeypat
         json={"upload_id": upload_id},
     )
 
-    assert job_response.status_code == 422
-    assert "synthetic pipeline failure" in job_response.json()["detail"]
+    assert job_response.status_code == 200
+    job_payload = job_response.json()
+    assert job_payload["status"] == "queued"
+    terminal_job = wait_for_job(client, job_payload["job_id"])
+    assert terminal_job["status"] == "failed"
+    assert terminal_job["error_message"] == "synthetic pipeline failure"
 
     metadata_files = list(services.JOB_METADATA_DIR.glob("*.json"))
     assert len(metadata_files) == 1

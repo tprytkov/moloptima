@@ -105,6 +105,16 @@ def get_job_history() -> JobHistoryResponse:
     return JobHistoryResponse(**services.get_job_history())
 
 
+@app.get("/api/jobs/{job_id}", response_model=JobResponse)
+def get_job_status(job_id: str) -> JobResponse:
+    return JobResponse(**services.get_job_status(job_id))
+
+
+@app.post("/api/jobs/{job_id}/cancel", response_model=JobResponse)
+def cancel_job(job_id: str) -> JobResponse:
+    return JobResponse(**services.request_job_cancellation(job_id))
+
+
 @app.get("/api/results/{job_id}", response_model=ResultResponse)
 def get_results(job_id: str) -> ResultResponse:
     return ResultResponse(**services.get_result(job_id))

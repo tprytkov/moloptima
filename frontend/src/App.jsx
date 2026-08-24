@@ -39,6 +39,14 @@ import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
 import AdmetResultsSection from './AdmetResultsSection.jsx';
+import {
+  MAX_BATCH_SIZE,
+  TERMINAL_JOB_STATUSES,
+  batchSizeError,
+  countCsvMoleculeRecords,
+  mergeJobIntoHistory,
+  pollJobUntilTerminal,
+} from './jobWorkflow.js';
 
 const drawerWidth = 256;
 const apiBaseUrl = 'http://localhost:8000';
@@ -112,8 +120,10 @@ function App() {
   const [activeItem, setActiveItem] = useState('Dashboard');
   const [uploadState, setUploadState] = useState({
     selectedFile: null,
+    detectedRows: null,
     upload: null,
     loading: false,
+    counting: false,
     error: '',
   });
   const [prioritizationState, setPrioritizationState] = useState({
@@ -255,6 +265,18 @@ function App() {
       setUploadState((current) => ({ ...current, error: 'Select a CSV file before uploading.' }));
       return;
     }
+    if (uploadState.detectedRows === null) {
+      setUploadState((current) => ({
+        ...current,
+        error: 'Wait for the molecule count check before uploading.',
+      }));
+      return;
+    }
+    const sizeError = batchSizeError(uploadState.detectedRows ?? 0);
+    if (sizeError) {
+      setUploadState((current) => ({ ...current, error: sizeError }));
+      return;
+    }
 
     setUploadState((current) => ({ ...current, loading: true, error: '' }));
     setPrioritizationState({ job: null, result: null, loading: false, error: '' });
@@ -284,6 +306,45 @@ function App() {
     }
   }
 
+  async function handleSelectUploadFile(file) {
+    if (!file) {
+      setUploadState({
+        selectedFile: null,
+        detectedRows: null,
+        upload: null,
+        loading: false,
+        counting: false,
+        error: '',
+      });
+      return;
+    }
+
+    setUploadState((current) => ({
+      ...current,
+      selectedFile: file,
+      detectedRows: null,
+      upload: null,
+      counting: true,
+      error: '',
+    }));
+    try {
+      const rowCount = countCsvMoleculeRecords(await file.text());
+      setUploadState((current) => current.selectedFile === file ? {
+        ...current,
+        detectedRows: rowCount,
+        counting: false,
+        error: batchSizeError(rowCount),
+      } : current);
+    } catch (error) {
+      setUploadState((current) => current.selectedFile === file ? {
+        ...current,
+        detectedRows: null,
+        counting: false,
+        error: `Could not inspect the selected CSV: ${readableError(error)}`,
+      } : current);
+    }
+  }
+
   async function handleStartPrioritization() {
     const uploadId = uploadState.upload?.upload_id;
     if (!uploadId) {
@@ -309,23 +370,63 @@ function App() {
           ...targetContext,
         }),
       });
-      const result = await apiRequest(`/api/results/${job.job_id}`);
-      const sourceStatus = await apiRequest('/api/model-sources/status');
-      setPrioritizationState({ job, result, loading: false, error: '' });
-      setLatestRunState({ job, result, loading: false, error: '' });
+      setPrioritizationState({ job, result: null, loading: true, error: '' });
       setRunHistoryState((current) => ({
         ...current,
         selectedJobId: job.job_id,
-        jobs: mergeHistoryJob(current.jobs, job),
+        jobs: mergeJobIntoHistory(current.jobs, job),
       }));
-      await loadAnnotationsForJob(job.job_id);
-      setSourceStatusState({ payload: sourceStatus, loading: false, error: '' });
+      const terminalJob = await pollJobUntilTerminal(job.job_id, {
+        request: apiRequest,
+        onUpdate: (currentJob) => {
+          setPrioritizationState((current) => ({ ...current, job: currentJob }));
+          setRunHistoryState((current) => ({
+            ...current,
+            selectedJobId: currentJob.job_id,
+            jobs: mergeJobIntoHistory(current.jobs, currentJob),
+          }));
+        },
+      });
+      if (terminalJob.status === 'completed' || terminalJob.status === 'completed_with_warnings') {
+        const [result, sourceStatus] = await Promise.all([
+          apiRequest(`/api/results/${job.job_id}`),
+          apiRequest('/api/model-sources/status'),
+        ]);
+        setPrioritizationState({ job: terminalJob, result, loading: false, error: '' });
+        setLatestRunState({ job: terminalJob, result, loading: false, error: '' });
+        await loadAnnotationsForJob(job.job_id);
+        setSourceStatusState({ payload: sourceStatus, loading: false, error: '' });
+      } else {
+        setPrioritizationState({
+          job: terminalJob,
+          result: null,
+          loading: false,
+          error: terminalJob.error_message || `Job ${terminalJob.status}.`,
+        });
+      }
     } catch (error) {
       setPrioritizationState((current) => ({
         ...current,
         loading: false,
         error: readableError(error),
       }));
+    }
+  }
+
+  async function handleCancelPrioritization() {
+    const jobId = prioritizationState.job?.job_id;
+    if (!jobId || TERMINAL_JOB_STATUSES.has(prioritizationState.job.status)) {
+      return;
+    }
+    try {
+      const job = await apiRequest(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+      setPrioritizationState((current) => ({ ...current, job }));
+      setRunHistoryState((current) => ({
+        ...current,
+        jobs: mergeJobIntoHistory(current.jobs, job),
+      }));
+    } catch (error) {
+      setPrioritizationState((current) => ({ ...current, error: readableError(error) }));
     }
   }
 
@@ -345,7 +446,7 @@ function App() {
         selectedJobId: jobId,
         loading: false,
         error: '',
-        jobs: mergeHistoryJob(current.jobs, job),
+        jobs: mergeJobIntoHistory(current.jobs, job),
       }));
       setActiveItem('Molecular Prioritization');
     } catch (error) {
@@ -505,7 +606,9 @@ function App() {
               annotationsState={annotationsState}
               sourceStatusState={sourceStatusState}
               onUpload={handleUpload}
+              onSelectUploadFile={handleSelectUploadFile}
               onStartPrioritization={handleStartPrioritization}
+              onCancelPrioritization={handleCancelPrioritization}
               onLoadHistoricalRun={handleLoadHistoricalRun}
               onRefreshRunHistory={handleRefreshRunHistory}
               pubchemLookupEnabled={pubchemLookupEnabled}
@@ -630,7 +733,9 @@ function ActivePage({
   annotationsState,
   sourceStatusState,
   onUpload,
+  onSelectUploadFile,
   onStartPrioritization,
+  onCancelPrioritization,
   onLoadHistoricalRun,
   onRefreshRunHistory,
   onSaveReviewAnnotation,
@@ -651,8 +756,8 @@ function ActivePage({
     return (
       <UploadMoleculesPage
         uploadState={uploadState}
-        setUploadState={setUploadState}
         onUpload={onUpload}
+        onSelectUploadFile={onSelectUploadFile}
       />
     );
   }
@@ -663,6 +768,7 @@ function ActivePage({
         uploadState={uploadState}
         prioritizationState={prioritizationState}
         onStartPrioritization={onStartPrioritization}
+        onCancelPrioritization={onCancelPrioritization}
         pubchemLookupEnabled={pubchemLookupEnabled}
         setPubchemLookupEnabled={setPubchemLookupEnabled}
         chemblLookupEnabled={chemblLookupEnabled}
@@ -1390,7 +1496,7 @@ function RunHistoryPage({ runHistoryState, loadedJobId, onLoadHistoricalRun, onR
     <Stack spacing={3}>
       <PageIntro
         title="Run History"
-        description="Review previously completed local prioritization jobs and reload saved result rows into the MolOptima analysis views."
+        description="Review local prioritization jobs in every state and reload completed result rows into the MolOptima analysis views."
       />
 
       <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
@@ -1402,8 +1508,8 @@ function RunHistoryPage({ runHistoryState, loadedJobId, onLoadHistoricalRun, onR
                 {runHistoryState.loading
                   ? 'Loading saved analyses...'
                   : jobs.length > 0
-                  ? `${jobs.length} completed runs are available locally.`
-                  : 'No completed runs are available yet.'}
+                  ? `${jobs.length} analysis jobs are available locally.`
+                  : 'No analysis jobs are available yet.'}
               </Typography>
             </Stack>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
@@ -1429,6 +1535,7 @@ function RunHistoryPage({ runHistoryState, loadedJobId, onLoadHistoricalRun, onR
                     <TableCell>input_file</TableCell>
                     <TableCell>output_file</TableCell>
                     <TableCell>status</TableCell>
+                    <TableCell>stage</TableCell>
                     <TableCell>Load</TableCell>
                   </TableRow>
                 </TableHead>
@@ -1446,11 +1553,15 @@ function RunHistoryPage({ runHistoryState, loadedJobId, onLoadHistoricalRun, onR
                         <TableCell>{formatDetailValue(job.input_file)}</TableCell>
                         <TableCell>{formatDetailValue(job.output_file)}</TableCell>
                         <TableCell>{formatDetailValue(job.status)}</TableCell>
+                        <TableCell>{formatDetailValue(job.stage)}</TableCell>
                         <TableCell>
                           <Button
                             size="small"
                             variant={isLoaded ? 'contained' : 'outlined'}
-                            disabled={runHistoryState.loading}
+                            disabled={
+                              runHistoryState.loading
+                              || !['completed', 'completed_with_warnings'].includes(job.status)
+                            }
                             onClick={() => onLoadHistoricalRun(job.job_id)}
                           >
                             {isLoaded ? 'Loaded' : 'Load run'}
@@ -1474,7 +1585,9 @@ function RunHistoryPage({ runHistoryState, loadedJobId, onLoadHistoricalRun, onR
 }
 
 function RunComparisonPage({ runHistoryState, onRefreshRunHistory }) {
-  const jobs = runHistoryState.jobs ?? [];
+  const jobs = (runHistoryState.jobs ?? []).filter((job) =>
+    ['completed', 'completed_with_warnings'].includes(job.status),
+  );
   const [runAId, setRunAId] = useState('');
   const [runBId, setRunBId] = useState('');
   const [comparisonState, setComparisonState] = useState({
@@ -2293,7 +2406,7 @@ function formatCounts(counts) {
     .join(', ');
 }
 
-function UploadMoleculesPage({ uploadState, setUploadState, onUpload }) {
+function UploadMoleculesPage({ uploadState, onUpload, onSelectUploadFile }) {
   return (
     <Stack spacing={3}>
       <PageIntro
@@ -2308,6 +2421,9 @@ function UploadMoleculesPage({ uploadState, setUploadState, onUpload }) {
             <Typography color="text.secondary">
               Upload only small demo or public-safe molecule tables for this Phase 1 workflow.
             </Typography>
+            <Typography color="text.secondary">
+              Maximum batch size: {MAX_BATCH_SIZE.toLocaleString()} molecules per analysis
+            </Typography>
           </Stack>
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
@@ -2319,17 +2435,20 @@ function UploadMoleculesPage({ uploadState, setUploadState, onUpload }) {
                 accept=".csv,text/csv"
                 onChange={(event) => {
                   const file = event.target.files?.[0] ?? null;
-                  setUploadState((current) => ({
-                    ...current,
-                    selectedFile: file,
-                    error: '',
-                  }));
+                  onSelectUploadFile(file);
                 }}
               />
             </Button>
             <Typography color="text.secondary">
               {uploadState.selectedFile?.name ?? 'No file selected'}
             </Typography>
+            {uploadState.counting ? (
+              <Typography color="text.secondary">Detecting molecule count...</Typography>
+            ) : uploadState.detectedRows !== null ? (
+              <Typography color="text.secondary">
+                Detected molecule records: {uploadState.detectedRows.toLocaleString()}
+              </Typography>
+            ) : null}
           </Stack>
 
           {uploadState.error && <Alert severity="error">{uploadState.error}</Alert>}
@@ -2343,7 +2462,13 @@ function UploadMoleculesPage({ uploadState, setUploadState, onUpload }) {
             <Button
               variant="contained"
               onClick={onUpload}
-              disabled={uploadState.loading}
+              disabled={
+                uploadState.loading
+                || uploadState.counting
+                || !uploadState.selectedFile
+                || uploadState.detectedRows === null
+                || Boolean(batchSizeError(uploadState.detectedRows ?? 0))
+              }
               startIcon={uploadState.loading ? <CircularProgress size={18} color="inherit" /> : null}
             >
               {uploadState.loading ? 'Uploading' : 'Upload molecules'}
@@ -2468,6 +2593,7 @@ function PrioritizationPage({
   uploadState,
   prioritizationState,
   onStartPrioritization,
+  onCancelPrioritization,
   pubchemLookupEnabled,
   setPubchemLookupEnabled,
   chemblLookupEnabled,
@@ -2558,6 +2684,12 @@ function PrioritizationPage({
               >
                 {prioritizationState.loading ? 'Running' : 'Start prioritization'}
               </Button>
+              {prioritizationState.job
+                && !TERMINAL_JOB_STATUSES.has(prioritizationState.job.status) ? (
+                  <Button variant="outlined" color="warning" onClick={onCancelPrioritization}>
+                    Request cancellation
+                  </Button>
+                ) : null}
             </Stack>
           </Stack>
 
@@ -2573,8 +2705,12 @@ function PrioritizationPage({
             <MetadataPanel
               rows={[
                 ['Status', prioritizationState.job.status],
+                ['Stage', prioritizationState.job.stage],
                 ['Job ID', prioritizationState.job.job_id],
-                ['Rows', prioritizationState.job.row_count],
+                ['Submitted', prioritizationState.job.submitted_count],
+                ['Processed', `${prioritizationState.job.processed_count ?? 0} / ${prioritizationState.job.total_count ?? 0}`],
+                ['Warnings', prioritizationState.job.warning_count],
+                ['Cancellation requested', prioritizationState.job.cancellation_requested ? 'yes' : 'no'],
                 ['Output file', prioritizationState.job.output_file],
                 ['Completed at', prioritizationState.job.completed_at ?? ''],
                 ['Candidate shortlist', formatReviewCounts(resultRows)],
@@ -3810,29 +3946,6 @@ function evidenceSummaryColor(compound) {
 
 function topCountLabel(counts) {
   return Object.entries(counts).sort((left, right) => right[1] - left[1])[0]?.[0] ?? '';
-}
-
-function mergeHistoryJob(jobs, job) {
-  if (!job?.job_id) {
-    return jobs;
-  }
-  const historyJob = {
-    job_id: job.job_id,
-    created_at: job.created_at,
-    completed_at: job.completed_at,
-    row_count: job.row_count,
-    status: job.status,
-    input_file: job.input_file,
-    output_file: job.output_file,
-    public_lookup_requested: job.public_lookup_requested,
-    pubchem_lookup_requested: job.pubchem_lookup_requested,
-    chembl_lookup_requested: job.chembl_lookup_requested,
-    patent_lookup_requested: job.patent_lookup_requested,
-  };
-  const withoutCurrent = jobs.filter((item) => item.job_id !== job.job_id);
-  return [historyJob, ...withoutCurrent].sort((left, right) =>
-    String(right.completed_at ?? '').localeCompare(String(left.completed_at ?? '')),
-  );
 }
 
 function annotateAnalysisState(runState, annotationsState) {
