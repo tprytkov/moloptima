@@ -24,12 +24,18 @@ from molecular_prioritization.admet_multitask_predictor import (
 )
 from molecular_prioritization.admet_registry import CLASSIFICATION_ENDPOINTS
 from molecular_prioritization.pipeline import prioritize_csv
+from molecular_prioritization.receptor import (
+    ReceptorValidationError,
+    VinaBoxConfig,
+    validate_prepared_receptor,
+)
 from backend import job_runner
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = PROJECT_ROOT / "backend"
 UPLOAD_DIR = BACKEND_DIR / "uploads"
+RECEPTOR_DIR = BACKEND_DIR / "receptors"
 JOB_OUTPUT_DIR = BACKEND_DIR / "job_outputs"
 JOB_METADATA_DIR = BACKEND_DIR / "job_metadata"
 JOB_ANNOTATION_DIR = BACKEND_DIR / "job_annotations"
@@ -149,6 +155,33 @@ def save_upload(file: UploadFile) -> dict[str, object]:
     }
 
 
+def save_receptor(file: UploadFile, *, receptor_id: str = "") -> dict[str, object]:
+    """Store and validate an already prepared receptor PDBQT artifact."""
+
+    filename = Path(file.filename or "").name
+    if not filename.lower().endswith(".pdbqt"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Receptor must be a prepared .pdbqt file.")
+    upload_id = uuid4().hex
+    upload_dir = RECEPTOR_DIR / upload_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_path = upload_dir / filename
+    with upload_path.open("wb") as handle:
+        shutil.copyfileobj(file.file, handle)
+    try:
+        artifact = validate_prepared_receptor(
+            upload_path, receptor_id=receptor_id, source_filename=filename,
+        )
+    except ReceptorValidationError as exc:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {
+        "receptor_upload_id": upload_id, "status": "uploaded", "filename": filename,
+        "receptor_id": artifact.receptor_id,
+        "prepared_receptor_sha256": artifact.prepared_receptor_sha256,
+        "size_bytes": artifact.size_bytes,
+    }
+
+
 def render_molecule_structure_svg(smiles: str, width: int = 280, height: int = 220) -> str:
     """Render a SMILES string to a lightweight 2D SVG structure preview."""
 
@@ -232,6 +265,10 @@ def run_prioritization_job(
     enable_patent_lookup: bool = False,
     enable_target_reference_discovery: bool = False,
     target_context: dict[str, object] | None = None,
+    enable_docking: bool = True,
+    receptor_upload_id: str = "",
+    receptor_id: str = "",
+    docking_configuration: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Create and enqueue one local molecular prioritization job."""
 
@@ -244,6 +281,23 @@ def run_prioritization_job(
     output_path = job_dir / "ranked_results.csv"
     target_reference_output_path = job_dir / "target_references.json"
     clean_target_context = sanitize_target_context(target_context)
+    receptor = None
+    docking_config = None
+    docking_setup_error = ""
+    if enable_docking:
+        if not receptor_upload_id.strip():
+            docking_setup_error = "Prepared receptor upload is required for docking."
+        else:
+            try:
+                receptor = validate_prepared_receptor(
+                    find_receptor_path(receptor_upload_id), receptor_id=receptor_id,
+                )
+            except (HTTPException, ReceptorValidationError) as exc:
+                docking_setup_error = str(getattr(exc, "detail", exc))
+        try:
+            docking_config = VinaBoxConfig.from_mapping(docking_configuration or {})
+        except ReceptorValidationError as exc:
+            docking_setup_error = " | ".join(filter(None, (docking_setup_error, str(exc))))
     metadata = {
         "job_id": job_id,
         "upload_id": upload_id,
@@ -266,6 +320,14 @@ def run_prioritization_job(
         "admet_failure_count": 0,
         "docking_success_count": 0,
         "docking_failure_count": 0,
+        "eligible_count": 0,
+        "fully_scored_count": 0,
+        "partially_scored_count": 0,
+        "unscorable_count": 0,
+        "ranked_count": 0,
+        "eligible_for_ranking_count": 0,
+        "awaiting_or_missing_docking_count": 0,
+        "docking_failed_or_unavailable_count": 0,
         "warning_count": 0,
         "cancellation_requested": False,
         "public_lookup_requested": pubchem_lookup_requested or enable_chembl_lookup or enable_patent_lookup,
@@ -275,6 +337,12 @@ def run_prioritization_job(
         "target_reference_discovery_requested": enable_target_reference_discovery,
         "target_context": clean_target_context,
         "target_reference_file": relative_path(target_reference_output_path),
+        "docking_requested": enable_docking,
+        "receptor_upload_id": receptor_upload_id,
+        "receptor_id": receptor.receptor_id if receptor else receptor_id,
+        "prepared_receptor_sha256": receptor.prepared_receptor_sha256 if receptor else None,
+        "docking_configuration": docking_config.as_dict() if docking_config else {},
+        "docking_setup_error": docking_setup_error,
     }
     write_job_metadata(metadata)
     job_runner.submit(
@@ -290,6 +358,11 @@ def run_prioritization_job(
         enable_target_reference_discovery=enable_target_reference_discovery,
         target_context=clean_target_context,
         target_reference_output_path=target_reference_output_path,
+        enable_docking=enable_docking,
+        receptor=receptor,
+        docking_config=docking_config,
+        docking_output_root=job_dir,
+        docking_setup_error=docking_setup_error,
     )
     return metadata
 
@@ -330,6 +403,31 @@ def _execute_prioritization_job(
             for row in rows
         )
         warning_count = _pipeline_warning_count(rows)
+        docking_success_count = sum(
+            row.get("docking_result", {}).get("status") == "success"
+            for row in rows if isinstance(row.get("docking_result"), dict)
+        )
+        docking_failure_count = sum(
+            row.get("valid_molecule") is True
+            and isinstance(row.get("docking_result"), dict)
+            and row.get("docking_result", {}).get("status") not in {"success", "precomputed", "not_requested"}
+            for row in rows
+        )
+        eligible_count = sum(row.get("valid_molecule") is True for row in rows)
+        fully_scored_count = sum(row.get("prioritization_status") == "fully_scored" for row in rows)
+        partially_scored_count = sum(row.get("prioritization_status") == "partially_scored" for row in rows)
+        unscorable_count = sum(
+            row.get("prioritization_status") == "unscorable" for row in rows
+        )
+        ranked_count = sum(row.get("scientific_rank") is not None for row in rows)
+        eligible_for_ranking_count = sum(row.get("rank_eligible") is True for row in rows)
+        awaiting_or_missing_docking_count = sum(
+            row.get("prioritization_status") == "awaiting_docking" for row in rows
+        )
+        docking_failed_or_unavailable_count = sum(
+            row.get("prioritization_status") in {"docking_failed", "docking_unavailable"}
+            for row in rows
+        )
         metadata = read_job_metadata(job_id)
         if metadata is None:  # pragma: no cover - job metadata is created before submission
             raise RuntimeError(f"Job metadata disappeared during execution: {job_id}")
@@ -349,6 +447,16 @@ def _execute_prioritization_job(
             processed_count=len(rows),
             admet_success_count=admet_success_count,
             admet_failure_count=admet_failure_count,
+            docking_success_count=docking_success_count,
+            docking_failure_count=docking_failure_count,
+            eligible_count=eligible_count,
+            fully_scored_count=fully_scored_count,
+            partially_scored_count=partially_scored_count,
+            unscorable_count=unscorable_count,
+            ranked_count=ranked_count,
+            eligible_for_ranking_count=eligible_for_ranking_count,
+            awaiting_or_missing_docking_count=awaiting_or_missing_docking_count,
+            docking_failed_or_unavailable_count=docking_failed_or_unavailable_count,
             warning_count=warning_count,
         )
     except Exception as exc:
@@ -368,6 +476,12 @@ def _pipeline_warning_count(rows: list[dict[str, object]]) -> int:
     for row in rows:
         count += row.get("bbb_model_status") == "model_unavailable"
         count += row.get("admet_model_status") == "model_unavailable"
+        docking_result = row.get("docking_result")
+        count += (
+            isinstance(docking_result, dict)
+            and docking_result.get("status")
+            not in {"success", "precomputed", "not_requested", "not_run_invalid_molecule"}
+        )
         count += row.get("pubchem_lookup_status") == "lookup_failed"
         count += row.get("chembl_lookup_status") == "lookup_failed"
         count += row.get("patent_lookup_status") == "lookup_failed"
@@ -454,7 +568,7 @@ def _deserialize_result_row(row: dict[str, str]) -> dict[str, object]:
         row.get("admet_warning") or ""
     )
     restored["admet_predictions"] = fallback
-    for field in ("bbb_result", "admet_regression", "admet_family_status"):
+    for field in ("bbb_result", "admet_regression", "admet_family_status", "docking_result", "prioritization"):
         serialized_nested = row.get(field, "")
         if serialized_nested:
             try:
@@ -631,6 +745,14 @@ def history_metadata(metadata: dict[str, object]) -> dict[str, object]:
         "admet_failure_count": metadata.get("admet_failure_count", 0),
         "docking_success_count": metadata.get("docking_success_count", 0),
         "docking_failure_count": metadata.get("docking_failure_count", 0),
+        "eligible_count": metadata.get("eligible_count", 0),
+        "fully_scored_count": metadata.get("fully_scored_count", 0),
+        "partially_scored_count": metadata.get("partially_scored_count", 0),
+        "unscorable_count": metadata.get("unscorable_count", 0),
+        "ranked_count": metadata.get("ranked_count", 0),
+        "eligible_for_ranking_count": metadata.get("eligible_for_ranking_count", 0),
+        "awaiting_or_missing_docking_count": metadata.get("awaiting_or_missing_docking_count", 0),
+        "docking_failed_or_unavailable_count": metadata.get("docking_failed_or_unavailable_count", 0),
         "warning_count": metadata.get("warning_count", 0),
         "cancellation_requested": bool(metadata.get("cancellation_requested")),
         "error_message": metadata.get("error_message", ""),
@@ -809,6 +931,14 @@ def normalize_job_metadata(metadata: dict[str, object]) -> dict[str, object]:
     normalized.setdefault("admet_failure_count", 0)
     normalized.setdefault("docking_success_count", 0)
     normalized.setdefault("docking_failure_count", 0)
+    normalized.setdefault("eligible_count", 0)
+    normalized.setdefault("fully_scored_count", 0)
+    normalized.setdefault("partially_scored_count", 0)
+    normalized.setdefault("unscorable_count", 0)
+    normalized.setdefault("ranked_count", 0)
+    normalized.setdefault("eligible_for_ranking_count", 0)
+    normalized.setdefault("awaiting_or_missing_docking_count", 0)
+    normalized.setdefault("docking_failed_or_unavailable_count", 0)
     normalized.setdefault("warning_count", 0)
     normalized.setdefault("cancellation_requested", False)
     return normalized
@@ -833,6 +963,20 @@ def find_upload_path(upload_id: str) -> Path:
             detail="Uploaded CSV not found.",
         )
     return csv_files[0]
+
+
+def find_receptor_path(receptor_upload_id: str) -> Path:
+    if len(receptor_upload_id) != 32 or any(
+        character not in "0123456789abcdef" for character in receptor_upload_id.lower()
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receptor upload not found.")
+    receptor_dir = RECEPTOR_DIR / receptor_upload_id
+    if not receptor_dir.is_dir():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receptor upload not found.")
+    receptor_files = sorted(receptor_dir.glob("*.pdbqt"))
+    if len(receptor_files) != 1:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prepared receptor PDBQT not found.")
+    return receptor_files[0]
 
 
 def relative_path(path: Path) -> str:

@@ -1,3 +1,5 @@
+import pytest
+
 from molecular_prioritization.docking import (
     add_docking_informed_scores,
     parse_precomputed_docking_score,
@@ -20,6 +22,14 @@ def test_parse_precomputed_docking_score_returns_not_provided_when_column_missin
 
 def test_parse_precomputed_docking_score_returns_invalid_for_unparseable_value():
     result = parse_precomputed_docking_score({"docking_score": "high affinity"})
+
+    assert result.docking_score is None
+    assert result.docking_status == "invalid_docking_score"
+
+
+@pytest.mark.parametrize("raw_value", ["nan", "inf", "-inf"])
+def test_parse_precomputed_docking_score_rejects_nonfinite_values(raw_value):
+    result = parse_precomputed_docking_score({"docking_score": raw_value})
 
     assert result.docking_score is None
     assert result.docking_status == "invalid_docking_score"

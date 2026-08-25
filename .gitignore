@@ -17,6 +17,8 @@ desktop/runtime/
 # MolOptima runtime files
 backend/uploads/*
 !backend/uploads/.gitkeep
+backend/receptors/*
+!backend/receptors/.gitkeep
 backend/job_outputs/*
 !backend/job_outputs/.gitkeep
 backend/job_metadata/*
@@ -25,11 +27,14 @@ backend/job_annotations/*
 !backend/job_annotations/.gitkeep
 
 # App-managed local caches and manifests
+app_data/model_resources/
 app_data/model_cache/*
 !app_data/model_cache/.gitkeep
 !app_data/model_cache/huggingface/
 app_data/model_cache/huggingface/*
 !app_data/model_cache/huggingface/.gitkeep
+app_data/docking_work/*
+app_data/runtime_qualification/*
 app_data/public_lookup_cache/*
 !app_data/public_lookup_cache/.gitkeep
 !app_data/public_lookup_cache/chembl/

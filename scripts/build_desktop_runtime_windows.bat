@@ -6,7 +6,7 @@ set "PROJECT_ROOT=%SCRIPT_DIR%.."
 for %%I in ("%PROJECT_ROOT%") do set "PROJECT_ROOT=%%~fI"
 
 if not defined MOLOPTIMA_CONDA_ENV (
-  set "MOLOPTIMA_CONDA_ENV=C:\Users\tpryt\miniconda3\envs\molecule-intelligence"
+  set "MOLOPTIMA_CONDA_ENV=%USERPROFILE%\miniconda3\envs\molecule-intelligence"
 )
 
 set "RUNTIME_ROOT=%PROJECT_ROOT%\desktop\runtime"

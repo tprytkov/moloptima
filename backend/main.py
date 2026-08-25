@@ -15,6 +15,7 @@ from backend.schemas import (
     JobResponse,
     LatestJobResponse,
     PrioritizationRequest,
+    ReceptorUploadResponse,
     ResultResponse,
     SourceStatusResponse,
     UploadResponse,
@@ -43,6 +44,14 @@ def health() -> HealthResponse:
 @app.post("/api/molecules/upload", response_model=UploadResponse)
 def upload_molecules(file: UploadFile = File(...)) -> UploadResponse:
     return UploadResponse(**services.save_upload(file))
+
+
+@app.post("/api/receptors/upload", response_model=ReceptorUploadResponse)
+def upload_receptor(
+    file: UploadFile = File(...),
+    receptor_id: str = Query("", max_length=200),
+) -> ReceptorUploadResponse:
+    return ReceptorUploadResponse(**services.save_receptor(file, receptor_id=receptor_id))
 
 
 @app.get("/api/molecules/structure")
@@ -90,6 +99,20 @@ def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
                 "mechanism_context": request.mechanism_context,
                 "docking_protocol_notes": request.docking_protocol_notes,
                 "binding_site_notes": request.binding_site_notes,
+            },
+            enable_docking=request.enable_docking,
+            receptor_upload_id=request.receptor_upload_id,
+            receptor_id=request.receptor_id or request.pdb_id,
+            docking_configuration={
+                "center_x": request.docking_center_x,
+                "center_y": request.docking_center_y,
+                "center_z": request.docking_center_z,
+                "size_x": request.docking_size_x,
+                "size_y": request.docking_size_y,
+                "size_z": request.docking_size_z,
+                "exhaustiveness": request.docking_exhaustiveness,
+                "num_modes": request.docking_num_modes,
+                "seed": request.docking_seed,
             },
         )
     )

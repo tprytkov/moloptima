@@ -436,7 +436,9 @@ def test_result_api_preserves_all_ten_admet_endpoints(tmp_path: Path, monkeypatc
     assert row["admet_model_status"] == "model_available"
     assert row["admet_warning"] == ""
     assert set(row["admet_predictions"]) == ADMET_ENDPOINT_NAMES
-    assert row["admet_predictions"] == endpoint_payload
+    assert row["admet_predictions"] == {
+        name: value for name, value in endpoint_payload.items() if name != "bbb_martins"
+    }
 
 
 def test_result_schema_preserves_unavailable_and_invalid_admet_results():
@@ -444,6 +446,7 @@ def test_result_schema_preserves_unavailable_and_invalid_admet_results():
         endpoints = unavailable_admet_prediction(
             None, prediction_status=status, warning=f"{status} warning"
         )["endpoints"]
+        endpoints.pop("bbb_martins")
         response = ResultResponse(
             job_id="job",
             status="completed",
@@ -462,7 +465,7 @@ def test_result_schema_preserves_unavailable_and_invalid_admet_results():
 
         serialized = response.model_dump()["results"][0]
         assert serialized["admet_model_status"] == status
-        assert set(serialized["admet_predictions"]) == set(FROZEN_ENDPOINT_DEFINITIONS)
+        assert set(serialized["admet_predictions"]) == ADMET_ENDPOINT_NAMES
         assert all(
             endpoint["calibrated_probability"] is None
             for endpoint in serialized["admet_predictions"].values()

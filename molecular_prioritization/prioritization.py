@@ -22,6 +22,9 @@ from molecular_prioritization.structural_alerts import StructuralAlertResult
 from molecular_prioritization.synthetic_accessibility import SyntheticAccessibilityResult
 
 
+PRIORITIZATION_RANKING_VERSION = "moloptima_scientific_priority_v1"
+
+
 def calculate_priority_score(
     descriptors: MolecularDescriptors,
     is_valid: bool,
@@ -29,29 +32,130 @@ def calculate_priority_score(
 ) -> float:
     """Calculate a transparent Phase 1 priority score between 0 and 1."""
 
+    return _base_priority_calculation(descriptors, is_valid, bbb_prediction)[0]
+
+
+def _base_priority_calculation(
+    descriptors: MolecularDescriptors,
+    is_valid: bool,
+    bbb_prediction: BBBPrediction | None,
+) -> tuple[float, dict[str, object]]:
+    """Return the approved base score and its exact component-level explanation."""
+
     if not is_valid:
-        return 0.0
+        return 0.0, {
+            "status": "unscorable_invalid_molecule",
+            "priority_score": None,
+            "ranking_score": None,
+            "ranking_position": None,
+            "components": {},
+            "warnings": ["Scientific prioritization was not run because the molecule is invalid."],
+            "ranking_version": PRIORITIZATION_RANKING_VERSION,
+        }
 
     lipinski_component = 1.0 if descriptors.lipinski_pass else 0.4
     mw_component = _bounded_preference(descriptors.mw, lower=150, upper=500)
     tpsa_component = _bounded_preference(descriptors.tpsa, lower=20, upper=140)
     rotatable_component = max(0.0, 1.0 - max(0, descriptors.rotatable_bonds - 10) / 10)
+    components: dict[str, dict[str, object]] = {
+        "qed": _weighted_component(
+            descriptors.qed, descriptors.qed, 0.45,
+            "QED multiplied by the approved 0.45 base-score weight.",
+        ),
+        "lipinski": _weighted_component(
+            {"pass": descriptors.lipinski_pass, "violations": descriptors.lipinski_violations},
+            lipinski_component, 0.25,
+            "Lipinski pass maps to 1.0; non-pass maps to 0.4, then uses weight 0.25.",
+        ),
+        "molecular_weight": _weighted_component(
+            descriptors.mw, mw_component, 0.15,
+            "Full preference from 150 to 500 Da; linearly bounded outside that interval.",
+        ),
+        "tpsa": _weighted_component(
+            descriptors.tpsa, tpsa_component, 0.10,
+            "Full preference from 20 to 140 Å²; linearly bounded outside that interval.",
+        ),
+        "rotatable_bonds": _weighted_component(
+            descriptors.rotatable_bonds, rotatable_component, 0.05,
+            "Full preference through 10 rotatable bonds, then decreases linearly to zero at 20.",
+        ),
+    }
+    warnings: list[str] = []
+    bbb_probability = bbb_prediction.bbb_probability if bbb_prediction else None
+    bbb_label = bbb_prediction.bbb_prediction if bbb_prediction else "unavailable"
+    if bbb_probability is not None and bbb_label in {"high", "low"}:
+        direction = 1.0 if bbb_label == "high" else -1.0
+        components["gmc_bbb"] = {
+            "raw_value": bbb_probability,
+            "normalized_value": bbb_probability,
+            "contribution": round(direction * 0.05 * bbb_probability, 6),
+            "weight_or_rule": "+0.05 × probability for BBB+; -0.05 × probability for BBB-",
+            "status": "available",
+            "reason": (
+                f"Existing generic BBB rule applied to the provisional raw classification ({bbb_label})."
+            ),
+            "score_scope": "priority_score",
+        }
+        warnings.append(
+            "BBB desirability uses the existing generic penetration-favorable rule; no approved target-specific BBB profile is configured."
+        )
+        if bbb_label == "low":
+            warnings.append(
+                "The preserved legacy BBB- rule subtracts 0.05 × the BBB+ probability rather than its complement; this asymmetric rule has not been scientifically redesigned in Task 4."
+            )
+    else:
+        components["gmc_bbb"] = {
+            "raw_value": None,
+            "normalized_value": None,
+            "contribution": None,
+            "weight_or_rule": "+0.05 × probability for BBB+; -0.05 × probability for BBB-",
+            "status": _missing_bbb_status(bbb_prediction),
+            "reason": "GMC BBB evidence is unavailable and is omitted, not replaced with a numeric zero.",
+            "score_scope": "priority_score",
+        }
+        warnings.append("GMC BBB evidence was unavailable; the base score uses descriptor evidence only.")
 
-    score = (
-        descriptors.qed * 0.45
-        + lipinski_component * 0.25
-        + mw_component * 0.15
-        + tpsa_component * 0.10
-        + rotatable_component * 0.05
+    contribution_total = sum(
+        float(component["contribution"])
+        for component in components.values()
+        if component.get("contribution") is not None
     )
+    score = round(max(0.0, min(contribution_total, 1.0)), 3)
+    status = "base_scored" if components["gmc_bbb"]["status"] == "available" else "partial_evidence"
+    return score, {
+        "status": status,
+        "priority_score": score,
+        "ranking_score": None,
+        "ranking_position": None,
+        "components": components,
+        "warnings": warnings,
+        "ranking_version": PRIORITIZATION_RANKING_VERSION,
+    }
 
-    if bbb_prediction and bbb_prediction.bbb_probability is not None:
-        if bbb_prediction.bbb_prediction == "high":
-            score += 0.05 * bbb_prediction.bbb_probability
-        elif bbb_prediction.bbb_prediction == "low":
-            score -= 0.05 * bbb_prediction.bbb_probability
 
-    return round(max(0.0, min(score, 1.0)), 3)
+def _weighted_component(
+    raw_value: object,
+    normalized_value: float,
+    weight: float,
+    reason: str,
+) -> dict[str, object]:
+    return {
+        "raw_value": raw_value,
+        "normalized_value": round(normalized_value, 6),
+        "contribution": round(normalized_value * weight, 6),
+        "weight_or_rule": weight,
+        "status": "available",
+        "reason": reason,
+        "score_scope": "priority_score",
+    }
+
+
+def _missing_bbb_status(bbb_prediction: BBBPrediction | None) -> str:
+    if bbb_prediction is None:
+        return "unavailable_model_family"
+    if bbb_prediction.bbb_model_status == "not_run_invalid_molecule":
+        return "invalid_molecule"
+    return str(bbb_prediction.bbb_model_status or "unavailable_model_family")
 
 
 def build_priority_record(
@@ -84,11 +188,21 @@ def build_priority_record(
         "lipinski_pass": False,
     }
 
-    priority_score = (
-        calculate_priority_score(descriptors, valid_molecule, bbb_prediction)
-        if descriptors
-        else 0.0
-    )
+    if descriptors:
+        priority_score, prioritization = _base_priority_calculation(
+            descriptors, valid_molecule, bbb_prediction,
+        )
+    else:
+        priority_score = 0.0
+        prioritization = {
+            "status": "unscorable_invalid_molecule",
+            "priority_score": None,
+            "ranking_score": None,
+            "ranking_position": None,
+            "components": {},
+            "warnings": ["Scientific prioritization was not run because descriptors are unavailable."],
+            "ranking_version": PRIORITIZATION_RANKING_VERSION,
+        }
     bbb_values = bbb_prediction or BBBPrediction(
         bbb_prediction="unavailable",
         bbb_probability=None,
@@ -137,6 +251,11 @@ def build_priority_record(
         "canonical_smiles": canonical_smiles,
         "valid_molecule": valid_molecule,
         "priority_score": priority_score,
+        "scientific_ranking_score": None,
+        "scientific_rank": None,
+        "prioritization_status": prioritization["status"],
+        "ranking_version": PRIORITIZATION_RANKING_VERSION,
+        "prioritization": prioritization,
         "error": error,
         "known_compound_match": identity_values.known_compound_match,
         "known_compound_name": identity_values.known_compound_name,
@@ -218,6 +337,182 @@ def build_priority_record(
         if key == "patent_warning":
             ordered_record.update(evidence_synthesis)
     return ordered_record
+
+
+def finalize_scientific_prioritization(
+    rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Attach docking/display-only context and deterministically rank valid rows."""
+
+    finalized: list[tuple[int, dict[str, object]]] = []
+    for input_index, source_row in enumerate(rows):
+        row = dict(source_row)
+        prioritization = dict(row.get("prioritization") or {})
+        components = dict(prioritization.get("components") or {})
+        warnings = list(prioritization.get("warnings") or [])
+        components["vina_docking"] = _docking_component(row)
+        if components["vina_docking"]["status"] == "available":
+            components["base_priority_for_combined"] = {
+                "raw_value": row.get("priority_score"),
+                "normalized_value": row.get("priority_score"),
+                "contribution": round(float(row.get("priority_score") or 0.0) * 0.70, 6),
+                "weight_or_rule": 0.70,
+                "status": "available",
+                "reason": "The approved combined candidate score carries 70% of the unchanged base priority score.",
+                "score_scope": "combined_candidate_score",
+            }
+        components.update(_display_only_components(row))
+
+        valid = row.get("valid_molecule") is True
+        base_score = _finite_number(row.get("priority_score")) if valid else None
+        combined_score = _finite_number(row.get("combined_candidate_score")) if valid else None
+        bbb_available = components.get("gmc_bbb", {}).get("status") == "available"
+        docking_available = components["vina_docking"]["status"] == "available"
+        rank_eligible = bool(valid and base_score is not None and docking_available and combined_score is not None)
+        ranking_score = combined_score if rank_eligible else None
+        if not valid:
+            status = "unscorable_invalid_molecule"
+        elif base_score is None:
+            status = "unscorable"
+        elif not docking_available:
+            status = _missing_docking_prioritization_status(row.get("docking_status"))
+            warnings.append("Final scientific ranking requires successful Vina docking.")
+        elif bbb_available:
+            status = "fully_scored"
+        else:
+            status = "partially_scored"
+        prioritization.update({
+            "status": status,
+            "priority_score": base_score,
+            "ranking_score": ranking_score,
+            "ranking_position": None,
+            "rank_eligible": rank_eligible,
+            "ranking_basis": (
+                "combined_candidate_score_70_percent_base_30_percent_vina"
+                if rank_eligible
+                else "requires_successful_vina_docking"
+                if valid and base_score is not None and not docking_available
+                else "not_ranked"
+            ),
+            "components": components,
+            "warnings": _deduplicate(warnings),
+            "ranking_version": PRIORITIZATION_RANKING_VERSION,
+        })
+        row.update({
+            "scientific_ranking_score": ranking_score,
+            "scientific_rank": None,
+            "rank_eligible": rank_eligible,
+            "prioritization_status": status,
+            "ranking_version": PRIORITIZATION_RANKING_VERSION,
+            "prioritization": prioritization,
+        })
+        finalized.append((input_index, row))
+
+    rankable = [item for item in finalized if item[1]["scientific_ranking_score"] is not None]
+    rankable.sort(key=lambda item: (
+        -float(item[1]["scientific_ranking_score"]),
+        str(item[1].get("molecule_id") or "").casefold(),
+        str(item[1].get("canonical_smiles") or ""),
+        item[0],
+    ))
+    for rank, (_input_index, row) in enumerate(rankable, start=1):
+        row["scientific_rank"] = rank
+        row["prioritization"]["ranking_position"] = rank
+    unrankable = [item for item in finalized if item[1]["scientific_ranking_score"] is None]
+    return [row for _index, row in (*rankable, *unrankable)]
+
+
+def _missing_docking_prioritization_status(docking_status: object) -> str:
+    status = str(docking_status or "docking_unavailable")
+    if status in {"not_provided", "not_requested", "pending", "not_run"}:
+        return "awaiting_docking"
+    if status in {
+        "runtime_unavailable", "receptor_unavailable", "configuration_invalid",
+        "docking_unavailable",
+    }:
+        return "docking_unavailable"
+    return "docking_failed"
+
+
+def _docking_component(row: dict[str, object]) -> dict[str, object]:
+    raw_value = _finite_number(row.get("docking_score"))
+    normalized = _finite_number(row.get("docking_score_normalized"))
+    available = row.get("docking_status") == "provided" and raw_value is not None and normalized is not None
+    if available:
+        return {
+            "raw_value": raw_value,
+            "normalized_value": normalized,
+            "contribution": round(normalized * 0.30, 6),
+            "weight_or_rule": "30% of combined_candidate_score; excluded from base priority_score",
+            "status": "available",
+            "reason": "More-negative Vina affinity ranks more favorably within this receptor/site/protocol batch; it is not binding free energy.",
+            "score_scope": "combined_candidate_score",
+        }
+    docking_status = str(row.get("docking_status") or "docking_unavailable")
+    return {
+        "raw_value": raw_value,
+        "normalized_value": None,
+        "contribution": None,
+        "weight_or_rule": "30% of combined_candidate_score when a valid batch docking signal exists",
+        "status": "docking_unavailable" if docking_status in {"not_provided", "not_requested"} else docking_status,
+        "reason": "No docking contribution was fabricated; Vina affinity is unavailable for this molecule.",
+        "score_scope": "combined_candidate_score",
+    }
+
+
+def _display_only_components(row: dict[str, object]) -> dict[str, dict[str, object]]:
+    return {
+        "chemberta_classification": _display_only_component(
+            row.get("admet_predictions"),
+            str((row.get("admet_family_status") or {}).get("chemberta") or row.get("admet_model_status") or "unavailable_model_family"),
+            "Nine approved ChemBERTa endpoints are retained as raw evidence but have no approved weight in this policy; legacy bbb_martins is excluded.",
+        ),
+        "chemprop_regression": _display_only_component(
+            row.get("admet_regression"),
+            str((row.get("admet_family_status") or {}).get("chemprop_regression") or "unavailable_model_family"),
+            "Five Chemprop regression endpoints, units, transforms, and disagreement are retained but have no approved weight in this policy.",
+        ),
+        "synthetic_accessibility": _display_only_component(
+            row.get("sa_score"), str(row.get("synthetic_feasibility_status") or "unsupported_value"),
+            "Heuristic SA is displayed but has no approved contribution to this policy.",
+        ),
+        "structural_alerts": _display_only_component(
+            {
+                "count": row.get("structural_alert_count"),
+                "pains_alert": row.get("pains_alert"),
+                "brenk_alert": row.get("brenk_alert"),
+            },
+            str(row.get("structural_alert_status") or "unsupported_value"),
+            "Structural alerts are displayed for review but have no approved contribution to this policy.",
+        ),
+    }
+
+
+def _display_only_component(raw_value: object, status: str, reason: str) -> dict[str, object]:
+    unavailable = status in {
+        "model_unavailable", "not_run_invalid_molecule", "unavailable_model_family",
+        "not_run", "unsupported_value",
+    }
+    return {
+        "raw_value": raw_value,
+        "normalized_value": None,
+        "contribution": None,
+        "weight_or_rule": "display_only_not_in_ranking_policy",
+        "status": status if unavailable else "available_display_only",
+        "reason": reason,
+        "score_scope": "not_scored",
+    }
+
+
+def _finite_number(value: object) -> float | None:
+    if not isinstance(value, int | float):
+        return None
+    number = float(value)
+    return number if number == number and abs(number) != float("inf") else None
+
+
+def _deduplicate(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
 
 
 def _bounded_preference(value: float, lower: float, upper: float) -> float:

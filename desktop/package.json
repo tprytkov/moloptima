@@ -69,6 +69,16 @@
         "filter": [
           "**/.gitkeep"
         ]
+      },
+      {
+        "from": "../resources",
+        "to": "moloptima-app/resources",
+        "filter": [
+          "admet/runtime_manifest.json",
+          "admet/runners/**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
       }
     ],
     "win": {

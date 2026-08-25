@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -38,7 +39,10 @@ def parse_precomputed_docking_score(record: dict[str, str]) -> DockingResult:
         return DockingResult(docking_score=None, docking_status="invalid_docking_score")
 
     try:
-        return DockingResult(docking_score=float(raw_value), docking_status="provided")
+        parsed = float(raw_value)
+        if not math.isfinite(parsed):
+            return DockingResult(docking_score=None, docking_status="invalid_docking_score")
+        return DockingResult(docking_score=parsed, docking_status="provided")
     except ValueError:
         return DockingResult(docking_score=None, docking_status="invalid_docking_score")
 
@@ -57,6 +61,7 @@ def add_docking_informed_scores(rows: list[dict[str, object]]) -> list[dict[str,
         if row.get("valid_molecule") is True
         and row.get("docking_status") == "provided"
         and isinstance(row.get("docking_score"), int | float)
+        and math.isfinite(float(row["docking_score"]))
     ]
 
     if not valid_docking_rows:

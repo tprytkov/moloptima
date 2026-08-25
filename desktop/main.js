@@ -3,7 +3,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const examplePythonPath = 'C:\\Users\\tpryt\\miniconda3\\envs\\molecule-intelligence\\python.exe';
+const examplePythonPath = 'C:\\path\\to\\conda-env\\python.exe';
 const backendUrl = process.env.MOLOPTIMA_BACKEND_URL || 'http://127.0.0.1:8000';
 const frontendUrl = process.env.MOLOPTIMA_FRONTEND_URL || 'http://127.0.0.1:5173';
 const startFrontend =

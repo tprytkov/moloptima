@@ -7,6 +7,8 @@ Phase 5C adds desktop runtime diagnostics so users can confirm Python, backend h
 Phase 5D prepares the launcher to use a bundled Python/RDKit runtime when one is supplied in a future release, while keeping `MOLOPTIMA_PYTHON` as the first-priority override.
 Phase 5E adds local scripts to build and validate that runtime bundle under `desktop/runtime/python/` without committing runtime binaries.
 
+Task 5 packages the exact validated GMC and regression CLI sources and their checksum manifest. Their scientific interpreters are separate from the general backend runtime: each family accepts its own explicit/environment override, otherwise selects its own packaged runtime, and fails closed if it is absent or incompatible. The large family runtimes and model archives remain externally provisioned release assets.
+
 ## What The Launcher Does
 
 - Starts the FastAPI backend as a local child process.
@@ -36,13 +38,13 @@ This installs Electron for the desktop launcher only. The scientific Python envi
 The desktop launcher needs a Python environment with MolOptima backend dependencies, RDKit, FastAPI, and Uvicorn installed. Set `MOLOPTIMA_PYTHON` to the Conda environment Python executable:
 
 ```bat
-set MOLOPTIMA_PYTHON=C:\Users\tpryt\miniconda3\envs\molecule-intelligence\python.exe
+set MOLOPTIMA_PYTHON=C:\path\to\conda-env\python.exe
 ```
 
 PowerShell equivalent:
 
 ```powershell
-$env:MOLOPTIMA_PYTHON = "C:\Users\tpryt\miniconda3\envs\molecule-intelligence\python.exe"
+$env:MOLOPTIMA_PYTHON = "C:\path\to\conda-env\python.exe"
 ```
 
 If `MOLOPTIMA_PYTHON` is not set, the development launcher checks `desktop/runtime/python/python.exe` and then uses `python` from `PATH`.
@@ -52,7 +54,7 @@ For packaged MolOptima builds, the launcher checks `resources/runtime/python/pyt
 To set `MOLOPTIMA_PYTHON` permanently for the current Windows user:
 
 ```bat
-setx MOLOPTIMA_PYTHON "C:\Users\tpryt\miniconda3\envs\molecule-intelligence\python.exe"
+setx MOLOPTIMA_PYTHON "C:\path\to\conda-env\python.exe"
 ```
 
 Close and reopen Command Prompt, PowerShell, or the desktop app after running `setx`.
@@ -62,7 +64,7 @@ PowerShell persistent user setting:
 ```powershell
 [Environment]::SetEnvironmentVariable(
   "MOLOPTIMA_PYTHON",
-  "C:\Users\tpryt\miniconda3\envs\molecule-intelligence\python.exe",
+  "C:\path\to\conda-env\python.exe",
   "User"
 )
 ```
@@ -136,7 +138,7 @@ Generated package files under `desktop/dist/` are ignored by Git and should not 
 The packaged app still requires a local Python/Conda environment. Before launching the packaged executable, set:
 
 ```bat
-set MOLOPTIMA_PYTHON=C:\Users\tpryt\miniconda3\envs\molecule-intelligence\python.exe
+set MOLOPTIMA_PYTHON=C:\path\to\conda-env\python.exe
 ```
 
 Then run:
@@ -176,7 +178,7 @@ Future maintainers can create a runtime bundle from the existing Conda environme
 ```bat
 conda activate molecule-intelligence
 conda install -c conda-forge conda-pack
-conda pack -p C:\Users\tpryt\miniconda3\envs\molecule-intelligence -o moloptima-runtime.zip
+conda pack -p C:\path\to\conda-env -o moloptima-runtime.zip
 ```
 
 Unpack the archive into `desktop/runtime/python/` for development testing. The bundled runtime must include RDKit, FastAPI, Uvicorn, NumPy/Pandas-style dependencies used by the backend, and any optional model dependencies that should be available at runtime. BBB/ChemBERTa model weights remain outside the runtime unless a future release explicitly decides otherwise.

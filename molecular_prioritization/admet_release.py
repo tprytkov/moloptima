@@ -11,21 +11,33 @@ from pathlib import PurePosixPath
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT_ENV = "MOLOPTIMA_ADMET_RELEASE_ROOT"
-LOCAL_RELEASE_ROOTS = (
-    PROJECT_ROOT / "resources" / "admet",
-    PROJECT_ROOT / "app_data" / "model_resources" / "admet",
-)
 EXTRACTED_CACHE_ROOT = PROJECT_ROOT / "app_data" / "model_cache" / "admet_release"
+RELEASE_FAMILY_DIRECTORIES = ("ChemBERTa", "GMC_MPNN_BBB", "Chemprop_regression")
 
 
 class ADMETReleaseError(RuntimeError):
     """A required frozen release artifact is unavailable or corrupt."""
 
 
-def resolve_release_root() -> Path | None:
+def resolve_release_root(*, application_root: str | Path | None = None) -> Path | None:
     configured = os.environ.get(RELEASE_ROOT_ENV, "").strip()
-    candidates = (Path(configured).expanduser(),) if configured else LOCAL_RELEASE_ROOTS
-    return next((path.resolve() for path in candidates if path.is_dir()), None)
+    local_root = Path(application_root).resolve() if application_root is not None else PROJECT_ROOT
+    local_candidates = (
+        local_root / "resources" / "admet",
+        local_root / "app_data" / "model_resources" / "admet",
+    )
+    if configured:
+        candidate = Path(configured).expanduser()
+        return candidate.resolve() if candidate.is_dir() else None
+    return next(
+        (
+            path.resolve()
+            for path in local_candidates
+            if path.is_dir()
+            and any((path / family).is_dir() for family in RELEASE_FAMILY_DIRECTORIES)
+        ),
+        None,
+    )
 
 
 def sha256_file(path: Path) -> str:

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import csv
 import json
-import os
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
 from molecular_prioritization.admet_release import ADMETReleaseError, extracted_archive, resolve_release_root, verify_sidecar
+from molecular_prioritization.admet_runtime import ADMETRuntimeError, resolve_admet_runtime
 
 
 ENDPOINTS = (
@@ -30,10 +29,19 @@ class ChempropRegressionUnavailable(RuntimeError):
 
 
 class ChempropRegressionPredictor:
-    def __init__(self, *, python: str | None = None, runner: str | Path | None = None) -> None:
-        root = resolve_release_root()
+    def __init__(
+        self,
+        *,
+        python: str | Path | None = None,
+        runner: str | Path | None = None,
+        application_root: str | Path | None = None,
+        runtime_command_runner=subprocess.run,
+    ) -> None:
+        root = resolve_release_root(application_root=application_root)
         if root is None:
-            raise ChempropRegressionUnavailable("ADMET release root is not configured or packaged.")
+            raise ChempropRegressionUnavailable(
+                "model_release_missing: regression model release is not configured or packaged"
+            )
         family = root / "Chemprop_regression"
         archive = family / "chemprop_regression_release_v1.tar.gz"
         manifest = family / "production_manifest.json"
@@ -41,18 +49,32 @@ class ChempropRegressionPredictor:
             verify_sidecar(manifest, family / "production_manifest.json.sha256")
             self.artifact_root = extracted_archive(archive, expected_sha256=ARCHIVE_SHA256)
         except ADMETReleaseError as exc:
-            raise ChempropRegressionUnavailable(str(exc)) from exc
+            code = "model_release_hash_mismatch" if "SHA-256" in str(exc) else "model_release_invalid"
+            raise ChempropRegressionUnavailable(
+                f"{code}: regression frozen release failed verification"
+            ) from exc
         manifests = list(self.artifact_root.rglob("production_manifest.json"))
         if len(manifests) != 1:
-            raise ChempropRegressionUnavailable("Regression runtime archive omitted production_manifest.json.")
-        self.manifest = manifests[0]
-        self.python = python or os.environ.get(PYTHON_ENV, "").strip() or sys.executable
-        configured_runner = runner or os.environ.get(RUNNER_ENV, "").strip()
-        if not configured_runner or not Path(configured_runner).is_file():
             raise ChempropRegressionUnavailable(
-                f"Validated Chemprop regression runner is unavailable; configure {RUNNER_ENV}."
+                "model_release_invalid: regression release manifest is missing"
             )
-        self.runner = Path(configured_runner).resolve()
+        self.manifest = manifests[0]
+        try:
+            runtime = resolve_admet_runtime(
+                "chemprop_regression",
+                model_manifest=self.manifest,
+                application_root=application_root,
+                python_override=python,
+                runner_override=runner,
+                command_runner=runtime_command_runner,
+            )
+        except ADMETRuntimeError as exc:
+            raise ChempropRegressionUnavailable(str(exc)) from exc
+        self.python = str(runtime.python)
+        self.runner = runtime.runner
+        self.python_source = runtime.python_source
+        self.runner_source = runtime.runner_source
+        self.runtime_versions = dict(runtime.versions)
 
     def predict_batch(self, molecule_ids: list[str], canonical_smiles: list[str]) -> list[dict[str, object]]:
         if len(molecule_ids) != len(canonical_smiles):
@@ -66,8 +88,11 @@ class ChempropRegressionPredictor:
             command = [self.python, str(self.runner), "--manifest", str(self.manifest), "--artifact-root", str(self.artifact_root), "--input-csv", str(input_path), "--output-csv", str(output_path), "--num-workers", "0"]
             completed = subprocess.run(command, capture_output=True, text=True, shell=False)
             if completed.returncode != 0:
-                message = (completed.stderr or completed.stdout).strip()[-1200:]
-                raise ChempropRegressionUnavailable(f"Chemprop regression runner failed: {message or 'no diagnostic'}")
+                diagnostic = (completed.stderr or completed.stdout).lower()
+                code = "runtime_incompatible" if "runtime" in diagnostic or "version" in diagnostic else "runner_failed"
+                raise ChempropRegressionUnavailable(
+                    f"{code}: Chemprop regression validated runner did not complete"
+                )
             with output_path.open(encoding="utf-8-sig", newline="") as handle:
                 rows = list(csv.DictReader(handle))
         if len(rows) != len(molecule_ids):

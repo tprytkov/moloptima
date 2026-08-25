@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import csv
 import math
-import os
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -16,6 +14,7 @@ from molecular_prioritization.admet_release import (
     resolve_release_root,
     sha256_file,
 )
+from molecular_prioritization.admet_runtime import ADMETRuntimeError, resolve_admet_runtime
 
 
 SEEDS = (13, 37, 73, 101, 137)
@@ -33,10 +32,17 @@ class GMCBBBUnavailable(RuntimeError):
 
 
 class GMCBBBPredictor:
-    def __init__(self, *, python: str | None = None, runner: str | Path | None = None) -> None:
-        root = resolve_release_root()
+    def __init__(
+        self,
+        *,
+        python: str | Path | None = None,
+        runner: str | Path | None = None,
+        application_root: str | Path | None = None,
+        runtime_command_runner=subprocess.run,
+    ) -> None:
+        root = resolve_release_root(application_root=application_root)
         if root is None:
-            raise GMCBBBUnavailable("ADMET release root is not configured or packaged.")
+            raise GMCBBBUnavailable("model_release_missing: GMC model release is not configured or packaged")
         family = root / "GMC_MPNN_BBB"
         archive = family / "gmc_mpnn_bbb_production_release_v1.tar.gz"
         manifest = family / "production_manifest.json"
@@ -45,19 +51,29 @@ class GMCBBBPredictor:
                 raise ADMETReleaseError("SHA-256 mismatch for GMC production_manifest.json.")
             extracted = extracted_archive(archive, expected_sha256=ARCHIVE_SHA256)
         except ADMETReleaseError as exc:
-            raise GMCBBBUnavailable(str(exc)) from exc
+            code = "model_release_hash_mismatch" if "SHA-256" in str(exc) else "model_release_invalid"
+            raise GMCBBBUnavailable(f"{code}: GMC frozen release failed verification") from exc
         self.artifact_root = extracted
         manifests = list(extracted.rglob("production_manifest.json"))
         if len(manifests) != 1:
-            raise GMCBBBUnavailable("GMC runtime archive omitted production_manifest.json.")
+            raise GMCBBBUnavailable("model_release_invalid: GMC release manifest is missing")
         self.manifest = manifests[0]
-        self.python = python or os.environ.get(PYTHON_ENV, "").strip() or sys.executable
-        configured_runner = runner or os.environ.get(RUNNER_ENV, "").strip()
-        if not configured_runner or not Path(configured_runner).is_file():
-            raise GMCBBBUnavailable(
-                f"Validated GMC production runner is unavailable; configure {RUNNER_ENV}."
+        try:
+            runtime = resolve_admet_runtime(
+                "gmc_mpnn_bbb",
+                model_manifest=self.manifest,
+                application_root=application_root,
+                python_override=python,
+                runner_override=runner,
+                command_runner=runtime_command_runner,
             )
-        self.runner = Path(configured_runner).resolve()
+        except ADMETRuntimeError as exc:
+            raise GMCBBBUnavailable(str(exc)) from exc
+        self.python = str(runtime.python)
+        self.runner = runtime.runner
+        self.python_source = runtime.python_source
+        self.runner_source = runtime.runner_source
+        self.runtime_versions = dict(runtime.versions)
 
     def predict_batch(self, molecule_ids: list[str], canonical_smiles: list[str]) -> list[dict[str, object]]:
         if len(molecule_ids) != len(canonical_smiles):
@@ -79,8 +95,9 @@ class GMCBBBPredictor:
             ]
             completed = subprocess.run(command, capture_output=True, text=True, shell=False)
             if completed.returncode != 0:
-                message = (completed.stderr or completed.stdout).strip()[-1200:]
-                raise GMCBBBUnavailable(f"GMC runner failed: {message or 'no diagnostic'}")
+                diagnostic = (completed.stderr or completed.stdout).lower()
+                code = "runtime_incompatible" if "runtime" in diagnostic or "version" in diagnostic else "runner_failed"
+                raise GMCBBBUnavailable(f"{code}: GMC validated runner did not complete")
             with output_path.open(encoding="utf-8-sig", newline="") as handle:
                 rows = list(csv.DictReader(handle))
         if len(rows) != len(molecule_ids):

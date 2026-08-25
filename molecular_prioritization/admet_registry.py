@@ -102,8 +102,10 @@ def _family_item(value, index, unavailable_factory):
     return value[index]
 
 
-def _load_chemberta():
-    root = resolve_release_root()
+def load_chemberta_predictor(*, application_root: str | None = None):
+    """Load the verified frozen ChemBERTa family from normal application resources."""
+
+    root = resolve_release_root(application_root=application_root)
     if root is None:
         raise ADMETReleaseError("ADMET release root is not configured or packaged.")
     family = root / "ChemBERTa"
@@ -116,6 +118,10 @@ def _load_chemberta():
     bundle = only_child_directory(extracted)
     verify_bundle_inventory(bundle)
     return load_admet_multitask_predictor(bundle)
+
+
+def _load_chemberta():
+    return load_chemberta_predictor()
 
 
 def _classification_result(raw: dict[str, object]) -> dict[str, object]:

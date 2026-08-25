@@ -39,6 +39,8 @@ import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
 import AdmetResultsSection from './AdmetResultsSection.jsx';
+import DockingResultsSection from './DockingResultsSection.jsx';
+import PrioritizationExplanationSection from './PrioritizationExplanationSection.jsx';
 import {
   MAX_BATCH_SIZE,
   TERMINAL_JOB_STATUSES,
@@ -126,6 +128,12 @@ function App() {
     counting: false,
     error: '',
   });
+  const [receptorState, setReceptorState] = useState({
+    selectedFile: null,
+    upload: null,
+    loading: false,
+    error: '',
+  });
   const [prioritizationState, setPrioritizationState] = useState({
     job: null,
     result: null,
@@ -172,6 +180,17 @@ function App() {
     mechanism_context: '',
     docking_protocol_notes: '',
     binding_site_notes: '',
+    enable_docking: true,
+    receptor_id: '',
+    docking_center_x: '',
+    docking_center_y: '',
+    docking_center_z: '',
+    docking_size_x: '',
+    docking_size_y: '',
+    docking_size_z: '',
+    docking_exhaustiveness: '',
+    docking_num_modes: '',
+    docking_seed: '',
   });
   const health = useBackendHealth();
   const annotatedPrioritizationState = useMemo(
@@ -345,6 +364,25 @@ function App() {
     }
   }
 
+  async function handleReceptorUpload() {
+    if (!receptorState.selectedFile) {
+      setReceptorState((current) => ({ ...current, error: 'Select a prepared receptor PDBQT file.' }));
+      return;
+    }
+    setReceptorState((current) => ({ ...current, loading: true, error: '' }));
+    const formData = new FormData();
+    formData.append('file', receptorState.selectedFile);
+    const receptorId = encodeURIComponent(targetContext.receptor_id || targetContext.pdb_id || '');
+    try {
+      const upload = await apiRequest(`/api/receptors/upload?receptor_id=${receptorId}`, {
+        method: 'POST', body: formData,
+      });
+      setReceptorState((current) => ({ ...current, upload, loading: false, error: '' }));
+    } catch (error) {
+      setReceptorState((current) => ({ ...current, upload: null, loading: false, error: readableError(error) }));
+    }
+  }
+
   async function handleStartPrioritization() {
     const uploadId = uploadState.upload?.upload_id;
     if (!uploadId) {
@@ -367,7 +405,9 @@ function App() {
           enable_chembl_lookup: chemblLookupEnabled,
           enable_patent_lookup: patentLookupEnabled,
           enable_target_reference_discovery: targetReferenceEnabled,
+          receptor_upload_id: receptorState.upload?.receptor_upload_id ?? '',
           ...targetContext,
+          ...dockingRequestPayload(targetContext),
         }),
       });
       setPrioritizationState({ job, result: null, loading: true, error: '' });
@@ -599,6 +639,8 @@ function App() {
               activeItem={activeItem}
               health={health}
               uploadState={uploadState}
+              receptorState={receptorState}
+              setReceptorState={setReceptorState}
               setUploadState={setUploadState}
               prioritizationState={annotatedPrioritizationState}
               latestRunState={annotatedLatestRunState}
@@ -607,6 +649,7 @@ function App() {
               sourceStatusState={sourceStatusState}
               onUpload={handleUpload}
               onSelectUploadFile={handleSelectUploadFile}
+              onReceptorUpload={handleReceptorUpload}
               onStartPrioritization={handleStartPrioritization}
               onCancelPrioritization={handleCancelPrioritization}
               onLoadHistoricalRun={handleLoadHistoricalRun}
@@ -726,6 +769,8 @@ function ActivePage({
   activeItem,
   health,
   uploadState,
+  receptorState,
+  setReceptorState,
   setUploadState,
   prioritizationState,
   latestRunState,
@@ -734,6 +779,7 @@ function ActivePage({
   sourceStatusState,
   onUpload,
   onSelectUploadFile,
+  onReceptorUpload,
   onStartPrioritization,
   onCancelPrioritization,
   onLoadHistoricalRun,
@@ -766,9 +812,12 @@ function ActivePage({
     return (
       <PrioritizationPage
         uploadState={uploadState}
+        receptorState={receptorState}
+        setReceptorState={setReceptorState}
         prioritizationState={prioritizationState}
         onStartPrioritization={onStartPrioritization}
         onCancelPrioritization={onCancelPrioritization}
+        onReceptorUpload={onReceptorUpload}
         pubchemLookupEnabled={pubchemLookupEnabled}
         setPubchemLookupEnabled={setPubchemLookupEnabled}
         chemblLookupEnabled={chemblLookupEnabled}
@@ -2591,9 +2640,12 @@ function CandidateExportPanel({ rows }) {
 
 function PrioritizationPage({
   uploadState,
+  receptorState,
+  setReceptorState,
   prioritizationState,
   onStartPrioritization,
   onCancelPrioritization,
+  onReceptorUpload,
   pubchemLookupEnabled,
   setPubchemLookupEnabled,
   chemblLookupEnabled,
@@ -2673,6 +2725,24 @@ function PrioritizationPage({
                 }
                 label="Enable target reference discovery"
               />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={Boolean(targetContext.enable_docking)}
+                    onChange={(event) => setTargetContext({ ...targetContext, enable_docking: event.target.checked })}
+                  />
+                }
+                label="Enable local Vina docking"
+              />
+              {targetContext.enable_docking && (
+                <DockingSetupFields
+                  targetContext={targetContext}
+                  setTargetContext={setTargetContext}
+                  receptorState={receptorState}
+                  setReceptorState={setReceptorState}
+                  onReceptorUpload={onReceptorUpload}
+                />
+              )}
               {targetReferenceEnabled && (
                 <TargetContextFields targetContext={targetContext} setTargetContext={setTargetContext} />
               )}
@@ -2709,6 +2779,16 @@ function PrioritizationPage({
                 ['Job ID', prioritizationState.job.job_id],
                 ['Submitted', prioritizationState.job.submitted_count],
                 ['Processed', `${prioritizationState.job.processed_count ?? 0} / ${prioritizationState.job.total_count ?? 0}`],
+                ['Docking successes', prioritizationState.job.docking_success_count ?? 0],
+                ['Docking failures', prioritizationState.job.docking_failure_count ?? 0],
+                ['Valid molecules', prioritizationState.job.eligible_count ?? 0],
+                ['Fully scored', prioritizationState.job.fully_scored_count ?? 0],
+                ['Partially scored', prioritizationState.job.partially_scored_count ?? 0],
+                ['Unscorable / invalid', prioritizationState.job.unscorable_count ?? 0],
+                ['Scientifically ranked', prioritizationState.job.ranked_count ?? 0],
+                ['Eligible for final ranking', prioritizationState.job.eligible_for_ranking_count ?? 0],
+                ['Awaiting / missing docking', prioritizationState.job.awaiting_or_missing_docking_count ?? 0],
+                ['Docking failed / unavailable', prioritizationState.job.docking_failed_or_unavailable_count ?? 0],
                 ['Warnings', prioritizationState.job.warning_count],
                 ['Cancellation requested', prioritizationState.job.cancellation_requested ? 'yes' : 'no'],
                 ['Output file', prioritizationState.job.output_file],
@@ -2837,6 +2917,69 @@ function TargetContextFields({ targetContext, setTargetContext }) {
       />
     </Box>
   );
+}
+
+const DOCKING_NUMERIC_FIELDS = [
+  ['docking_center_x', 'Box center X'],
+  ['docking_center_y', 'Box center Y'],
+  ['docking_center_z', 'Box center Z'],
+  ['docking_size_x', 'Box size X'],
+  ['docking_size_y', 'Box size Y'],
+  ['docking_size_z', 'Box size Z'],
+  ['docking_exhaustiveness', 'Exhaustiveness'],
+  ['docking_num_modes', 'Number of modes'],
+  ['docking_seed', 'Random seed'],
+];
+
+function DockingSetupFields({ targetContext, setTargetContext, receptorState, setReceptorState, onReceptorUpload }) {
+  const update = (key, value) => setTargetContext({ ...targetContext, [key]: value });
+  return (
+    <Box sx={{ width: '100%', maxWidth: 620, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+      <Stack spacing={1.25}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 750 }}>Prepared receptor and explicit Vina configuration</Typography>
+        <Typography variant="caption" color="text.secondary">
+          Upload an already prepared PDBQT receptor. MolOptima does not infer a binding box or receptor-preparation parameters.
+        </Typography>
+        <TextField
+          label="Receptor identifier"
+          size="small"
+          value={targetContext.receptor_id ?? ''}
+          onChange={(event) => update('receptor_id', event.target.value)}
+        />
+        <Button variant="outlined" component="label" startIcon={<UploadFileOutlinedIcon />}>
+          Select receptor PDBQT
+          <input
+            hidden type="file" accept=".pdbqt"
+            onChange={(event) => setReceptorState({ selectedFile: event.target.files?.[0] ?? null, upload: null, loading: false, error: '' })}
+          />
+        </Button>
+        <Typography variant="caption">{receptorState.selectedFile?.name ?? 'No receptor selected'}</Typography>
+        <Button variant="outlined" onClick={onReceptorUpload} disabled={!receptorState.selectedFile || receptorState.loading}>
+          {receptorState.loading ? 'Uploading receptor' : 'Upload prepared receptor'}
+        </Button>
+        {receptorState.upload ? <Alert severity="success">Validated receptor {receptorState.upload.receptor_id}; SHA-256 {receptorState.upload.prepared_receptor_sha256}</Alert> : null}
+        {receptorState.error ? <Alert severity="warning">{receptorState.error}</Alert> : null}
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 1 }}>
+          {DOCKING_NUMERIC_FIELDS.map(([key, label]) => (
+            <TextField
+              key={key} label={label} size="small" type="number"
+              value={targetContext[key] ?? ''}
+              onChange={(event) => update(key, event.target.value)}
+            />
+          ))}
+        </Box>
+      </Stack>
+    </Box>
+  );
+}
+
+function dockingRequestPayload(targetContext) {
+  return Object.fromEntries(DOCKING_NUMERIC_FIELDS.map(([key]) => [
+    key,
+    targetContext[key] === '' || targetContext[key] === null || targetContext[key] === undefined
+      ? null
+      : Number(targetContext[key]),
+  ]));
 }
 
 function MetadataPanel({ rows }) {
@@ -3455,6 +3598,8 @@ function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotatio
           />
           <StructurePreview compound={compound} />
           <AdmetResultsSection compound={compound} />
+          <DockingResultsSection compound={compound} />
+          <PrioritizationExplanationSection compound={compound} />
 
           <Box
             sx={{

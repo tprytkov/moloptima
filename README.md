@@ -2,11 +2,11 @@
 
 MolOptima is a local scientific application for prioritizing AI-generated or user-provided small molecules and connecting candidates to computational and public-database evidence signals. It combines a Python/RDKit scoring pipeline, a FastAPI backend, and a React/MUI dashboard for uploading molecule CSVs, running transparent prioritization, reviewing biopharma context, comparing saved runs, annotating candidates, and exporting handoff files.
 
-The system is intentionally offline-first and public-safe. It does not run docking software, perform online lookup unless explicitly requested, use OMOP/clinical data, require cloud services, or download model weights during normal app rendering.
+The system is intentionally offline-first and public-safe. Local Vina docking runs only with an explicitly uploaded prepared receptor and docking box configuration. Online lookups remain opt-in; the app does not use OMOP/clinical data, require cloud services, or download model weights during normal rendering.
 
 ## Current Workflow
 
-1. Upload a CSV with `molecule_id` and `smiles` columns. An optional `docking_score` column can be included when scores were generated externally.
+1. Upload a CSV with `molecule_id` and `smiles` columns. A prepared receptor PDBQT and explicit Vina box/configuration can be supplied for local docking; precomputed `docking_score` remains supported when execution is disabled.
 2. Run the local prioritization job from the Molecular Prioritization page, optionally enabling PubChem, ChEMBL, and SureChEMBL public lookups.
 3. Review Dashboard summary metrics for the latest completed run.
 4. Inspect ranked results, evidence synthesis, docking-informed fields, structural alerts, diversity clusters, chemical-space coordinates, and 2D structure previews.
@@ -45,8 +45,10 @@ data/demo_inputs/demo_molecules.csv
 - Transparent `priority_score` calculation for first-pass ranking.
 - Offline exact known-compound identity against `data/reference_compounds/known_compounds.csv`.
 - Offline closest known-compound similarity using RDKit Morgan fingerprints and Tanimoto similarity.
-- Optional precomputed docking-score preservation from input CSVs without docking execution.
+- Fail-closed local AutoDock Vina execution for validated molecules using an uploaded prepared receptor PDBQT and explicit user-supplied box/configuration.
+- Optional precomputed docking-score preservation when local docking execution is disabled.
 - Optional docking-informed fields computed from uploaded numeric `docking_score` values, including run-level normalization, docking rank, percentile, docking priority signal, and separate `combined_candidate_score`.
+- Versioned per-molecule prioritization explanations with raw values, normalized values, contributions, missing-evidence status, deterministic scientific rank, and policy warnings.
 - Informational heuristic synthetic-accessibility fields.
 - Optional BBB/ChemBERTa inference only when model files already exist in the app-managed cache.
 - App-managed model/data-source manifests and visible Settings status.
@@ -81,6 +83,7 @@ docs/                      Project docs and screenshots
 Runtime outputs are local and intentionally ignored by Git:
 
 - `backend/uploads/`
+- `backend/receptors/`
 - `backend/job_outputs/`
 - `backend/job_metadata/`
 - `outputs/ranked_results/`
@@ -134,7 +137,7 @@ MolOptima also includes a Phase 5A Electron desktop launcher in `desktop/`. The 
 Set `MOLOPTIMA_PYTHON` to the Conda environment Python when needed:
 
 ```bat
-set MOLOPTIMA_PYTHON=C:\Users\tpryt\miniconda3\envs\molecule-intelligence\python.exe
+set MOLOPTIMA_PYTHON=C:\path\to\miniconda3\envs\molecule-intelligence\python.exe
 ```
 
 Run the desktop launcher:
@@ -154,7 +157,7 @@ cd desktop
 npm.cmd run package
 ```
 
-The packaged app is written under `desktop/dist/`, which is ignored by Git. See [docs/desktop_app.md](docs/desktop_app.md) and [docs/windows_packaging.md](docs/windows_packaging.md) for details. This is a first Windows desktop package, not a fully standalone scientific runtime, and it does not bundle Python, RDKit, BBB model weights, or local cache files.
+The packaged app is written under `desktop/dist/`, which is ignored by Git. See [docs/desktop_app.md](docs/desktop_app.md) and [docs/windows_packaging.md](docs/windows_packaging.md) for details. The package includes the versioned GMC and regression inference entry points and their SHA-256 resource manifest. Family-specific Python runtimes, model-release archives, and local caches remain separately provisioned large assets.
 
 The desktop app includes `MolOptima > Runtime Diagnostics` for checking `MOLOPTIMA_PYTHON`, backend health, frontend mode, app-data access, and cache paths.
 Phase 5D also prepares the launcher to discover a future bundled Python runtime under `desktop/runtime/python/` or packaged `resources/runtime/python/`; `MOLOPTIMA_PYTHON` remains the first-priority override.
@@ -166,6 +169,8 @@ scripts\check_desktop_runtime_windows.bat
 ```
 
 These scripts create and validate `desktop/runtime/python/` from the local Conda environment. The runtime folder is ignored by Git and should not be committed.
+
+GMC and Chemprop regression do not use that general backend interpreter as a scientific fallback. Each resolves its own Python in this order: constructor override, family environment variable, packaged family runtime, then fail closed. Their validated runners resolve by constructor override, runner environment variable, packaged SHA-verified source, then fail closed. See the Windows packaging guide for the isolated runtime layout and model-release resolution order.
 
 ## Test And Build Commands
 
@@ -232,6 +237,9 @@ Relevant environment variables:
 
 - `MOLOPTIMA_BBB_MODEL_CACHE`: override the app-managed model cache location.
 - `MOLOPTIMA_ALLOW_MODEL_DOWNLOAD=1`: allow intentional local model download behavior.
+- `MOLOPTIMA_VINA_EXECUTABLE`: path to the local AutoDock Vina executable.
+- `MOLOPTIMA_OBABEL_EXECUTABLE`: path to the local Open Babel executable used for ligand PDBQT conversion.
+- `MOLOPTIMA_VINA_TIMEOUT_SECONDS`: per-molecule Vina timeout; defaults to 1800 seconds.
 
 Manifests:
 
@@ -243,8 +251,12 @@ The Settings page exposes model cache status, latest run model status, and publi
 
 ## Limitations / Not Yet Implemented
 
-- No docking execution, receptor preparation, AutoDock/Vina workflow, or binding simulation.
-- Docking-informed scoring depends entirely on uploaded, externally generated, protocol-dependent `docking_score` values. It is separate from `priority_score` and does not confirm binding.
+- MolOptima validates already prepared receptor PDBQT files but does not prepare raw PDB/mmCIF receptors or infer binding-site coordinates.
+- AutoDock Vina and Open Babel are not downloaded automatically. Missing runtimes produce explicit docking-family failures while preserving ADMET results.
+- Docking scores remain receptor-, site-, and protocol-dependent screening values. They are not binding free energies and do not confirm binding.
+- Scientific prioritization policy `moloptima_scientific_priority_v1` preserves the existing descriptor/BBB base formula and optional 70% base + 30% normalized Vina combined score. ChemBERTa classification, Chemprop regression, heuristic SA, and structural alerts remain visible but are not weighted because no approved weights exist for them.
+- Final scientific rank requires a valid base score plus successful finite Vina docking and run-level normalization. Molecules awaiting docking or carrying docking failures retain their base/ADMET diagnostics but receive no ranking score or rank.
+- The existing BBB adjustment treats penetration as generically favorable. MolOptima has no approved target-specific BBB desirability profile yet, so every result that uses the BBB adjustment reports this limitation explicitly.
 - PubChem support is limited to optional exact identity lookup; ChEMBL support is limited to optional public molecule/bioactivity context; SureChEMBL support is limited to optional public patent-context evidence. These lookups are optional API calls with app-managed local caching.
 - Patent-context output is not a legal conclusion. SureChEMBL record counts are returned-record counts for a structure/query, not conclusions about rights, patentability, infringement, ownership, or freedom to operate.
 - Medicinal chemistry structural alerts are heuristic screening signals. PAINS and Brenk matches do not prove toxicity, assay interference, developability failure, or experimental unsuitability.

@@ -82,6 +82,32 @@ class ADMETRegressionResult(BaseModel):
         return value
 
 
+class PrioritizationComponent(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    raw_value: Any = None
+    normalized_value: float | None = None
+    contribution: float | None = None
+    weight_or_rule: Any = None
+    status: str
+    reason: str
+    score_scope: str = "priority_score"
+
+
+class ScientificPrioritizationResult(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str = "not_available_legacy_result"
+    priority_score: float | None = None
+    ranking_score: float | None = None
+    ranking_position: int | None = None
+    rank_eligible: bool = False
+    ranking_basis: str | None = None
+    components: dict[str, PrioritizationComponent] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    ranking_version: str = "unversioned_legacy_result"
+
+
 class MoleculeAnalysisResult(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -91,6 +117,8 @@ class MoleculeAnalysisResult(BaseModel):
     bbb_result: GMCBBBResult = Field(default_factory=GMCBBBResult)
     admet_regression: ADMETRegressionResult = Field(default_factory=ADMETRegressionResult)
     admet_family_status: dict[str, str] = Field(default_factory=dict)
+    docking_result: dict[str, Any] = Field(default_factory=dict)
+    prioritization: ScientificPrioritizationResult = Field(default_factory=ScientificPrioritizationResult)
 
     @field_validator("admet_predictions")
     @classmethod
@@ -115,6 +143,15 @@ class UploadResponse(BaseModel):
     path: str
 
 
+class ReceptorUploadResponse(BaseModel):
+    receptor_upload_id: str
+    status: str = "uploaded"
+    filename: str
+    receptor_id: str
+    prepared_receptor_sha256: str
+    size_bytes: int
+
+
 class PrioritizationRequest(BaseModel):
     upload_id: str = Field(..., min_length=1)
     enable_public_lookup: bool = False
@@ -132,6 +169,18 @@ class PrioritizationRequest(BaseModel):
     mechanism_context: str = ""
     docking_protocol_notes: str = ""
     binding_site_notes: str = ""
+    enable_docking: bool = True
+    receptor_upload_id: str = Field(default="", max_length=64)
+    receptor_id: str = Field(default="", max_length=200)
+    docking_center_x: float | None = None
+    docking_center_y: float | None = None
+    docking_center_z: float | None = None
+    docking_size_x: float | None = None
+    docking_size_y: float | None = None
+    docking_size_z: float | None = None
+    docking_exhaustiveness: int | None = None
+    docking_num_modes: int | None = None
+    docking_seed: int | None = None
 
 
 class JobResponse(BaseModel):
@@ -156,6 +205,14 @@ class JobResponse(BaseModel):
     admet_failure_count: int = 0
     docking_success_count: int = 0
     docking_failure_count: int = 0
+    eligible_count: int = 0
+    fully_scored_count: int = 0
+    partially_scored_count: int = 0
+    unscorable_count: int = 0
+    ranked_count: int = 0
+    eligible_for_ranking_count: int = 0
+    awaiting_or_missing_docking_count: int = 0
+    docking_failed_or_unavailable_count: int = 0
     warning_count: int = 0
     cancellation_requested: bool = False
 
@@ -181,6 +238,14 @@ class ResultResponse(BaseModel):
     admet_failure_count: int = 0
     docking_success_count: int = 0
     docking_failure_count: int = 0
+    eligible_count: int = 0
+    fully_scored_count: int = 0
+    partially_scored_count: int = 0
+    unscorable_count: int = 0
+    ranked_count: int = 0
+    eligible_for_ranking_count: int = 0
+    awaiting_or_missing_docking_count: int = 0
+    docking_failed_or_unavailable_count: int = 0
     warning_count: int = 0
     cancellation_requested: bool = False
     results: list[MoleculeAnalysisResult]

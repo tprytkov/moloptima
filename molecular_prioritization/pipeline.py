@@ -40,11 +40,21 @@ from molecular_prioritization.diversity import (
     add_diversity_analysis,
 )
 from molecular_prioritization.docking import (
+    DockingResult,
     DOCKING_INFORMED_COLUMNS,
     add_docking_informed_scores,
     parse_precomputed_docking_score,
 )
-from molecular_prioritization.prioritization import build_priority_record
+from molecular_prioritization.receptor import ReceptorArtifact, VinaBoxConfig
+from molecular_prioritization.vina_docking import (
+    DockingRuntimeUnavailable,
+    VinaDockingEngine,
+    unavailable_docking_result,
+)
+from molecular_prioritization.prioritization import (
+    build_priority_record,
+    finalize_scientific_prioritization,
+)
 from molecular_prioritization.standardize import standardize_smiles
 from molecular_prioritization.structural_alerts import (
     STRUCTURAL_ALERT_COLUMNS,
@@ -70,6 +80,12 @@ def prioritize_smiles(
     target_reference_client: object | None = None,
     admet_registry: object | None = None,
     progress_callback: Callable[..., None] | None = None,
+    enable_docking: bool = False,
+    receptor: ReceptorArtifact | None = None,
+    docking_config: VinaBoxConfig | None = None,
+    docking_engine: object | None = None,
+    docking_output_root: str | Path | None = None,
+    docking_setup_error: str = "",
 ) -> list[dict[str, object]]:
     """Prioritize molecule records with molecule_id and smiles fields."""
 
@@ -111,6 +127,8 @@ def prioritize_smiles(
         )
 
     common_by_index: dict[int, dict[str, object]] = {}
+    admet_successes = 0
+    admet_failures = 0
     if not use_legacy_adapters and valid_prepared:
         engine = admet_registry or ADMETRegistry()
         valid_results = engine.predict_batch(
@@ -123,12 +141,82 @@ def prioritize_smiles(
         ]
         common_by_index = dict(zip(valid_positions, valid_results, strict=True))
         successes = sum(item.get("status") == "success" for item in valid_results)
+        admet_successes = successes
+        admet_failures = valid_count - successes
         if progress_callback:
             progress_callback(
                 stage="admet", valid_count=valid_count, invalid_count=invalid_count,
                 processed_count=len(prepared_records), admet_success_count=successes,
-                admet_failure_count=valid_count - successes,
+                admet_failure_count=admet_failures,
             )
+
+    docking_by_index: dict[int, dict[str, object]] = {}
+    if enable_docking:
+        if progress_callback:
+            progress_callback(
+                stage="docking", valid_count=valid_count, invalid_count=invalid_count,
+                processed_count=invalid_count, docking_success_count=0,
+                docking_failure_count=0,
+            )
+        valid_positions = [
+            index for index, item in enumerate(prepared_records)
+            if item[2].valid_molecule and item[2].canonical_smiles
+        ]
+        active_docking_engine = (
+            docking_engine
+            if receptor is not None and docking_config is not None
+            else None
+        )
+        family_status = (
+            "configuration_invalid" if docking_config is None
+            else "receptor_unavailable"
+        )
+        family_warning = docking_setup_error or "A validated prepared receptor and explicit docking configuration are required."
+        if active_docking_engine is None and receptor is not None and docking_config is not None:
+            try:
+                active_docking_engine = VinaDockingEngine(
+                    receptor,
+                    docking_config,
+                    output_root=(
+                        docking_output_root
+                        or Path(__file__).resolve().parents[1] / "app_data" / "docking_work"
+                    ),
+                )
+            except DockingRuntimeUnavailable as exc:
+                family_status = "runtime_unavailable"
+                family_warning = str(exc)
+            except Exception as exc:
+                family_status = "docking_unavailable"
+                family_warning = str(exc)
+        if active_docking_engine is None:
+            valid_docking_results = [
+                unavailable_docking_result(
+                    str(item[1]), item[2].canonical_smiles, status=family_status,
+                    warning=family_warning, receptor=receptor, config=docking_config,
+                )
+                for item in valid_prepared
+            ]
+            if progress_callback:
+                progress_callback(
+                    stage="docking", valid_count=valid_count, invalid_count=invalid_count,
+                    processed_count=len(prepared_records), docking_success_count=0,
+                    docking_failure_count=valid_count,
+                )
+        else:
+            def docking_progress(processed: int, successes: int, failures: int) -> None:
+                if progress_callback:
+                    progress_callback(
+                        stage="docking", valid_count=valid_count, invalid_count=invalid_count,
+                        processed_count=invalid_count + processed,
+                        docking_success_count=successes, docking_failure_count=failures,
+                    )
+
+            valid_docking_results = active_docking_engine.dock_batch(
+                [str(item[1]) for item in valid_prepared],
+                [str(item[2].canonical_smiles) for item in valid_prepared],
+                progress_callback=docking_progress,
+            )
+        docking_by_index = dict(zip(valid_positions, valid_docking_results, strict=True))
 
     for prepared_index, (record, molecule_id, standardized) in enumerate(prepared_records):
         input_smiles = record.get("smiles", "")
@@ -199,7 +287,32 @@ def prioritize_smiles(
             standardized.canonical_smiles,
             standardized.valid_molecule,
         )
-        docking = parse_precomputed_docking_score(record)
+        if enable_docking:
+            if standardized.valid_molecule and standardized.canonical_smiles:
+                docking_execution = docking_by_index[prepared_index]
+            else:
+                docking_execution = unavailable_docking_result(
+                    str(molecule_id), standardized.canonical_smiles,
+                    status="not_run_invalid_molecule",
+                    warning="Docking skipped for invalid molecule.",
+                    receptor=receptor, config=docking_config,
+                )
+            docking = DockingResult(
+                docking_score=docking_execution.get("best_affinity_kcal_mol"),
+                docking_status=(
+                    "provided" if docking_execution.get("status") == "success"
+                    else str(docking_execution.get("status"))
+                ),
+            )
+        else:
+            docking = parse_precomputed_docking_score(record)
+            docking_execution = {
+                "molecule_id": str(molecule_id),
+                "canonical_smiles": standardized.canonical_smiles,
+                "status": "precomputed" if docking.docking_status == "provided" else "not_requested",
+                "best_affinity_kcal_mol": docking.docking_score,
+                "warning": "",
+            }
         identity_match = check_known_compound_identity(
             standardized.canonical_smiles,
             standardized.valid_molecule,
@@ -267,17 +380,31 @@ def prioritize_smiles(
                 "bbb_result": common_admet["bbb"] if common_admet else {},
                 "admet_regression": common_admet["regression"] if common_admet else {},
                 "admet_family_status": common_admet["family_status"] if common_admet else {},
+                "docking_result": docking_execution,
             }
         )
         ranked_records.append(priority_record)
 
-    sorted_records = sorted(
-        ranked_records,
-        key=lambda row: float(row["priority_score"]),
-        reverse=True,
-    )
-    docking_scored_records = add_docking_informed_scores(sorted_records)
-    diversity_records = add_diversity_analysis(docking_scored_records)
+    docking_scored_records = add_docking_informed_scores(ranked_records)
+    scientifically_ranked_records = finalize_scientific_prioritization(docking_scored_records)
+    if progress_callback:
+        progress_callback(
+            stage="prioritization",
+            processed_count=len(prepared_records),
+            valid_count=valid_count,
+            invalid_count=invalid_count,
+            admet_success_count=admet_successes,
+            admet_failure_count=admet_failures,
+            eligible_count=sum(row.get("valid_molecule") is True for row in scientifically_ranked_records),
+            fully_scored_count=sum(row.get("prioritization_status") == "fully_scored" for row in scientifically_ranked_records),
+            partially_scored_count=sum(row.get("prioritization_status") == "partially_scored" for row in scientifically_ranked_records),
+            unscorable_count=sum(row.get("prioritization_status") == "unscorable" for row in scientifically_ranked_records),
+            ranked_count=sum(row.get("scientific_rank") is not None for row in scientifically_ranked_records),
+            eligible_for_ranking_count=sum(row.get("rank_eligible") is True for row in scientifically_ranked_records),
+            awaiting_or_missing_docking_count=sum(row.get("prioritization_status") == "awaiting_docking" for row in scientifically_ranked_records),
+            docking_failed_or_unavailable_count=sum(row.get("prioritization_status") in {"docking_failed", "docking_unavailable"} for row in scientifically_ranked_records),
+        )
+    diversity_records = add_diversity_analysis(scientifically_ranked_records)
 
     if enable_target_reference_discovery:
         reference_set = active_target_reference_client.discover_references(
@@ -310,6 +437,12 @@ def prioritize_csv(
     target_context: dict[str, object] | None = None,
     target_reference_output_path: str | Path | None = None,
     progress_callback: Callable[..., None] | None = None,
+    enable_docking: bool = False,
+    receptor: ReceptorArtifact | None = None,
+    docking_config: VinaBoxConfig | None = None,
+    docking_engine: object | None = None,
+    docking_output_root: str | Path | None = None,
+    docking_setup_error: str = "",
 ) -> list[dict[str, object]]:
     """Read molecule records from CSV, write ranked results, and return rows."""
 
@@ -328,6 +461,12 @@ def prioritize_csv(
         enable_target_reference_discovery=enable_target_reference_discovery,
         target_context=target_context,
         progress_callback=progress_callback,
+        enable_docking=enable_docking,
+        receptor=receptor,
+        docking_config=docking_config,
+        docking_engine=docking_engine,
+        docking_output_root=docking_output_root,
+        docking_setup_error=docking_setup_error,
     )
     reference_metadata = getattr(
         prioritize_smiles,
@@ -345,6 +484,12 @@ def prioritize_csv(
             "canonical_smiles",
             "valid_molecule",
             "priority_score",
+            "scientific_ranking_score",
+            "scientific_rank",
+            "rank_eligible",
+            "prioritization_status",
+            "ranking_version",
+            "prioritization",
             "error",
             "known_compound_match",
             "known_compound_name",
@@ -400,6 +545,7 @@ def prioritize_csv(
             *CHEMICAL_SPACE_COLUMNS,
             "docking_score",
             "docking_status",
+            "docking_result",
             *DOCKING_INFORMED_COLUMNS,
             "sa_score",
             "synthetic_feasibility_category",

@@ -1032,4 +1032,12 @@ The ADMET phase is finished only when:
 - a common model registry maps endpoint to production adapter;
 - the ADMET layer can be called independently of desktop or web UI.
 
+# 27. Task 5 Runtime Packaging Status
+
+MolOptima now packages the exact qualified GMC-MPNN BBB and Chemprop regression command-line runner sources in versioned application resources, with source revisions and SHA-256 values recorded in `resources/admet/runtime_manifest.json`. Runtime selection is family-specific and fail closed: an explicit Python override takes precedence, followed by the family environment override and its own packaged isolated runtime. There is no current-interpreter or cross-family fallback. Runner selection follows the same override-first policy before the SHA-verified packaged source.
+
+The model-release archives remain independent, manifest-verified assets. Their resolution order is the external `MOLOPTIMA_ADMET_RELEASE_ROOT`, an application-relative packaged release root, then the app-managed local release root. Runtime compatibility expectations are read from those authoritative production manifests rather than independently inferred.
+
+The runner source and resource manifest are bundled by Electron. Large Python runtimes and model archives are supplied through the release process and remain outside Git. Real GMC and regression execution from prepared packaged runtimes, plus real Vina execution, remain release-machine acceptance steps; they are not claimed as qualified by the resolver and packaging tests alone.
+
 Only after this point should the project move into full MolOptima platform integration.

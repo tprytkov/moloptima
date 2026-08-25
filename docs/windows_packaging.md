@@ -8,6 +8,71 @@ Phase 5D prepares the package to discover a bundled Python/RDKit runtime in a fu
 
 Phase 5E adds local scripts for building and validating a runtime bundle under `desktop/runtime/python/`. The scripts are committed, but the runtime output remains ignored by Git.
 
+Task 5 adds the small, versioned GMC-MPNN BBB and Chemprop regression runner sources plus a SHA-256 resource manifest. It also defines separate fail-closed Python resolution for those two scientific families. It does not commit either large family runtime or any model archive.
+
+### ADMET family resource layout
+
+The source tree contains:
+
+```text
+resources/admet/runtime_manifest.json
+resources/admet/runners/gmc_mpnn_bbb/v1/predict_gmc_mpnn_bbb.py
+resources/admet/runners/chemprop_regression/v1/predict_chemprop_regression.py
+```
+
+Electron packages those files under `resources/moloptima-app/resources/admet/`. Large isolated runtimes are supplied outside Git at the following staging paths; the existing `afterPack` hook copies them under packaged `resources/runtime/`:
+
+```text
+desktop/runtime/admet/gmc_mpnn_bbb/python/python.exe
+desktop/runtime/admet/chemprop_regression/python/python.exe
+```
+
+Therefore, an installed package resolves them at:
+
+```text
+resources/runtime/admet/gmc_mpnn_bbb/python/python.exe
+resources/runtime/admet/chemprop_regression/python/python.exe
+```
+
+Each isolated runtime must contain the corresponding authoritative `admet_platform` production-inference package and the exact dependency versions recorded in that model release's `production_manifest.json`. The resolver probes Python, Chemprop, Lightning, Torch, NumPy, and RDKit and fails with `runtime_incompatible` on any mismatch. It never substitutes the backend interpreter or the other model family's runtime.
+
+GMC Python resolution is: constructor override, `MOLOPTIMA_GMC_PYTHON`, packaged GMC runtime, fail closed. Regression Python resolution is: constructor override, `MOLOPTIMA_CHEMPROP_PYTHON`, packaged regression runtime, fail closed. Runner resolution is the corresponding constructor override, `MOLOPTIMA_GMC_RUNNER` or `MOLOPTIMA_CHEMPROP_RUNNER`, SHA-verified packaged runner, fail closed.
+
+Model releases remain separate from runner/runtime resources. Resolution is `MOLOPTIMA_ADMET_RELEASE_ROOT`, then an application-relative `resources/admet/` containing model-family directories, then `app_data/model_resources/admet/`. A runner-only `resources/admet/` directory is not mistaken for a model release. Missing or corrupt releases, runners, and runtimes produce stable fail-closed codes while other ADMET families retain their results. User-facing errors do not include local absolute paths.
+
+Implemented here: runner packaging and verification, installed/development resource resolution, isolated runtime selection, manifest-derived compatibility probing, and fail-closed diagnostics. Still pending acceptance on a prepared release machine: real GMC execution from its exact packaged runtime, real regression execution from its exact packaged runtime, and real Vina execution. Runtime/model binaries must be transferred and verified through the release process; they must not be committed to Git.
+
+### Scientific runtime qualification
+
+Run the acceptance harness from the application root after staging the frozen
+model releases and isolated runtimes. The output directory must not already
+exist:
+
+```bat
+python scripts\qualify_packaged_scientific_runtime.py --output-dir qualification-output
+```
+
+For real Vina qualification, also supply every receptor-specific input. No box,
+search parameter, or executable is synthesized:
+
+```bat
+python scripts\qualify_packaged_scientific_runtime.py ^
+  --output-dir qualification-output ^
+  --receptor path\to\approved-receptor.pdbqt ^
+  --center-x X --center-y Y --center-z Z ^
+  --size-x SX --size-y SY --size-z SZ ^
+  --exhaustiveness N --num-modes N --seed N ^
+  --vina-executable path\to\vina.exe ^
+  --obabel-executable path\to\obabel.exe
+```
+
+The command writes `qualification_summary.json`,
+`qualification_predictions.json`, `runtime_provenance.json`, and
+`SHA256SUMS`. A real Vina run also writes `vina_acceptance.json` and retains
+pose hashes. Only successful execution through real scientific runtimes can
+produce `PASS`; absent runtimes or assets are reported as `NOT_RUN`, and test
+doubles are always labeled `MOCK_TESTED_ONLY`.
+
 ## Packaging Tool
 
 Packaging is configured in:
@@ -31,13 +96,13 @@ electron-builder
 Example:
 
 ```bat
-set MOLOPTIMA_PYTHON=C:\Users\tpryt\miniconda3\envs\molecule-intelligence\python.exe
+set MOLOPTIMA_PYTHON=C:\path\to\conda-env\python.exe
 ```
 
 Set it permanently for the current Windows user:
 
 ```bat
-setx MOLOPTIMA_PYTHON "C:\Users\tpryt\miniconda3\envs\molecule-intelligence\python.exe"
+setx MOLOPTIMA_PYTHON "C:\path\to\conda-env\python.exe"
 ```
 
 Close and reopen terminals or the desktop app after `setx`.
@@ -77,13 +142,13 @@ npm.cmd run dist
 The local runtime bundle is built from the existing `molecule-intelligence` Conda environment. By default, the script expects:
 
 ```text
-C:\Users\tpryt\miniconda3\envs\molecule-intelligence
+C:\path\to\conda-env
 ```
 
 Override that path with `MOLOPTIMA_CONDA_ENV` if needed:
 
 ```bat
-set MOLOPTIMA_CONDA_ENV=C:\Users\tpryt\miniconda3\envs\molecule-intelligence
+set MOLOPTIMA_CONDA_ENV=C:\path\to\conda-env
 ```
 
 Build the runtime:
@@ -256,7 +321,7 @@ Future maintainers can create a runtime archive from the current Conda environme
 ```bat
 conda activate molecule-intelligence
 conda install -c conda-forge conda-pack
-conda pack -p C:\Users\tpryt\miniconda3\envs\molecule-intelligence -o moloptima-runtime.zip
+conda pack -p C:\path\to\conda-env -o moloptima-runtime.zip
 ```
 
 Unpack the archive into `desktop/runtime/python/` for development testing before packaging. During `npm.cmd run package` or `npm.cmd run dist`, the Electron `afterPack` hook copies `desktop/runtime/` to `resources/runtime/` if the folder exists. If the folder is absent, packaging continues without a bundled runtime.
