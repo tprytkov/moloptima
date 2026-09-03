@@ -1,0 +1,248 @@
+{
+  "schema_version": "moloptima-prioritization-profile-v2",
+  "profile_id": "moloptima_cns_literature_v2",
+  "profile_version": "0.1.0",
+  "status": "draft",
+  "name": "MolOptima CNS Literature Profile",
+  "target_mode": "CNS",
+  "aggregation": "weighted_arithmetic",
+  "component_weights": {
+    "docking": 1.0,
+    "admet": 1.0,
+    "molecular_quality": 1.0
+  },
+  "domain_weights": {
+    "absorption": 1.0,
+    "distribution_cns": 1.0,
+    "developability": 1.0,
+    "metabolism_transport": 1.0,
+    "molecular_quality": 1.0,
+    "safety": 1.0,
+    "docking": 1.0
+  },
+  "endpoint_rules": {
+    "best_vina_affinity_kcal_mol": {
+      "enabled": true,
+      "role": "objective",
+      "domain": "docking",
+      "transform": { "type": "identity_01", "params": {} },
+      "weight": 1.0,
+      "required": true,
+      "missing_policy": "unrankable",
+      "uncertainty_policy": "warning_only",
+      "notes": "Required minimum finite Vina mode affinity, normalized only within the generated campaign; optional reference delta is explanatory only."
+    },
+    "hia_hou": {
+      "enabled": true,
+      "role": "objective",
+      "domain": "absorption",
+      "transform": { "type": "identity_01", "params": {} },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "renormalize_with_warning",
+      "uncertainty_policy": "warning_only",
+      "notes": "Bounded model score for the greater-than-30-percent-absorbed class; not percent intestinal absorption."
+    },
+    "Caco2_Wang": {
+      "enabled": true,
+      "role": "objective",
+      "domain": "absorption",
+      "transform": { "type": "minimum_plateau", "params": { "minimum": -5.15, "width": 0.85 } },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "renormalize_with_warning",
+      "uncertainty_policy": "warning_only",
+      "notes": "Literature-informed log10 Papp cm/s anchors: zero desirability at -6.0 and plateau at approximately -5.15."
+    },
+    "gmc_mpnn_bbb": {
+      "enabled": true,
+      "role": "objective",
+      "domain": "distribution_cns",
+      "transform": { "type": "identity_01", "params": {} },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "renormalize_with_warning",
+      "uncertainty_policy": "warning_only",
+      "notes": "Raw bounded five-seed ensemble output used monotonically for relative CNS prioritization; threshold_status=provisional_raw and calibration_status=not_frozen."
+    },
+    "Lipophilicity_AstraZeneca": {
+      "enabled": true,
+      "role": "objective",
+      "domain": "developability",
+      "transform": { "type": "target_range", "params": { "lower": 1.0, "upper": 3.0, "lower_width": 1.0, "upper_width": 1.0 } },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "renormalize_with_warning",
+      "uncertainty_policy": "warning_only",
+      "notes": "First-profile literature-informed moderate logD target: full desirability from 1.0 to 3.0, declining to zero at 0.0 and 4.0."
+    },
+    "Solubility_AqSolDB": {
+      "enabled": true,
+      "role": "objective",
+      "domain": "developability",
+      "transform": { "type": "minimum_plateau", "params": { "minimum": -2.0, "width": 2.0 } },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "renormalize_with_warning",
+      "uncertainty_policy": "warning_only",
+      "notes": "AqSolDB log mol/L categories: zero desirability at -4.0, continuous increase, and plateau by -2.0."
+    },
+    "QED": {
+      "enabled": true,
+      "role": "objective",
+      "domain": "molecular_quality",
+      "transform": { "type": "identity_01", "params": {} },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "renormalize_with_warning",
+      "uncertainty_policy": "warning_only",
+      "notes": "QED is the sole scored molecular-quality objective; its constituent descriptors are not independently scored."
+    },
+    "cyp1a2_veith": {
+      "enabled": true,
+      "role": "penalty",
+      "domain": "metabolism_transport",
+      "transform": { "type": "reverse_identity_01", "params": {} },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "CYP inhibition model used as a soft DDI/metabolism liability, never a hard gate."
+    },
+    "cyp2c19_veith": {
+      "enabled": true,
+      "role": "penalty",
+      "domain": "metabolism_transport",
+      "transform": { "type": "reverse_identity_01", "params": {} },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "CYP inhibition model used as a soft DDI/metabolism liability, never a hard gate."
+    },
+    "cyp2c9_veith": {
+      "enabled": true,
+      "role": "penalty",
+      "domain": "metabolism_transport",
+      "transform": { "type": "reverse_identity_01", "params": {} },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "CYP inhibition model used as a soft DDI/metabolism liability, never a hard gate."
+    },
+    "cyp2d6_veith": {
+      "enabled": true,
+      "role": "penalty",
+      "domain": "metabolism_transport",
+      "transform": { "type": "reverse_identity_01", "params": {} },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "CYP inhibition model used as a soft DDI/metabolism liability, never a hard gate."
+    },
+    "cyp3a4_veith": {
+      "enabled": true,
+      "role": "penalty",
+      "domain": "metabolism_transport",
+      "transform": { "type": "reverse_identity_01", "params": {} },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "CYP inhibition model used as a soft DDI/metabolism liability, never a hard gate."
+    },
+    "herg_karim": {
+      "enabled": true,
+      "role": "penalty",
+      "domain": "safety",
+      "transform": { "type": "reverse_identity_01", "params": {} },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "Predicted hERG liability is a prominent soft warning, not an experimental safety margin or hard gate."
+    },
+    "ames": {
+      "enabled": true,
+      "role": "penalty",
+      "domain": "safety",
+      "transform": { "type": "reverse_identity_01", "params": {} },
+      "weight": 1.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "Predicted positive-class Ames score is a prominent soft mutagenicity warning, not quantitative mutagenicity or a hard gate."
+    },
+    "pgp_broccatelli": {
+      "enabled": false,
+      "role": "display_only",
+      "domain": "metabolism_transport",
+      "transform": { "type": "identity_01", "params": {} },
+      "weight": 0.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "Display-only transporter/DDI context. This predicts P-gp inhibition, not P-gp substrate or efflux behavior, so it is not a CNS reward."
+    },
+    "PPBR_AZ": {
+      "enabled": false,
+      "role": "display_only",
+      "domain": "distribution_cns",
+      "transform": { "type": "identity_01", "params": {} },
+      "weight": 0.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "Display-only raw plasma-protein-binding context; no universal optimum, target range, clipping, or ranking effect."
+    },
+    "Vdss_Lombardo": {
+      "enabled": false,
+      "role": "display_only",
+      "domain": "distribution_cns",
+      "transform": { "type": "identity_01", "params": {} },
+      "weight": 0.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "Display-only raw Vdss context; no universal favorable direction or target range."
+    },
+    "SA": {
+      "enabled": false,
+      "role": "display_only",
+      "domain": "molecular_quality",
+      "transform": { "type": "identity_01", "params": {} },
+      "weight": 0.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "Display-only synthetic-accessibility context (1 easier, 10 harder); no unfrozen threshold or ranking effect."
+    },
+    "structural_alerts": {
+      "enabled": false,
+      "role": "display_only",
+      "domain": "safety",
+      "transform": { "type": "identity_01", "params": {} },
+      "weight": 0.0,
+      "required": false,
+      "missing_policy": "warning_only",
+      "uncertainty_policy": "warning_only",
+      "notes": "Display-only PAINS/Brenk warning context; alert identities remain in molecule results and never create a universal gate or penalty."
+    }
+  },
+  "missing_data_policy": "renormalize_with_warning",
+  "uncertainty_policy": "warning_only",
+  "liability_policy": {
+    "penalty_aggregation": "domain_weighted_arithmetic",
+    "gate_failure_behavior": "exclude"
+  },
+  "docking_policy": {
+    "normalization": "within_library",
+    "docking_required": true,
+    "campaign_id": null,
+    "reference_molecule_id": null,
+    "reference_best_vina_affinity_kcal_mol": null,
+    "reference_delta_role": "explanatory_only"
+  }
+}

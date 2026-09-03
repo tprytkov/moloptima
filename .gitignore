@@ -34,6 +34,8 @@ app_data/model_cache/*
 app_data/model_cache/huggingface/*
 !app_data/model_cache/huggingface/.gitkeep
 app_data/docking_work/*
+app_data/receptors/*
+!app_data/receptors/.gitkeep
 app_data/runtime_qualification/*
 app_data/public_lookup_cache/*
 !app_data/public_lookup_cache/.gitkeep

@@ -1,0 +1,14 @@
+{
+  "schema_version": "moloptima-native-runtime-v1",
+  "runtime": "vina",
+  "version": "AutoDock Vina 1.1.2 (May 11, 2011)",
+  "executable": "vina.exe",
+  "files": [
+    {
+      "path": "vina.exe",
+      "role": "command_line_executable",
+      "size_bytes": 781824,
+      "sha256": "ec7a0d40cad1a10375d8fbb96526b64cc670293d51787460f141c3f3455792d7"
+    }
+  ]
+}

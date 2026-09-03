@@ -1,0 +1,31 @@
+{
+  "schema_version": "moloptima-admet-runtime-resources-v1",
+  "families": {
+    "gmc_mpnn_bbb": {
+      "runner_identity": "scripts/predict_gmc_mpnn_bbb.py@50bbc2e2472a523a8a246d99018906c805c16a31",
+      "source_revision": "50bbc2e2472a523a8a246d99018906c805c16a31",
+      "runner_relative_path": "resources/admet/runners/gmc_mpnn_bbb/v1/predict_gmc_mpnn_bbb.py",
+      "runner_sha256": "ef8ea0c8d9c5e0913e1357491387994e9d1e1cabf99802687f67e0686c4b7367",
+      "runtime_contract_reference": "GMC_MPNN_BBB/production_manifest.json#/environment/packages",
+      "runtime_contract_manifest_version": "gmc-mpnn-bbb-production-v1",
+      "python_relative_candidates": [
+        "desktop/runtime/admet/gmc_mpnn_bbb/python/python.exe",
+        "../runtime/admet/gmc_mpnn_bbb/python/python.exe"
+      ]
+    },
+    "chemprop_regression": {
+      "runner_identity": "scripts/predict_chemprop_regression.py@98342b6af1c2920bae52603d4e8b29714b7681c1+equal-task-mean-standardized-mae-cpu-loader-v1",
+      "source_revision": "98342b6af1c2920bae52603d4e8b29714b7681c1",
+      "compatibility_version": "equal-task-mean-standardized-mae-cpu-loader-v1",
+      "base_runner_sha256": "90923bb55caa7cde9a094ce235cea815520add2381bbd3d6159900be1e41674b",
+      "runner_relative_path": "resources/admet/runners/chemprop_regression/v2/predict_chemprop_regression.py",
+      "runner_sha256": "9439c82d494680ba1df5025dff2805a01932a5c7ad977055a20a6170e3396fed",
+      "runtime_contract_reference": "Chemprop_regression/production_manifest.json#/environment/expected_pinned/package_versions",
+      "runtime_contract_manifest_version": "1.0.0",
+      "python_relative_candidates": [
+        "desktop/runtime/admet/chemprop_regression/python/python.exe",
+        "../runtime/admet/chemprop_regression/python/python.exe"
+      ]
+    }
+  }
+}

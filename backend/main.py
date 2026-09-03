@@ -2,21 +2,35 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, File, Query, Response, UploadFile
+from fastapi import FastAPI, File, Form, Query, Response, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend import services
 from backend.schemas import (
     CandidateSdfExportRequest,
+    DockingConfigurationRequest,
+    DockingConfigurationResponse,
+    DockingReceptorResponse,
     HealthResponse,
     JobAnnotationsRequest,
     JobAnnotationsResponse,
     JobHistoryResponse,
     JobResponse,
     LatestJobResponse,
+    ParetoAnalysisRequest,
+    ParetoAnalysisResponse,
     PrioritizationRequest,
+    PrioritizationMetadataResponse,
+    PrioritizationProfileValidationRequest,
+    PrioritizationProfileValidationResponse,
     ReceptorUploadResponse,
+    ReceptorPreparationRequest,
+    ReceptorPreparationRuntimeResponse,
     ResultResponse,
+    SensitivityAnalysisRequest,
+    SensitivityAnalysisResponse,
+    ScientificRuntimeStatusResponse,
     SourceStatusResponse,
     UploadResponse,
 )
@@ -46,12 +60,77 @@ def upload_molecules(file: UploadFile = File(...)) -> UploadResponse:
     return UploadResponse(**services.save_upload(file))
 
 
+@app.post("/api/molecules/import", response_model=UploadResponse)
+def import_molecules(
+    files: list[UploadFile] = File(default=[]),
+    smiles_text: str = Form(default=""),
+    selected_structure_column: str = Form(default=""),
+) -> UploadResponse:
+    return UploadResponse(**services.save_molecule_import(
+        files=files,
+        smiles_text=smiles_text,
+        selected_structure_column=selected_structure_column,
+    ))
+
+
 @app.post("/api/receptors/upload", response_model=ReceptorUploadResponse)
 def upload_receptor(
     file: UploadFile = File(...),
     receptor_id: str = Query("", max_length=200),
 ) -> ReceptorUploadResponse:
     return ReceptorUploadResponse(**services.save_receptor(file, receptor_id=receptor_id))
+
+
+@app.post("/api/docking/receptors", response_model=DockingReceptorResponse)
+def upload_docking_receptor(
+    file: UploadFile = File(...),
+    receptor_id: str = Query("", max_length=32),
+    display_name: str = Query("", max_length=200),
+) -> DockingReceptorResponse:
+    return DockingReceptorResponse(**services.save_docking_receptor(
+        file, receptor_id=receptor_id, display_name=display_name,
+    ))
+
+
+@app.get("/api/docking/receptors/{receptor_id}", response_model=DockingReceptorResponse)
+def get_docking_receptor(receptor_id: str) -> DockingReceptorResponse:
+    return DockingReceptorResponse(**services.get_docking_receptor(receptor_id))
+
+
+@app.get(
+    "/api/docking/receptor-preparation/runtime",
+    response_model=ReceptorPreparationRuntimeResponse,
+)
+def get_receptor_preparation_runtime() -> ReceptorPreparationRuntimeResponse:
+    return ReceptorPreparationRuntimeResponse(**services.get_receptor_preparation_runtime())
+
+
+@app.post(
+    "/api/docking/receptors/{receptor_id}/prepare",
+    response_model=DockingReceptorResponse,
+)
+def prepare_docking_receptor(
+    receptor_id: str,
+    request: ReceptorPreparationRequest,
+) -> DockingReceptorResponse:
+    return DockingReceptorResponse(**services.prepare_docking_receptor(receptor_id, request.model_dump()))
+
+
+@app.get("/api/docking/receptors/{receptor_id}/structure")
+def get_docking_receptor_structure(receptor_id: str) -> Response:
+    payload, structure_format = services.get_docking_receptor_structure(receptor_id)
+    return Response(
+        content=payload,
+        media_type="chemical/x-pdb" if structure_format == "pdb" else "chemical/x-pdbqt",
+        headers={"X-MolOptima-Structure-Format": structure_format},
+    )
+
+
+@app.post("/api/docking/configurations", response_model=DockingConfigurationResponse)
+def create_docking_configuration(
+    request: DockingConfigurationRequest,
+) -> DockingConfigurationResponse:
+    return DockingConfigurationResponse(**services.save_docking_configuration(request.model_dump()))
 
 
 @app.get("/api/molecules/structure")
@@ -78,11 +157,59 @@ def export_candidates_sdf(request: CandidateSdfExportRequest) -> Response:
     )
 
 
+@app.get("/api/prioritization/metadata", response_model=PrioritizationMetadataResponse)
+def get_prioritization_metadata() -> PrioritizationMetadataResponse:
+    return PrioritizationMetadataResponse(**services.prioritization_metadata())
+
+
+@app.post(
+    "/api/prioritization/profiles/validate",
+    response_model=PrioritizationProfileValidationResponse,
+)
+def validate_prioritization_profile(
+    request: PrioritizationProfileValidationRequest,
+) -> PrioritizationProfileValidationResponse:
+    return PrioritizationProfileValidationResponse(
+        **services.validate_prioritization_profile(request.profile)
+    )
+
+
+@app.post(
+    "/api/prioritization/analysis/pareto",
+    response_model=ParetoAnalysisResponse,
+)
+def run_pareto_analysis(request: ParetoAnalysisRequest) -> ParetoAnalysisResponse:
+    return ParetoAnalysisResponse(
+        **services.run_pareto_analysis(
+            request.results, request.dimensions, job_id=request.job_id or "",
+        )
+    )
+
+
+@app.post(
+    "/api/prioritization/analysis/sensitivity",
+    response_model=SensitivityAnalysisResponse,
+)
+def run_sensitivity_analysis(
+    request: SensitivityAnalysisRequest,
+) -> SensitivityAnalysisResponse:
+    return SensitivityAnalysisResponse(**services.run_weight_sensitivity_analysis(
+        request.candidates,
+        request.profile,
+        perturbation_magnitude=request.perturbation_magnitude,
+        number_of_samples=request.number_of_samples,
+        analysis_seed=request.analysis_seed,
+        job_id=request.job_id or "",
+    ))
+
+
 @app.post("/api/jobs/prioritization", response_model=JobResponse)
 def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
     return JobResponse(
         **services.run_prioritization_job(
             request.upload_id,
+            prioritization_method=request.prioritization_method,
+            prioritization_profile=request.prioritization_profile,
             enable_public_lookup=request.enable_public_lookup,
             enable_pubchem_lookup=request.enable_pubchem_lookup or request.enable_public_lookup,
             enable_chembl_lookup=request.enable_chembl_lookup,
@@ -103,6 +230,7 @@ def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
             enable_docking=request.enable_docking,
             receptor_upload_id=request.receptor_upload_id,
             receptor_id=request.receptor_id or request.pdb_id,
+            docking_configuration_id=request.docking_configuration_id,
             docking_configuration={
                 "center_x": request.docking_center_x,
                 "center_y": request.docking_center_y,
@@ -112,7 +240,9 @@ def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
                 "size_z": request.docking_size_z,
                 "exhaustiveness": request.docking_exhaustiveness,
                 "num_modes": request.docking_num_modes,
+                "energy_range": request.docking_energy_range,
                 "seed": request.docking_seed,
+                "worker_count": request.docking_worker_count,
             },
         )
     )
@@ -143,6 +273,33 @@ def get_results(job_id: str) -> ResultResponse:
     return ResultResponse(**services.get_result(job_id))
 
 
+@app.get("/api/results/{job_id}/package")
+def get_results_package(job_id: str) -> dict[str, object]:
+    return services.get_results_package(job_id)
+
+
+@app.get("/api/results/{job_id}/package.zip")
+def download_results_package(job_id: str) -> FileResponse:
+    path = services.get_results_zip(job_id)
+    return FileResponse(path, media_type="application/zip", filename=f"moloptima-{job_id}-results.zip")
+
+
+@app.get("/api/results/{job_id}/analysis/pareto")
+def get_saved_pareto_analysis(job_id: str) -> dict[str, object]:
+    return services.get_persisted_results_analysis(job_id, "pareto")
+
+
+@app.get("/api/results/{job_id}/analysis/sensitivity")
+def get_saved_sensitivity_analysis(job_id: str) -> dict[str, object]:
+    return services.get_persisted_results_analysis(job_id, "sensitivity")
+
+
+@app.get("/api/results/{job_id}/artifacts/{artifact_path:path}")
+def download_results_artifact(job_id: str, artifact_path: str) -> FileResponse:
+    path = services.get_results_artifact(job_id, artifact_path)
+    return FileResponse(path, filename=path.name)
+
+
 @app.get("/api/jobs/{job_id}/annotations", response_model=JobAnnotationsResponse)
 def get_job_annotations(job_id: str) -> JobAnnotationsResponse:
     return JobAnnotationsResponse(**services.get_job_annotations(job_id))
@@ -158,6 +315,16 @@ def put_job_annotations(job_id: str, request: JobAnnotationsRequest) -> JobAnnot
 @app.get("/api/model-sources/status", response_model=SourceStatusResponse)
 def get_model_source_status() -> SourceStatusResponse:
     return SourceStatusResponse(**services.check_model_and_source_status())
+
+
+@app.get("/api/scientific-runtime/status", response_model=ScientificRuntimeStatusResponse)
+def get_scientific_runtime_status() -> ScientificRuntimeStatusResponse:
+    return ScientificRuntimeStatusResponse(**services.get_scientific_runtime_status())
+
+
+@app.post("/api/scientific-runtime/refresh", response_model=ScientificRuntimeStatusResponse)
+def refresh_scientific_runtime_status() -> ScientificRuntimeStatusResponse:
+    return ScientificRuntimeStatusResponse(**services.get_scientific_runtime_status(refresh=True))
 
 
 @app.post("/api/model-sources/refresh", response_model=SourceStatusResponse)

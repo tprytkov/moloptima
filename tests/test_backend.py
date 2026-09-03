@@ -9,10 +9,12 @@ from fastapi.testclient import TestClient
 from backend import services
 from backend.main import app
 from backend.schemas import ADMET_ENDPOINT_NAMES, ResultResponse
+from molecular_prioritization import runtime_qualification
 from molecular_prioritization.admet_multitask_predictor import (
     FROZEN_ENDPOINT_DEFINITIONS,
     unavailable_admet_prediction,
 )
+from molecular_prioritization.vina_docking import DockingCancelled
 
 
 TERMINAL_STATUSES = {"completed", "completed_with_warnings", "failed", "cancelled"}
@@ -756,6 +758,72 @@ def test_model_source_status_endpoints(tmp_path: Path, monkeypatch):
     }
 
 
+def test_scientific_runtime_status_endpoint_uses_runtime_qualification_status(monkeypatch):
+    expected = {
+        "checked_at": "2026-08-27T22:00:00+00:00",
+        "status_source": "production_runtime_contract_probes",
+        "inference_performed": False,
+        "qualification_state": "complete",
+        "refreshing": False,
+        "generation": 0,
+        "probe_timings_seconds": {},
+        "components": {
+            "chemberta": {"status": "available", "public_endpoint_count": 9},
+            "gmc_mpnn_bbb": {"status": "available", "ensemble_seed_count": 5},
+            "chemprop_regression": {"status": "available", "endpoint_count": 5},
+            "receptor_preparation": {"status": "available"},
+            "docking": {"status": "available"},
+        },
+    }
+    monkeypatch.setattr(
+        services.runtime_qualification, "scientific_runtime_status", lambda **_kwargs: expected
+    )
+
+    response = TestClient(app).get("/api/scientific-runtime/status")
+    refresh_response = TestClient(app).post("/api/scientific-runtime/refresh")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+    assert refresh_response.status_code == 200
+    assert refresh_response.json() == expected
+
+
+def test_scientific_runtime_get_is_prompt_and_coalesces_running_probe(tmp_path, monkeypatch):
+    release = threading.Event()
+    calls = {name: 0 for name in (
+        "chemberta", "gmc_mpnn_bbb", "chemprop_regression",
+        "receptor_preparation", "docking",
+    )}
+
+    def make_check(name):
+        def check():
+            calls[name] += 1
+            if name == "gmc_mpnn_bbb":
+                release.wait(1)
+            return {"status": "available", "runtime_source": "test"}
+        return check
+
+    monkeypatch.setattr(services, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        runtime_qualification,
+        "_runtime_status_checks",
+        lambda _root: {name: make_check(name) for name in calls},
+    )
+    client = TestClient(app)
+
+    started = time.perf_counter()
+    first = client.get("/api/scientific-runtime/status")
+    second = client.get("/api/scientific-runtime/status")
+    elapsed = time.perf_counter() - started
+
+    assert first.status_code == second.status_code == 200
+    assert elapsed < 0.5
+    assert first.json()["qualification_state"] == "checking"
+    assert second.json()["generation"] == first.json()["generation"]
+    assert calls["gmc_mpnn_bbb"] == 1
+    release.set()
+
+
 def test_prioritization_job_passes_public_lookup_flag(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(services, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(services, "UPLOAD_DIR", tmp_path / "backend" / "uploads")
@@ -824,6 +892,42 @@ def test_prioritization_job_passes_public_lookup_flag(tmp_path: Path, monkeypatc
     latest_run = run_manifest["runs"][job_response.json()["job_id"]]
     assert latest_run["public_lookup_requested"] is True
     assert latest_run["pubchem_lookup_status_values"] == ["exact_match"]
+
+
+def test_job_execution_persists_portable_admet_runtime_identities_from_progress(tmp_path, monkeypatch):
+    current = {
+        "job_id": "job-runtime-provenance", "status": "queued",
+        "output_file": "backend/job_outputs/job-runtime-provenance/results.csv",
+    }
+    updates = []
+    monkeypatch.setattr(services, "read_job_metadata", lambda _job_id: dict(current))
+    monkeypatch.setattr(services, "update_job_metadata", lambda _job_id, **values: updates.append(values))
+    monkeypatch.setattr(services.model_sources, "update_run_manifest", lambda **_kwargs: {})
+
+    def fake_call(_input_path, _output_path, **options):
+        options["progress_callback"](
+            stage="admet",
+            admet_runtime_identities=[{
+                "family": "gmc_mpnn_bbb", "status": "success",
+                "runtime_source": "packaged", "runner_sha256": "runner-sha",
+                "private_path": r"C:\Users\private\runtime",
+            }],
+        )
+        return [{
+            "valid_molecule": True, "admet_model_status": "model_available",
+            "docking_result": {"status": "not_requested"}, "rank_eligible": False,
+        }]
+
+    monkeypatch.setattr(services, "call_prioritize_csv", fake_call)
+    services._execute_prioritization_job(
+        "job-runtime-provenance", tmp_path / "input.csv", tmp_path / "output.csv",
+    )
+
+    persisted = next(item["admet_runtime_identities"] for item in updates if "admet_runtime_identities" in item)
+    assert persisted == [{
+        "family": "gmc_mpnn_bbb", "status": "success",
+        "runtime_source": "packaged", "runner_sha256": "runner-sha",
+    }]
 
 
 def test_prioritization_job_passes_independent_chembl_flag(tmp_path: Path, monkeypatch):
@@ -1070,6 +1174,44 @@ def test_job_creation_returns_before_background_pipeline_finishes(tmp_path: Path
     release_pipeline.set()
     terminal = wait_for_job(client, payload["job_id"])
     assert terminal["status"] == "completed"
+    assert terminal["stage"] == "completed"
+    assert terminal["cancellation_requested"] is True
+
+
+def test_docking_stage_cancellation_marks_job_cancelled(tmp_path: Path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    configure_temp_app_data(tmp_path, monkeypatch)
+    docking_started = threading.Event()
+
+    def cancellable_prioritize_csv(
+        input_path,
+        output_path,
+        *,
+        progress_callback,
+        cancellation_requested,
+        **options,
+    ):
+        progress_callback(stage="docking", processed_count=0, docking_success_count=0, docking_failure_count=0)
+        docking_started.set()
+        deadline = time.monotonic() + 5
+        while not cancellation_requested() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        raise DockingCancelled("cancelled during docking")
+
+    monkeypatch.setattr(services, "prioritize_csv", cancellable_prioritize_csv)
+    client = TestClient(app)
+    upload = client.post(
+        "/api/molecules/upload",
+        files={"file": ("molecules.csv", _molecule_csv_bytes(2), "text/csv")},
+    ).json()
+    job = client.post("/api/jobs/prioritization", json={
+        "upload_id": upload["upload_id"], "enable_docking": True,
+    }).json()
+    assert docking_started.wait(timeout=2)
+    cancellation = client.post(f"/api/jobs/{job['job_id']}/cancel")
+    assert cancellation.status_code == 200
+    terminal = wait_for_job(client, job["job_id"])
+    assert terminal["status"] == "cancelled"
     assert terminal["stage"] == "completed"
     assert terminal["cancellation_requested"] is True
 

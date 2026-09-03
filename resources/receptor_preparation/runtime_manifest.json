@@ -1,0 +1,20 @@
+{
+  "schema_version": "moloptima-receptor-preparation-runtime-v1",
+  "tool": "Meeko",
+  "interface": "python -m meeko.cli.mk_prepare_receptor --read_pdb",
+  "packages": {
+    "meeko": {
+      "version": "0.7.1",
+      "wheel_sha256": "e50f5fdb9f94f44e6ee20616936cf033be9c93c7825bd69493a9cd9a3c5dc28d"
+    },
+    "gemmi": {
+      "version": "0.7.5",
+      "wheel_sha256": "06cb44f4e3657b7e3a2b23cd40b67a8e7b5d00bfb92ea94cb4060bd47ba50df6"
+    }
+  },
+  "prody_required": false,
+  "reduce2_available": false,
+  "hydrogen_handling": "Meeko/RDKit residue-template hydrogen completion without Reduce2 optimization or pH-dependent protonation",
+  "final_pdbqt_hydrogen_representation": "AutoDock polar/donor hydrogens explicit; nonpolar hydrogens merged in the united-atom representation",
+  "scope": "rigid standard protein receptor preparation"
+}

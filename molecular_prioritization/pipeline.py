@@ -47,6 +47,7 @@ from molecular_prioritization.docking import (
 )
 from molecular_prioritization.receptor import ReceptorArtifact, VinaBoxConfig
 from molecular_prioritization.vina_docking import (
+    DockingCancelled,
     DockingRuntimeUnavailable,
     VinaDockingEngine,
     unavailable_docking_result,
@@ -55,6 +56,8 @@ from molecular_prioritization.prioritization import (
     build_priority_record,
     finalize_scientific_prioritization,
 )
+from molecular_prioritization.prioritization_profiles import PrioritizationProfile
+from molecular_prioritization.prioritization_v2 import score_candidates_v2
 from molecular_prioritization.standardize import standardize_smiles
 from molecular_prioritization.structural_alerts import (
     STRUCTURAL_ALERT_COLUMNS,
@@ -86,8 +89,26 @@ def prioritize_smiles(
     docking_engine: object | None = None,
     docking_output_root: str | Path | None = None,
     docking_setup_error: str = "",
+    cancellation_requested: Callable[[], bool] | None = None,
+    docking_configuration_id: str = "",
+    prioritization_method: str = "legacy_v1",
+    prioritization_profile: dict[str, object] | PrioritizationProfile | None = None,
+    analysis_mode: str | None = None,
 ) -> list[dict[str, object]]:
     """Prioritize molecule records with molecule_id and smiles fields."""
+
+    if prioritization_method not in {"legacy_v1", "v2"}:
+        raise ValueError(f"Unknown prioritization method: {prioritization_method}")
+    active_v2_profile = None
+    if prioritization_method == "v2":
+        if prioritization_profile is None:
+            raise ValueError("Prioritization v2 requires an explicit complete profile.")
+        active_v2_profile = (
+            prioritization_profile
+            if isinstance(prioritization_profile, PrioritizationProfile)
+            else PrioritizationProfile.from_dict(prioritization_profile)
+        )
+        active_v2_profile.validate_for_scoring()
 
     use_legacy_adapters = bbb_predictor is not None or admet_predictor is not None
     active_bbb_predictor = (bbb_predictor or load_bbb_predictor()) if use_legacy_adapters else None
@@ -120,6 +141,9 @@ def prioritize_smiles(
     ]
     valid_count = len(valid_prepared)
     invalid_count = len(prepared_records) - valid_count
+    # The application import manifest is authoritative. Direct library-pipeline callers retain
+    # their historical behavior unless they explicitly request single-compound assessment.
+    resolved_analysis_mode = analysis_mode or "library"
     if progress_callback:
         progress_callback(
             stage="admet", valid_count=valid_count, invalid_count=invalid_count,
@@ -148,6 +172,7 @@ def prioritize_smiles(
                 stage="admet", valid_count=valid_count, invalid_count=invalid_count,
                 processed_count=len(prepared_records), admet_success_count=successes,
                 admet_failure_count=admet_failures,
+                admet_runtime_identities=list(getattr(engine, "runtime_identities", [])),
             )
 
     docking_by_index: dict[int, dict[str, object]] = {}
@@ -181,6 +206,8 @@ def prioritize_smiles(
                         docking_output_root
                         or Path(__file__).resolve().parents[1] / "app_data" / "docking_work"
                     ),
+                    cancellation_requested=cancellation_requested,
+                    configuration_id=docking_configuration_id,
                 )
             except DockingRuntimeUnavailable as exc:
                 family_status = "runtime_unavailable"
@@ -216,6 +243,8 @@ def prioritize_smiles(
                 [str(item[2].canonical_smiles) for item in valid_prepared],
                 progress_callback=docking_progress,
             )
+            if cancellation_requested and cancellation_requested():
+                raise DockingCancelled("Docking cancelled by user request.")
         docking_by_index = dict(zip(valid_positions, valid_docking_results, strict=True))
 
     for prepared_index, (record, molecule_id, standardized) in enumerate(prepared_records):
@@ -298,7 +327,11 @@ def prioritize_smiles(
                     receptor=receptor, config=docking_config,
                 )
             docking = DockingResult(
-                docking_score=docking_execution.get("best_affinity_kcal_mol"),
+                docking_score=(
+                    docking_execution.get("best_vina_affinity_kcal_mol")
+                    if "best_vina_affinity_kcal_mol" in docking_execution
+                    else docking_execution.get("best_affinity_kcal_mol")
+                ),
                 docking_status=(
                     "provided" if docking_execution.get("status") == "success"
                     else str(docking_execution.get("status"))
@@ -310,6 +343,7 @@ def prioritize_smiles(
                 "molecule_id": str(molecule_id),
                 "canonical_smiles": standardized.canonical_smiles,
                 "status": "precomputed" if docking.docking_status == "provided" else "not_requested",
+                "best_vina_affinity_kcal_mol": docking.docking_score,
                 "best_affinity_kcal_mol": docking.docking_score,
                 "warning": "",
             }
@@ -381,12 +415,65 @@ def prioritize_smiles(
                 "admet_regression": common_admet["regression"] if common_admet else {},
                 "admet_family_status": common_admet["family_status"] if common_admet else {},
                 "docking_result": docking_execution,
+                "analysis_mode": resolved_analysis_mode,
+                "source_type": record.get("source_type", "smiles"),
+                "source_filename": Path(str(record.get("source_filename") or "")).name,
+                "source_record": record.get("source_record", ""),
+                "structure_status": record.get("structure_status", "validated" if standardized.valid_molecule else "invalid_smiles"),
+                "coordinate_status": record.get("coordinate_status", "none"),
+                "input_has_3d": str(record.get("input_has_3d", "")).lower() == "true",
+                "original_structure_sha256": record.get("original_structure_sha256", ""),
+                "validation_status": record.get("validation_status", "valid" if standardized.valid_molecule else "invalid"),
+                "failure_reason": record.get("failure_reason", standardized.error or ""),
+                "source_warnings": record.get("warnings", "[]"),
+                "original_molecule_id": record.get("original_molecule_id", molecule_id),
+                "duplicate_structure": str(record.get("duplicate_structure", "")).lower() == "true",
             }
         )
         ranked_records.append(priority_record)
 
-    docking_scored_records = add_docking_informed_scores(ranked_records)
-    scientifically_ranked_records = finalize_scientific_prioritization(docking_scored_records)
+    if resolved_analysis_mode == "single_compound":
+        scientifically_ranked_records = ranked_records
+        for row in scientifically_ranked_records:
+            row.update({
+                "priority_score": None,
+                "scientific_ranking_score": None,
+                "scientific_rank": None,
+                "rank_eligible": False,
+                "prioritization_status": "not_applicable_single_compound",
+                "ranking_version": "not_applicable_single_compound",
+                "docking_score_normalized": None,
+                "docking_rank_within_run": None,
+                "docking_percentile_within_run": None,
+                "combined_candidate_score": None,
+                "v2_score": None,
+                "v2_rank": None,
+                "v2_rank_eligible": False,
+                "prioritization_v2": None,
+                "single_compound_profile_interpretation": {
+                    "status": "available_without_library_ranking",
+                    "profile_id": getattr(active_v2_profile, "profile_id", None),
+                    "warning": (
+                        "Endpoint values, liabilities, and profile context may be reviewed, but no library-relative "
+                        "docking normalization, final score, or rank is calculated."
+                    ),
+                },
+            })
+    elif prioritization_method == "legacy_v1":
+        docking_scored_records = add_docking_informed_scores(ranked_records)
+        scientifically_ranked_records = finalize_scientific_prioritization(docking_scored_records)
+    else:
+        scientifically_ranked_records = score_candidates_v2(ranked_records, active_v2_profile)
+        for row in scientifically_ranked_records:
+            row.update({
+                "scientific_ranking_score": row["v2_score"],
+                "scientific_rank": row["v2_rank"],
+                "rank_eligible": row["v2_rank_eligible"],
+                "prioritization_status": (
+                    "fully_scored" if row["v2_rank_eligible"] else "unscorable"
+                ),
+                "ranking_version": "moloptima_profile_v2",
+            })
     if progress_callback:
         progress_callback(
             stage="prioritization",
@@ -404,7 +491,11 @@ def prioritize_smiles(
             awaiting_or_missing_docking_count=sum(row.get("prioritization_status") == "awaiting_docking" for row in scientifically_ranked_records),
             docking_failed_or_unavailable_count=sum(row.get("prioritization_status") in {"docking_failed", "docking_unavailable"} for row in scientifically_ranked_records),
         )
-    diversity_records = add_diversity_analysis(scientifically_ranked_records)
+    diversity_records = (
+        scientifically_ranked_records
+        if resolved_analysis_mode == "single_compound"
+        else add_diversity_analysis(scientifically_ranked_records)
+    )
 
     if enable_target_reference_discovery:
         reference_set = active_target_reference_client.discover_references(
@@ -443,6 +534,11 @@ def prioritize_csv(
     docking_engine: object | None = None,
     docking_output_root: str | Path | None = None,
     docking_setup_error: str = "",
+    cancellation_requested: Callable[[], bool] | None = None,
+    docking_configuration_id: str = "",
+    prioritization_method: str = "legacy_v1",
+    prioritization_profile: dict[str, object] | PrioritizationProfile | None = None,
+    analysis_mode: str | None = None,
 ) -> list[dict[str, object]]:
     """Read molecule records from CSV, write ranked results, and return rows."""
 
@@ -467,6 +563,11 @@ def prioritize_csv(
         docking_engine=docking_engine,
         docking_output_root=docking_output_root,
         docking_setup_error=docking_setup_error,
+        cancellation_requested=cancellation_requested,
+        docking_configuration_id=docking_configuration_id,
+        prioritization_method=prioritization_method,
+        prioritization_profile=prioritization_profile,
+        analysis_mode=analysis_mode,
     )
     reference_metadata = getattr(
         prioritize_smiles,

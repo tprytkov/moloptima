@@ -23,7 +23,7 @@ if not exist "%RUNTIME_PYTHON%" (
 set "PYTHONPATH=%PROJECT_ROOT%"
 
 echo Checking Python imports...
-"%RUNTIME_PYTHON%" -c "import sys; import rdkit; import fastapi; import uvicorn; import pandas; import numpy; import backend.main; print('ok: imports passed with', sys.executable)"
+"%RUNTIME_PYTHON%" -c "import sys; import rdkit; import fastapi; import uvicorn; import pandas; import numpy; import meeko; import gemmi; import backend.main; assert meeko.__version__ == '0.7.1'; assert gemmi.__version__ == '0.7.5'; print('ok: imports passed with', sys.executable)"
 if errorlevel 1 exit /b 1
 
 if "%RUN_HEALTH_CHECK%"=="0" (

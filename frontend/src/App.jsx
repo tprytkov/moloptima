@@ -17,8 +17,10 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  MenuItem,
   Paper,
   Stack,
+  Tab,
   Table,
   TableBody,
   TableCell,
@@ -26,50 +28,138 @@ import {
   TableRow,
   TextField,
   ThemeProvider,
+  Tabs,
   Toolbar,
   Typography,
   createTheme,
 } from '@mui/material';
-import AssessmentOutlinedIcon from '@mui/icons-material/AssessmentOutlined';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import CloudQueueOutlinedIcon from '@mui/icons-material/CloudQueueOutlined';
-import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import DownloadOutlinedIcon from '@mui/icons-material/DownloadOutlined';
+import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
+import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
 import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
+import MedicationOutlinedIcon from '@mui/icons-material/MedicationOutlined';
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
 import AdmetResultsSection from './AdmetResultsSection.jsx';
 import DockingResultsSection from './DockingResultsSection.jsx';
+import DockingSetup from './DockingSetup.jsx';
 import PrioritizationExplanationSection from './PrioritizationExplanationSection.jsx';
+import PrioritizationAnalysisPanel from './PrioritizationAnalysisPanel.jsx';
+import PrioritizationSettings from './PrioritizationSettings.jsx';
+import MoleculeInputPanel from './MoleculeInputPanel.jsx';
+import ResultsPackageDownloads from './ResultsPackageDownloads.jsx';
 import {
-  MAX_BATCH_SIZE,
   TERMINAL_JOB_STATUSES,
-  batchSizeError,
-  countCsvMoleculeRecords,
   mergeJobIntoHistory,
   pollJobUntilTerminal,
 } from './jobWorkflow.js';
+import { startBackendHealthPolling } from './backendHealth.js';
 
-const drawerWidth = 256;
+const drawerWidth = 216;
 const apiBaseUrl = 'http://localhost:8000';
 
-const navigationItems = [
-  { label: 'Dashboard', icon: AssessmentOutlinedIcon },
-  { label: 'Upload Molecules', icon: UploadFileOutlinedIcon },
-  { label: 'Molecular Prioritization', icon: ScienceOutlinedIcon },
-  { label: 'Run History', icon: AssessmentOutlinedIcon },
-  { label: 'Run Comparison', icon: AssessmentOutlinedIcon },
-  { label: 'Chemical Space', icon: InsightsOutlinedIcon },
-  { label: 'Biopharma Intelligence', icon: InsightsOutlinedIcon },
-  { label: 'Reports', icon: DescriptionOutlinedIcon },
-  { label: 'Settings', icon: SettingsOutlinedIcon },
+export const PRIMARY_NAVIGATION = [
+  {
+    section: '', items: [
+      { label: 'New Calculation', icon: AddCircleOutlineIcon },
+    ],
+  },
+  {
+    section: 'WORKFLOW', items: [
+      { label: 'Molecules', step: 1, icon: UploadFileOutlinedIcon },
+      { label: 'Receptor & Docking', step: 2, icon: HubOutlinedIcon },
+      { label: 'ADMET', step: 3, icon: MedicationOutlinedIcon },
+      { label: 'Prioritization', step: 4, icon: ScienceOutlinedIcon },
+      { label: 'Results', step: 5, icon: FactCheckOutlinedIcon },
+    ],
+  },
+  {
+    section: 'ANALYSIS', items: [
+      { label: 'Analysis', step: 6, icon: InsightsOutlinedIcon },
+    ],
+  },
+  {
+    section: 'SYSTEM', items: [
+      { label: 'Settings', step: 7, icon: SettingsOutlinedIcon },
+    ],
+  },
 ];
 
-const summaryItems = [
-  ['Pipeline', 'Phase 1 molecular prioritization'],
-  ['Backend', 'FastAPI local service'],
-  ['Storage', 'Local upload and result files'],
-];
+const EMPTY_UPLOAD_STATE = Object.freeze({
+  smilesText: '', selectedFiles: [], selectedStructureColumn: '', upload: null,
+  loading: false, error: '',
+});
+const EMPTY_PRIORITIZATION_STATE = Object.freeze({
+  job: null, result: null, loading: false, error: '',
+});
+const EMPTY_TARGET_CONTEXT = Object.freeze({
+  target_name: '', target_gene_symbol: '', target_uniprot_id: '', target_chembl_id: '',
+  pdb_id: '', organism: '', disease_context: '', mechanism_context: '',
+  docking_protocol_notes: '', binding_site_notes: '', enable_docking: true,
+  receptor_id: '', docking_configuration_id: '', docking_center_x: '',
+  docking_center_y: '', docking_center_z: '', docking_size_x: '', docking_size_y: '',
+  docking_size_z: '', docking_exhaustiveness: '', docking_num_modes: '',
+  docking_energy_range: '', docking_seed: '', docking_worker_count: '',
+});
+
+export function csvMoleculePreview(csvText, limit = 5) {
+  const rows = String(csvText || '').split(/\r?\n/).filter((line) => line.trim());
+  if (rows.length < 2) return [];
+  const parse = (line) => {
+    const values = [];
+    let value = '';
+    let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const character = line[index];
+      if (character === '"' && quoted && line[index + 1] === '"') {
+        value += '"'; index += 1;
+      } else if (character === '"') quoted = !quoted;
+      else if (character === ',' && !quoted) { values.push(value.trim()); value = ''; }
+      else value += character;
+    }
+    values.push(value.trim());
+    return values;
+  };
+  const headers = parse(rows[0]).map((header) => header.toLowerCase());
+  const moleculeIndex = headers.indexOf('molecule_id');
+  const smilesIndex = headers.indexOf('smiles');
+  return rows.slice(1, limit + 1).map((line, index) => {
+    const values = parse(line);
+    return {
+      moleculeId: moleculeIndex >= 0 ? values[moleculeIndex] : String(index + 1),
+      smiles: smilesIndex >= 0 ? values[smilesIndex] : '',
+    };
+  });
+}
+
+export function deriveWorkflowStatuses({ uploadState, targetContext, prioritizationState }) {
+  const terminal = TERMINAL_JOB_STATUSES.has(prioritizationState.job?.status);
+  const completed = Boolean(prioritizationState.result);
+  const running = Boolean(prioritizationState.loading && !terminal);
+  const failed = Boolean(terminal && !completed && prioritizationState.error);
+  const uploaded = Boolean(uploadState.upload);
+  const dockingConfigured = Boolean(targetContext.docking_configuration_id);
+  const stage = String(prioritizationState.job?.stage || '').toLowerCase();
+  const admetPresent = Boolean(prioritizationState.result?.results?.some((row) => (
+    row.admet_model_status || row.bbb_model_status || row.admet_regression
+  )));
+  const dockingPresent = Boolean(prioritizationState.result?.results?.some((row) => row.docking_result));
+  return {
+    Molecules: uploaded || completed ? 'Complete'
+      : uploadState.selectedFiles?.length || uploadState.smilesText?.trim() ? 'Ready' : 'Not started',
+    'Receptor & Docking': dockingPresent ? 'Complete' : running && stage.includes('dock')
+      ? 'Running' : dockingConfigured ? 'Ready' : uploaded ? 'Needs attention' : 'Not started',
+    ADMET: admetPresent ? 'Complete' : running && stage.includes('admet')
+      ? 'Running' : uploaded ? 'Ready' : 'Not started',
+    Prioritization: completed ? 'Complete' : running ? 'Running' : failed
+      ? 'Needs attention' : uploaded ? 'Ready' : 'Not started',
+    Results: completed ? 'Complete' : running ? 'Running' : failed ? 'Needs attention' : 'Not started',
+    Analysis: completed ? 'Ready' : 'Not started',
+  };
+}
 
 const theme = createTheme({
   palette: {
@@ -97,7 +187,7 @@ const theme = createTheme({
     fontFamily:
       'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     h1: {
-      fontSize: '2rem',
+      fontSize: '1.55rem',
       fontWeight: 700,
       lineHeight: 1.2,
       letterSpacing: 0,
@@ -109,37 +199,27 @@ const theme = createTheme({
       letterSpacing: 0,
     },
     body1: {
-      lineHeight: 1.65,
+      fontSize: '0.9rem',
+      lineHeight: 1.5,
     },
     button: {
       textTransform: 'none',
       fontWeight: 650,
     },
   },
+  components: {
+    MuiToolbar: { styleOverrides: { root: { minHeight: 52 } } },
+    MuiTableCell: { styleOverrides: { root: { paddingTop: 7, paddingBottom: 7, fontSize: '0.78rem' } } },
+    MuiButton: { defaultProps: { size: 'small' } },
+    MuiTextField: { defaultProps: { size: 'small' } },
+    MuiChip: { defaultProps: { size: 'small' } },
+  },
 });
 
 function App() {
-  const [activeItem, setActiveItem] = useState('Dashboard');
-  const [uploadState, setUploadState] = useState({
-    selectedFile: null,
-    detectedRows: null,
-    upload: null,
-    loading: false,
-    counting: false,
-    error: '',
-  });
-  const [receptorState, setReceptorState] = useState({
-    selectedFile: null,
-    upload: null,
-    loading: false,
-    error: '',
-  });
-  const [prioritizationState, setPrioritizationState] = useState({
-    job: null,
-    result: null,
-    loading: false,
-    error: '',
-  });
+  const [activeItem, setActiveItem] = useState('New Calculation');
+  const [uploadState, setUploadState] = useState({ ...EMPTY_UPLOAD_STATE });
+  const [prioritizationState, setPrioritizationState] = useState({ ...EMPTY_PRIORITIZATION_STATE });
   const [latestRunState, setLatestRunState] = useState({
     job: null,
     result: null,
@@ -169,29 +249,10 @@ function App() {
   const [chemblLookupEnabled, setChemblLookupEnabled] = useState(false);
   const [patentLookupEnabled, setPatentLookupEnabled] = useState(false);
   const [targetReferenceEnabled, setTargetReferenceEnabled] = useState(false);
-  const [targetContext, setTargetContext] = useState({
-    target_name: '',
-    target_gene_symbol: '',
-    target_uniprot_id: '',
-    target_chembl_id: '',
-    pdb_id: '',
-    organism: '',
-    disease_context: '',
-    mechanism_context: '',
-    docking_protocol_notes: '',
-    binding_site_notes: '',
-    enable_docking: true,
-    receptor_id: '',
-    docking_center_x: '',
-    docking_center_y: '',
-    docking_center_z: '',
-    docking_size_x: '',
-    docking_size_y: '',
-    docking_size_z: '',
-    docking_exhaustiveness: '',
-    docking_num_modes: '',
-    docking_seed: '',
+  const [prioritizationSettings, setPrioritizationSettings] = useState({
+    method: 'legacy_v1', profile: null, validation: null,
   });
+  const [targetContext, setTargetContext] = useState({ ...EMPTY_TARGET_CONTEXT });
   const health = useBackendHealth();
   const annotatedPrioritizationState = useMemo(
     () => annotateAnalysisState(prioritizationState, annotationsState),
@@ -280,20 +341,8 @@ function App() {
   }, []);
 
   async function handleUpload() {
-    if (!uploadState.selectedFile) {
-      setUploadState((current) => ({ ...current, error: 'Select a CSV file before uploading.' }));
-      return;
-    }
-    if (uploadState.detectedRows === null) {
-      setUploadState((current) => ({
-        ...current,
-        error: 'Wait for the molecule count check before uploading.',
-      }));
-      return;
-    }
-    const sizeError = batchSizeError(uploadState.detectedRows ?? 0);
-    if (sizeError) {
-      setUploadState((current) => ({ ...current, error: sizeError }));
+    if (!uploadState.smilesText?.trim() && !uploadState.selectedFiles?.length) {
+      setUploadState((current) => ({ ...current, error: 'Enter SMILES or select molecule files before validating.' }));
       return;
     }
 
@@ -301,10 +350,12 @@ function App() {
     setPrioritizationState({ job: null, result: null, loading: false, error: '' });
 
     const formData = new FormData();
-    formData.append('file', uploadState.selectedFile);
+    formData.append('smiles_text', uploadState.smilesText ?? '');
+    formData.append('selected_structure_column', uploadState.selectedStructureColumn ?? '');
+    (uploadState.selectedFiles ?? []).forEach((file) => formData.append('files', file));
 
     try {
-      const payload = await apiRequest('/api/molecules/upload', {
+      const payload = await apiRequest('/api/molecules/import', {
         method: 'POST',
         body: formData,
       });
@@ -314,7 +365,6 @@ function App() {
         loading: false,
         error: '',
       }));
-      setActiveItem('Molecular Prioritization');
     } catch (error) {
       setUploadState((current) => ({
         ...current,
@@ -325,62 +375,48 @@ function App() {
     }
   }
 
-  async function handleSelectUploadFile(file) {
-    if (!file) {
-      setUploadState({
-        selectedFile: null,
-        detectedRows: null,
+  function handleMoleculeInputChange(update) {
+    if (update.addFiles) {
+      setUploadState((current) => ({
+        ...current,
+        selectedFiles: [...(current.selectedFiles ?? []), ...update.addFiles],
         upload: null,
-        loading: false,
-        counting: false,
         error: '',
-      });
+      }));
       return;
     }
-
-    setUploadState((current) => ({
-      ...current,
-      selectedFile: file,
-      detectedRows: null,
-      upload: null,
-      counting: true,
-      error: '',
-    }));
-    try {
-      const rowCount = countCsvMoleculeRecords(await file.text());
-      setUploadState((current) => current.selectedFile === file ? {
-        ...current,
-        detectedRows: rowCount,
-        counting: false,
-        error: batchSizeError(rowCount),
-      } : current);
-    } catch (error) {
-      setUploadState((current) => current.selectedFile === file ? {
-        ...current,
-        detectedRows: null,
-        counting: false,
-        error: `Could not inspect the selected CSV: ${readableError(error)}`,
-      } : current);
-    }
+    setUploadState((current) => ({ ...current, ...update }));
   }
 
-  async function handleReceptorUpload() {
-    if (!receptorState.selectedFile) {
-      setReceptorState((current) => ({ ...current, error: 'Select a prepared receptor PDBQT file.' }));
-      return;
-    }
-    setReceptorState((current) => ({ ...current, loading: true, error: '' }));
-    const formData = new FormData();
-    formData.append('file', receptorState.selectedFile);
-    const receptorId = encodeURIComponent(targetContext.receptor_id || targetContext.pdb_id || '');
-    try {
-      const upload = await apiRequest(`/api/receptors/upload?receptor_id=${receptorId}`, {
-        method: 'POST', body: formData,
-      });
-      setReceptorState((current) => ({ ...current, upload, loading: false, error: '' }));
-    } catch (error) {
-      setReceptorState((current) => ({ ...current, upload: null, loading: false, error: readableError(error) }));
-    }
+  function handleNewCalculation() {
+    setUploadState({ ...EMPTY_UPLOAD_STATE });
+    setPrioritizationState({ ...EMPTY_PRIORITIZATION_STATE });
+    setTargetContext({ ...EMPTY_TARGET_CONTEXT });
+    setPrioritizationSettings({ method: 'legacy_v1', profile: null, validation: null });
+    setPubchemLookupEnabled(false);
+    setChemblLookupEnabled(false);
+    setPatentLookupEnabled(false);
+    setTargetReferenceEnabled(false);
+    setActiveItem('Molecules');
+  }
+
+  function handleDockingSetupConfirmed({ receptor, configuration }) {
+    setTargetContext((current) => ({
+      ...current,
+      receptor_id: receptor.receptor_id,
+      docking_configuration_id: configuration.configuration_id,
+      docking_center_x: configuration.center_x,
+      docking_center_y: configuration.center_y,
+      docking_center_z: configuration.center_z,
+      docking_size_x: configuration.size_x,
+      docking_size_y: configuration.size_y,
+      docking_size_z: configuration.size_z,
+      docking_exhaustiveness: configuration.exhaustiveness,
+      docking_num_modes: configuration.num_modes,
+      docking_energy_range: configuration.energy_range ?? '',
+      docking_seed: configuration.seed,
+      docking_worker_count: configuration.worker_count,
+    }));
   }
 
   async function handleStartPrioritization() {
@@ -389,6 +425,13 @@ function App() {
       setPrioritizationState((current) => ({
         ...current,
         error: 'Upload a molecule CSV before starting prioritization.',
+      }));
+      return;
+    }
+    if (prioritizationSettings.method === 'v2' && !prioritizationSettings.validation?.scoreable) {
+      setPrioritizationState((current) => ({
+        ...current,
+        error: 'Prioritization v2 requires a complete profile that passes backend scoring validation.',
       }));
       return;
     }
@@ -401,13 +444,16 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           upload_id: uploadId,
+          prioritization_method: prioritizationSettings.method,
+          prioritization_profile: prioritizationSettings.method === 'v2'
+            ? prioritizationSettings.profile
+            : null,
           enable_pubchem_lookup: pubchemLookupEnabled,
           enable_chembl_lookup: chemblLookupEnabled,
           enable_patent_lookup: patentLookupEnabled,
           enable_target_reference_discovery: targetReferenceEnabled,
-          receptor_upload_id: receptorState.upload?.receptor_upload_id ?? '',
           ...targetContext,
-          ...dockingRequestPayload(targetContext),
+          ...normalizedDockingRequest(targetContext),
         }),
       });
       setPrioritizationState({ job, result: null, loading: true, error: '' });
@@ -627,20 +673,24 @@ function App() {
     }
   }
 
+  const workflowStatuses = deriveWorkflowStatuses({ uploadState, targetContext, prioritizationState });
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Box sx={{ minHeight: '100vh', display: 'flex', bgcolor: 'background.default' }}>
-        <Sidebar activeItem={activeItem} onSelect={setActiveItem} />
+        <Sidebar
+          activeItem={activeItem}
+          onSelect={setActiveItem}
+          onNewCalculation={handleNewCalculation}
+        />
         <Box component="main" sx={{ flexGrow: 1, minWidth: 0 }}>
-          <AppHeader />
-          <Box sx={{ px: { xs: 2, md: 4 }, py: 3, maxWidth: 1180 }}>
+          <AppHeader activeItem={activeItem} health={health} />
+          <Box sx={{ px: { xs: 2, md: 3 }, py: 2.5, width: '100%' }}>
             <ActivePage
               activeItem={activeItem}
               health={health}
               uploadState={uploadState}
-              receptorState={receptorState}
-              setReceptorState={setReceptorState}
               setUploadState={setUploadState}
               prioritizationState={annotatedPrioritizationState}
               latestRunState={annotatedLatestRunState}
@@ -648,8 +698,8 @@ function App() {
               annotationsState={annotationsState}
               sourceStatusState={sourceStatusState}
               onUpload={handleUpload}
-              onSelectUploadFile={handleSelectUploadFile}
-              onReceptorUpload={handleReceptorUpload}
+              onMoleculeInputChange={handleMoleculeInputChange}
+              onDockingSetupConfirmed={handleDockingSetupConfirmed}
               onStartPrioritization={handleStartPrioritization}
               onCancelPrioritization={handleCancelPrioritization}
               onLoadHistoricalRun={handleLoadHistoricalRun}
@@ -664,9 +714,14 @@ function App() {
               setTargetReferenceEnabled={setTargetReferenceEnabled}
               targetContext={targetContext}
               setTargetContext={setTargetContext}
+              prioritizationSettings={prioritizationSettings}
+              setPrioritizationSettings={setPrioritizationSettings}
               onCheckLocalModelCache={handleCheckLocalModelCache}
               onRefreshSourceStatus={handleRefreshSourceStatus}
               onSaveReviewAnnotation={handleSaveReviewAnnotation}
+              onNavigate={setActiveItem}
+              onNewCalculation={handleNewCalculation}
+              workflowStatuses={workflowStatuses}
             />
           </Box>
         </Box>
@@ -675,7 +730,7 @@ function App() {
   );
 }
 
-function Sidebar({ activeItem, onSelect }) {
+function Sidebar({ activeItem, onSelect, onNewCalculation }) {
   return (
     <Drawer
       variant="permanent"
@@ -690,12 +745,12 @@ function Sidebar({ activeItem, onSelect }) {
         },
       }}
     >
-      <Toolbar sx={{ alignItems: 'center', gap: 1.5, px: 2.5 }}>
+      <Toolbar sx={{ alignItems: 'center', gap: 1.25, px: 2 }}>
         <Box
           aria-hidden="true"
           sx={{
-            width: 34,
-            height: 34,
+            width: 30,
+            height: 30,
             borderRadius: 1.5,
             bgcolor: 'primary.main',
             display: 'grid',
@@ -707,49 +762,48 @@ function Sidebar({ activeItem, onSelect }) {
           M
         </Box>
         <Box>
-          <Typography variant="h2" sx={{ lineHeight: 1.05 }}>
-            MolOptima
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Phase 1 workspace
+          <Typography variant="subtitle1" sx={{ lineHeight: 1.05, fontWeight: 800, letterSpacing: '0.03em' }}>
+            MOLOPTIMA
           </Typography>
         </Box>
       </Toolbar>
       <Divider />
-      <List sx={{ px: 1.25, py: 1.5 }}>
-        {navigationItems.map(({ label, icon: Icon }) => (
-          <ListItemButton
-            key={label}
-            selected={activeItem === label}
-            onClick={() => onSelect(label)}
-            sx={{
-              mb: 0.5,
-              borderRadius: 1,
-              minHeight: 44,
-              '&.Mui-selected': {
-                bgcolor: 'rgba(20, 95, 116, 0.1)',
-                color: 'primary.main',
-              },
-              '&.Mui-selected:hover': {
-                bgcolor: 'rgba(20, 95, 116, 0.14)',
-              },
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 38, color: 'inherit' }}>
-              <Icon fontSize="small" />
-            </ListItemIcon>
-            <ListItemText
-              primary={label}
-              primaryTypographyProps={{ fontSize: 14, fontWeight: activeItem === label ? 700 : 550 }}
-            />
-          </ListItemButton>
+      <Box sx={{ px: 1, py: 1.25 }}>
+        {PRIMARY_NAVIGATION.map((group) => (
+          <Box key={group.section || 'primary'} sx={{ mb: group.section ? 1.25 : 1.5 }}>
+            {group.section ? (
+              <Typography variant="overline" color="text.secondary" sx={{ px: 1.25, fontSize: 10, letterSpacing: '0.09em' }}>
+                {group.section}
+              </Typography>
+            ) : null}
+            <List disablePadding>
+              {group.items.map(({ label, step, icon: Icon }) => (
+                <ListItemButton
+                  key={label}
+                  selected={activeItem === label}
+                  onClick={() => label === 'New Calculation' ? onNewCalculation() : onSelect(label)}
+                  sx={{
+                    mb: 0.25, px: 1.25, borderRadius: 1, minHeight: 38,
+                    '&.Mui-selected': { bgcolor: 'rgba(20, 95, 116, 0.1)', color: 'primary.main' },
+                    '&.Mui-selected:hover': { bgcolor: 'rgba(20, 95, 116, 0.14)' },
+                  }}
+                >
+                  <ListItemIcon sx={{ minWidth: 32, color: 'inherit' }}><Icon sx={{ fontSize: 19 }} /></ListItemIcon>
+                  <ListItemText
+                    primary={`${step ? `${step}. ` : ''}${label}`}
+                    primaryTypographyProps={{ fontSize: 12.5, fontWeight: activeItem === label ? 700 : 550 }}
+                  />
+                </ListItemButton>
+              ))}
+            </List>
+          </Box>
         ))}
-      </List>
+      </Box>
     </Drawer>
   );
 }
 
-function AppHeader() {
+function AppHeader({ activeItem, health }) {
   return (
     <AppBar
       position="sticky"
@@ -757,9 +811,9 @@ function AppHeader() {
       elevation={0}
       sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}
     >
-      <Toolbar sx={{ justifyContent: 'space-between', px: { xs: 2, md: 4 } }}>
-        <Typography variant="h2">Scientific Prioritization Dashboard</Typography>
-        <Chip size="small" label="Local backend" color="secondary" variant="outlined" />
+      <Toolbar sx={{ justifyContent: 'space-between', px: { xs: 2, md: 3 } }}>
+        <Typography variant="h2">{activeItem}</Typography>
+        <HealthChip health={health} />
       </Toolbar>
     </AppBar>
   );
@@ -769,8 +823,6 @@ function ActivePage({
   activeItem,
   health,
   uploadState,
-  receptorState,
-  setReceptorState,
   setUploadState,
   prioritizationState,
   latestRunState,
@@ -778,8 +830,8 @@ function ActivePage({
   annotationsState,
   sourceStatusState,
   onUpload,
-  onSelectUploadFile,
-  onReceptorUpload,
+  onMoleculeInputChange,
+  onDockingSetupConfirmed,
   onStartPrioritization,
   onCancelPrioritization,
   onLoadHistoricalRun,
@@ -795,29 +847,67 @@ function ActivePage({
   setTargetReferenceEnabled,
   targetContext,
   setTargetContext,
+  prioritizationSettings,
+  setPrioritizationSettings,
   onCheckLocalModelCache,
   onRefreshSourceStatus,
+  onNavigate,
+  onNewCalculation,
+  workflowStatuses,
 }) {
-  if (activeItem === 'Upload Molecules') {
+  if (activeItem === 'New Calculation') {
     return (
-      <UploadMoleculesPage
-        uploadState={uploadState}
-        onUpload={onUpload}
-        onSelectUploadFile={onSelectUploadFile}
+      <NewCalculationPage
+        workflowStatuses={workflowStatuses}
+        onStart={onNewCalculation}
+        currentJob={prioritizationState.job}
+        analysisMode={uploadState.upload?.analysis_mode}
       />
     );
   }
 
-  if (activeItem === 'Molecular Prioritization') {
+  if (activeItem === 'Molecules' || activeItem === 'Upload Molecules') {
+    return (
+      <UploadMoleculesPage
+        uploadState={uploadState}
+        onUpload={onUpload}
+        onChange={onMoleculeInputChange}
+        onContinue={() => onNavigate('Receptor & Docking')}
+      />
+    );
+  }
+
+  if (activeItem === 'Receptor & Docking') {
+    return (
+      <DockingWorkflowPage
+        uploadState={uploadState}
+        prioritizationState={prioritizationState}
+        targetContext={targetContext}
+        onDockingSetupConfirmed={onDockingSetupConfirmed}
+        onRunDocking={onStartPrioritization}
+        onNavigate={onNavigate}
+      />
+    );
+  }
+
+  if (activeItem === 'ADMET') {
+    return (
+      <AdmetWorkflowPage
+        prioritizationState={prioritizationState}
+        sourceStatusState={sourceStatusState}
+        onNavigate={onNavigate}
+      />
+    );
+  }
+
+  if (activeItem === 'Prioritization' || activeItem === 'Molecular Prioritization') {
     return (
       <PrioritizationPage
         uploadState={uploadState}
-        receptorState={receptorState}
-        setReceptorState={setReceptorState}
         prioritizationState={prioritizationState}
         onStartPrioritization={onStartPrioritization}
         onCancelPrioritization={onCancelPrioritization}
-        onReceptorUpload={onReceptorUpload}
+        onDockingSetupConfirmed={onDockingSetupConfirmed}
         pubchemLookupEnabled={pubchemLookupEnabled}
         setPubchemLookupEnabled={setPubchemLookupEnabled}
         chemblLookupEnabled={chemblLookupEnabled}
@@ -828,8 +918,32 @@ function ActivePage({
         setTargetReferenceEnabled={setTargetReferenceEnabled}
         targetContext={targetContext}
         setTargetContext={setTargetContext}
+        prioritizationSettings={prioritizationSettings}
+        setPrioritizationSettings={setPrioritizationSettings}
         annotationsState={annotationsState}
         onSaveReviewAnnotation={onSaveReviewAnnotation}
+        onNavigate={onNavigate}
+      />
+    );
+  }
+
+  if (activeItem === 'Results') {
+    return (
+      <ResultsWorkflowPage
+        prioritizationState={prioritizationState}
+        annotationsState={annotationsState}
+        onSaveReviewAnnotation={onSaveReviewAnnotation}
+      />
+    );
+  }
+
+  if (activeItem === 'Analysis') {
+    return (
+      <AnalysisWorkflowPage
+        currentRunState={prioritizationState}
+        annotationsState={annotationsState}
+        onSaveReviewAnnotation={onSaveReviewAnnotation}
+        prioritizationSettings={prioritizationSettings}
       />
     );
   }
@@ -897,6 +1011,295 @@ function ActivePage({
   return <DashboardPage health={health} activeItem={activeItem} latestRunState={latestRunState} />;
 }
 
+const WORKFLOW_STEPS = ['Molecules', 'Receptor & Docking', 'ADMET', 'Prioritization', 'Results', 'Analysis'];
+
+function WorkflowStatusChip({ status }) {
+  const color = status === 'Complete' ? 'success' : status === 'Running' ? 'primary'
+    : status === 'Needs attention' ? 'warning' : 'default';
+  return <Chip label={status} color={color} variant={status === 'Not started' ? 'outlined' : 'filled'} />;
+}
+
+export function NewCalculationPage({ workflowStatuses, onStart, currentJob, analysisMode }) {
+  const single = analysisMode === 'single_compound';
+  const steps = single
+    ? ['Molecule', 'Receptor & Docking', 'ADMET', 'Compound Assessment', 'Results']
+    : WORKFLOW_STEPS;
+  return (
+    <Stack spacing={2}>
+      <PageIntro
+        title="New Calculation"
+        description="Integrated molecular docking, ADMET prediction, and multiparameter molecular prioritization."
+      />
+      <Paper elevation={0} sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2.5}>
+          <Box>
+            <Typography variant="h2">Scientific workflow</Typography>
+            <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+              {single
+                ? 'One valid compound loaded: molecular properties, ADMET, optional docking, and profile interpretation are available without library ranking.'
+                : 'Begin with molecules, configure receptor-specific docking, then run the existing local scientific pipeline.'}
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(6, minmax(0, 1fr))' }, gap: 1 }}>
+            {steps.map((step, index) => (
+              <Box key={step} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 1, minWidth: 0 }}>
+                <Typography variant="caption" color="text.secondary">Step {index + 1}</Typography>
+                <Typography sx={{ fontWeight: 700, my: 0.75, fontSize: 13 }}>{step}</Typography>
+                <WorkflowStatusChip status={workflowStatuses[step === 'Molecule' ? 'Molecules' : step === 'Compound Assessment' ? 'Prioritization' : step] || 'Not started'} />
+              </Box>
+            ))}
+          </Box>
+          {currentJob ? (
+            <Typography variant="caption" color="text.secondary">
+              Current job: {currentJob.job_id} · {currentJob.status} · {currentJob.stage || 'stage unavailable'}
+            </Typography>
+          ) : null}
+          <Box><Button variant="contained" onClick={onStart}>Start New Calculation</Button></Box>
+        </Stack>
+      </Paper>
+    </Stack>
+  );
+}
+
+export function DockingWorkflowPage({
+  uploadState, prioritizationState, targetContext, onDockingSetupConfirmed, onRunDocking, onNavigate,
+}) {
+  const rows = prioritizationState.result?.results ?? [];
+  const dockedRows = rows.filter((row) => row.docking_result);
+  const [selectedKey, setSelectedKey] = useState('');
+  const selected = dockedRows.find((row, index) => compoundRowKey(row, index) === selectedKey) ?? null;
+  const ready = Boolean(uploadState.upload && targetContext.docking_configuration_id);
+  const successfulDocking = dockedRows.filter((row) => row.docking_result?.status === 'success').length;
+  const vinaVersion = dockedRows.find((row) => row.docking_result?.vina_version)?.docking_result?.vina_version;
+  const single = uploadState.upload?.analysis_mode === 'single_compound';
+  return (
+    <Stack spacing={2}>
+      <PageIntro title="Receptor & Docking" description="Inspect the visualization structure, attach a prepared receptor, define an explicit binding-site box, and run the existing Vina workflow." />
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1.65fr) minmax(300px, 0.75fr)' }, gap: 2, alignItems: 'start' }}>
+        <DockingSetup apiBaseUrl={apiBaseUrl} onConfirmed={onDockingSetupConfirmed} />
+        <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
+          <Stack spacing={1.5}>
+            <Typography variant="h2">Docking run</Typography>
+            <WorkflowStatusChip status={ready ? 'Ready' : uploadState.upload ? 'Needs attention' : 'Not started'} />
+            <Typography color="text.secondary">
+              {uploadState.upload ? `${uploadState.upload.rows} uploaded molecules are available.` : 'Upload molecules before docking.'}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Run Docking starts the existing combined local calculation; ADMET and {single ? 'compound assessment' : 'prioritization'} continue in the same auditable job.
+            </Typography>
+            <Typography variant="caption" color="text.secondary">Ligand preparation: RDKit 3D → Open Babel PDBQT</Typography>
+            <Typography variant="caption" color="text.secondary">Vina runtime: {vinaVersion ? `available · ${vinaVersion}` : 'not yet verified for this calculation'}</Typography>
+            <Typography variant="caption" color="text.secondary">Receptor: validated prepared PDBQT required</Typography>
+            <Button variant="contained" disabled={!ready || prioritizationState.loading} onClick={onRunDocking}>
+              {prioritizationState.loading ? 'Calculation running' : 'Run Docking'}
+            </Button>
+            <Button variant="outlined" onClick={() => onNavigate('ADMET')}>Continue to ADMET</Button>
+            {prioritizationState.error ? <Alert severity="error">{prioritizationState.error}</Alert> : null}
+          </Stack>
+        </Paper>
+      </Box>
+      {dockedRows.length ? (
+        <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1} sx={{ mb: 1 }}><Box><Typography variant="h2">Current docking results</Typography><Typography variant="caption" color="text.secondary">Successful: {successfulDocking} / {dockedRows.length}</Typography></Box><Button variant="outlined" disabled={!dockedRows.length} onClick={() => setSelectedKey(compoundRowKey(dockedRows[0], 0))}>View Docking Results</Button></Stack>
+          <Table size="small"><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>Best affinity (kcal/mol)</TableCell><TableCell>Best mode</TableCell><TableCell>Modes returned</TableCell><TableCell>Status</TableCell></TableRow></TableHead>
+            <TableBody>{dockedRows.map((row, index) => {
+              const result = row.docking_result || {};
+              const key = compoundRowKey(row, index);
+              return <TableRow hover selected={selectedKey === key} onClick={() => setSelectedKey(key)} key={key} sx={{ cursor: 'pointer' }}>
+                <TableCell>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</TableCell>
+                <TableCell>{formatDetailValue(result.best_vina_affinity_kcal_mol ?? result.best_affinity_kcal_mol)}</TableCell>
+                <TableCell>{formatDetailValue(result.best_mode)}</TableCell>
+                <TableCell>{formatDetailValue(result.returned_mode_count ?? result.mode_count ?? result.modes?.length)}</TableCell>
+                <TableCell>{result.status || row.docking_status || 'Not available'}</TableCell>
+              </TableRow>;
+            })}</TableBody>
+          </Table>
+        </Paper>
+      ) : <Alert severity="info">No docking results are available for the current calculation.</Alert>}
+      {selected ? <DockingResultsSection compound={selected} /> : null}
+    </Stack>
+  );
+}
+
+const ADMET_MODEL_GROUPS = [
+  ['ChemBERTa classification', '9 public classification endpoints'],
+  ['GMC-MPNN BBB', 'Raw five-seed ensemble; threshold policy provisional'],
+  ['Chemprop regression', '5 regression endpoints'],
+];
+
+export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNavigate }) {
+  const rows = prioritizationState.result?.results ?? [];
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selected = rows[selectedIndex] ?? null;
+  const completed = rows.filter((row) => row.admet_model_status === 'model_available' || row.bbb_model_status === 'model_available' || row.admet_regression?.status === 'model_available').length;
+  const failures = rows.filter((row) => String(row.admet_model_status || '').includes('unavailable') || String(row.bbb_model_status || '').includes('unavailable')).length;
+  const warnings = rows.filter((row) => row.admet_warning || row.bbb_result?.warning || row.admet_regression?.warning).length;
+  const single = prioritizationState.job?.analysis_mode === 'single_compound'
+    || prioritizationState.result?.analysis_mode === 'single_compound';
+  return (
+    <Stack spacing={2}>
+      <PageIntro title="ADMET" description="Review the existing ChemBERTa classification, GMC-MPNN BBB, and Chemprop regression outputs for the current calculation." />
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5 }}>
+        {ADMET_MODEL_GROUPS.map(([name, detail]) => (
+          <Paper key={name} elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
+            <Stack spacing={0.75}><Typography sx={{ fontWeight: 700 }}>{name}</Typography><Typography variant="caption" color="text.secondary">{detail}</Typography>
+              <Chip label={rows.length ? 'Results available' : prioritizationState.loading ? 'Running' : 'Not run'} color={rows.length ? 'success' : 'default'} variant="outlined" />
+            </Stack>
+          </Paper>
+        ))}
+      </Box>
+      {sourceStatusState.error ? <Alert severity="warning">{sourceStatusState.error}</Alert> : null}
+      {rows.length ? (
+        <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
+          <Stack spacing={1.5}>
+            <MetadataPanel rows={[["Molecules submitted", rows.length], ["Completed", completed], ["Failures", failures], ["Warnings", warnings]]} />
+            <Typography variant="h2">Molecule results</Typography>
+            <Table size="small"><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>ChemBERTa</TableCell><TableCell>GMC BBB</TableCell><TableCell>Chemprop regression</TableCell></TableRow></TableHead><TableBody>{rows.map((row, index) => <TableRow key={compoundRowKey(row, index)}><TableCell>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</TableCell><TableCell>{row.admet_model_status || 'Not available'}</TableCell><TableCell>{row.bbb_model_status || row.bbb_result?.status || 'Not available'}</TableCell><TableCell>{row.admet_regression?.status || 'Not available'}</TableCell></TableRow>)}</TableBody></Table>
+            <TextField select label="Molecule" value={selectedIndex} onChange={(event) => setSelectedIndex(Number(event.target.value))} sx={{ maxWidth: 420 }}>
+              {rows.map((row, index) => <MenuItem key={compoundRowKey(row, index)} value={index}>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</MenuItem>)}
+            </TextField>
+            <AdmetResultsSection compound={selected} />
+          </Stack>
+        </Paper>
+      ) : <Alert severity="info">No ADMET predictions are available for the current calculation.</Alert>}
+      <Box><Button variant="contained" onClick={() => onNavigate('Prioritization')}>Continue to {single ? 'Compound Assessment' : 'Prioritization'}</Button></Box>
+    </Stack>
+  );
+}
+
+export function ResultsWorkflowPage({ prioritizationState, annotationsState, onSaveReviewAnnotation }) {
+  const rows = prioritizationState.result?.results ?? [];
+  const [filters, setFilters] = useState(defaultEvidenceFilters);
+  const filtered = useMemo(() => applyEvidenceFilters(rows, filters), [rows, filters]);
+  const [selectedKey, setSelectedKey] = useState('');
+  const selected = filtered.find((row, index) => compoundRowKey(row, index) === selectedKey) ?? null;
+  const admetCompleted = rows.filter((row) => row.admet_model_status === 'model_available').length;
+  const dockingCompleted = rows.filter((row) => row.docking_result?.status === 'success').length;
+  const validCount = rows.filter((row) => isTrueValue(row.valid_molecule)).length;
+  const single = prioritizationState.result?.analysis_mode === 'single_compound'
+    || prioritizationState.job?.analysis_mode === 'single_compound';
+  const profile = prioritizationState.result?.prioritization_profile
+    || prioritizationState.job?.prioritization_profile;
+  const profileIdentity = profile
+    ? `${profile.profile_id || 'unknown'} / ${profile.profile_version || 'unknown'} / ${profile.status || 'status unavailable'} / ${prioritizationState.result?.prioritization_profile_sha256 || prioritizationState.job?.prioritization_profile_sha256 || 'SHA unavailable'}`
+    : 'Not used or unavailable';
+  const hasPartialFailures = rows.length > 0 && (
+    validCount < rows.length
+    || admetCompleted < validCount
+    || (prioritizationState.job?.docking_requested && dockingCompleted < validCount)
+  );
+  return (
+    <Stack spacing={2}>
+      <PageIntro
+        title={single ? 'Single Compound Assessment' : 'Library Prioritization Results'}
+        description={single ? 'Review and export the compound-level computational assessment.' : 'Inspect, filter, annotate, and export the current library prioritization outputs.'}
+      />
+      {prioritizationState.job ? <MetadataPanel rows={[
+        ['Calculation', prioritizationState.job.status], ['Total compounds', rows.length],
+        ['Chemically valid', validCount],
+        ['ADMET completed', admetCompleted], ['Docking completed', dockingCompleted],
+        [single ? 'Library prioritization' : 'Prioritized', single ? 'Not applicable' : prioritizationState.job.ranked_count ?? 0], ['Warnings / invalid source records', `${prioritizationState.job.warning_count ?? 0} / ${rows.length - validCount}`],
+        ['Method', prioritizationState.result?.prioritization_method || 'Not available'],
+        ['Profile identity', profileIdentity],
+        ['Receptor source', prioritizationState.result?.receptor_source || prioritizationState.job?.receptor_source || 'Not used or unavailable'],
+        ['Job ID', prioritizationState.job.job_id],
+      ]} /> : null}
+      {hasPartialFailures ? <Alert severity="warning">This calculation contains partial failures or unavailable scientific outputs. Exported all-compound results retain affected source records and their status.</Alert> : null}
+      {rows.length && single ? <SingleCompoundAssessment
+        compound={rows.find((row) => isTrueValue(row.valid_molecule)) ?? rows[0]}
+        profile={profile}
+        profileSha256={prioritizationState.result?.prioritization_profile_sha256 || prioritizationState.job?.prioritization_profile_sha256}
+      /> : null}
+      {rows.length && !single ? <>
+        <EvidenceFilterPanel rows={rows} filteredRows={filtered} filters={filters} onChange={setFilters} onReset={() => setFilters(defaultEvidenceFilters)} exportFilename="moloptima-results.csv" />
+        <ResultPreview rows={filtered} selectedCompoundKey={selectedKey} onSelectCompound={setSelectedKey} />
+        <CandidateExportPanel rows={filtered} />
+      </> : null}
+      {!rows.length ? <Alert severity="info">No result rows are available for the current calculation.</Alert> : null}
+      {selected ? <CompoundDetailPanel compound={selected} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} /> : null}
+      {prioritizationState.job ? <ResultsPackageDownloads apiBaseUrl={apiBaseUrl} jobId={prioritizationState.job.job_id} analysisMode={single ? 'single_compound' : 'library'} /> : null}
+    </Stack>
+  );
+}
+
+export function SingleCompoundAssessment({ compound, profile, profileSha256 }) {
+  const interpretation = compound.prioritization_v2 || {};
+  const provenance = interpretation.provenance || {};
+  return (
+    <Stack spacing={2}>
+      <Alert severity="info">
+        Single Compound Assessment — this report does not assign a final library rank or library-relative docking percentile.
+      </Alert>
+      <Paper elevation={0} sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={2.5}>
+          <Box><Typography variant="h2">Compound Identity</Typography><Typography color="text.secondary">{compound.molecule_id}</Typography></Box>
+          <StructurePreview compound={compound} />
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
+            <DetailTable title="Molecular Properties" rows={[
+              ['Canonical SMILES', compound.canonical_smiles], ['Molecular weight', compound.mw],
+              ['TPSA', compound.tpsa], ['H-bond donors', compound.hbd], ['H-bond acceptors', compound.hba],
+              ['Rotatable bonds', compound.rotatable_bonds], ['QED', compound.qed], ['SA', compound.sa_score],
+              ['Structural alerts', formatStructuralAlertStatus(compound)],
+            ]} />
+            <DetailTable title="Structure Provenance" rows={[
+              ['Source type', compound.source_type], ['Source filename', compound.source_filename],
+              ['Source record', compound.source_record], ['Input coordinates', compound.coordinate_status],
+              ['Input has 3D', compound.input_has_3d], ['Validation status', compound.validation_status],
+              ['Original structure SHA256', compound.original_structure_sha256],
+            ]} />
+          </Box>
+          <Box><Typography variant="h2" sx={{ mb: 1 }}>ADMET</Typography><AdmetResultsSection compound={compound} /></Box>
+          <Box><Typography variant="h2" sx={{ mb: 1 }}>Docking</Typography><DockingResultsSection compound={compound} /></Box>
+          <Box><Typography variant="h2" sx={{ mb: 1 }}>Profile Interpretation</Typography>
+            <DetailTable title="Selected profile context" rows={[
+              ['Profile ID', provenance.profile_id || profile?.profile_id],
+              ['Profile name', profile?.name],
+              ['Profile version', provenance.profile_version || profile?.profile_version],
+              ['Profile status', provenance.profile_status || profile?.status],
+              ['Profile SHA256', provenance.profile_sha256 || profileSha256],
+              ['Target mode', profile?.target_mode],
+              ['Endpoint desirabilities', formatStructuredDetail(interpretation.endpoint_scoring)],
+              ['Liability summary', formatStructuredDetail(interpretation.liabilities)], ['Interpretation warnings', interpretation.warnings],
+            ]} />
+            <Alert severity="info" sx={{ mt: 1 }}>Endpoint values, liabilities, warnings, and selected profile context are interpretive. Library-relative docking normalization and a final library score are not calculated.</Alert>
+          </Box>
+          <Box><Typography variant="h2" sx={{ mb: 1 }}>Warnings / Limitations</Typography><Typography color="text.secondary">{formatDetailValue(compound.source_warnings || compound.failure_reason || 'No input-specific warning recorded.')}</Typography></Box>
+        </Stack>
+      </Paper>
+    </Stack>
+  );
+}
+
+export function AnalysisWorkflowPage({ currentRunState, annotationsState, onSaveReviewAnnotation, prioritizationSettings }) {
+  const [tab, setTab] = useState(0);
+  const rows = currentRunState.result?.results ?? [];
+  const profileMatches = Boolean(prioritizationSettings.validation?.scoreable
+    && prioritizationSettings.validation?.profile_sha256 === currentRunState.result?.prioritization_profile_sha256);
+  const single = currentRunState.result?.analysis_mode === 'single_compound'
+    || currentRunState.job?.analysis_mode === 'single_compound';
+  if (single) {
+    return <Stack spacing={2}><PageIntro title="Analysis" description="Library-relative analyses are intentionally disabled for a single compound." /><Alert severity="info">Not applicable for Single Compound Analysis: Library Prioritization, Pareto Analysis, Rank Sensitivity, top-N candidate frequency, and library rank stability.</Alert></Stack>;
+  }
+  return (
+    <Stack spacing={2}>
+      <PageIntro title="Analysis" description="Explore current calculation outputs without changing the underlying scientific priority score." />
+      <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
+        <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="scrollable" scrollButtons="auto" aria-label="Analysis views">
+          <Tab label="Chemical Space" /><Tab label="Pareto & Sensitivity" /><Tab label="Biopharma Intelligence" />
+        </Tabs>
+      </Paper>
+      {!rows.length ? <Alert severity="info">No current calculation results are available for analysis.</Alert> : null}
+      {tab === 0 ? <ChemicalSpacePage latestRunState={currentRunState} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} /> : null}
+      {tab === 1 ? (
+        currentRunState.result?.prioritization_method === 'v2'
+          ? <PrioritizationAnalysisPanel apiBaseUrl={apiBaseUrl} jobId={currentRunState.job?.job_id || ''} results={rows} profile={profileMatches ? prioritizationSettings.profile : null} profileScoreable={profileMatches} />
+          : <Alert severity="info">Pareto and sensitivity analysis require current Prioritization v2 results. Analysis has not been run.</Alert>
+      ) : null}
+      {tab === 2 ? <BiopharmaIntelligencePage latestRunState={currentRunState} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} /> : null}
+    </Stack>
+  );
+}
+
 function DashboardPage({ health, activeItem, latestRunState }) {
   const isDashboard = activeItem === 'Dashboard';
   const latestRunSummary = buildLatestRunSummary(latestRunState);
@@ -909,8 +1312,7 @@ function DashboardPage({ health, activeItem, latestRunState }) {
             MolOptima
           </Typography>
           <Typography color="text.secondary">
-            A local scientific dashboard for validating, scoring, and ranking small molecules
-            through the Phase 1 molecular prioritization pipeline.
+            Integrated molecular docking, ADMET prediction, and multiparameter molecular prioritization.
           </Typography>
         </Stack>
       </Paper>
@@ -953,7 +1355,11 @@ function DashboardPage({ health, activeItem, latestRunState }) {
         <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
           <Stack spacing={2}>
             <Typography variant="h2">Current Workspace</Typography>
-            {summaryItems.map(([label, value]) => (
+            {[
+              ['Workflow', 'Docking, ADMET, and prioritization'],
+              ['Backend', 'FastAPI local service'],
+              ['Storage', 'Local calculation and result files'],
+            ].map(([label, value]) => (
               <Stack key={label} direction="row" justifyContent="space-between" gap={2}>
                 <Typography color="text.secondary">{label}</Typography>
                 <Typography sx={{ fontWeight: 650, textAlign: 'right' }}>{value}</Typography>
@@ -1032,7 +1438,7 @@ function DashboardPage({ health, activeItem, latestRunState }) {
         <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
           <Typography variant="h2">{activeItem}</Typography>
           <Typography color="text.secondary" sx={{ mt: 1 }}>
-            This navigation area is reserved for the next MolOptima implementation phase.
+            Select New Calculation to begin the scientific workflow.
           </Typography>
         </Paper>
       )}
@@ -2455,89 +2861,8 @@ function formatCounts(counts) {
     .join(', ');
 }
 
-function UploadMoleculesPage({ uploadState, onUpload, onSelectUploadFile }) {
-  return (
-    <Stack spacing={3}>
-      <PageIntro
-        title="Upload Molecules"
-        description="Select a CSV file with molecule_id and smiles columns. The backend stores the upload locally and returns an upload identifier for prioritization."
-      />
-
-      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
-        <Stack spacing={2.5}>
-          <Stack spacing={1}>
-            <Typography variant="h2">Molecule CSV</Typography>
-            <Typography color="text.secondary">
-              Upload only small demo or public-safe molecule tables for this Phase 1 workflow.
-            </Typography>
-            <Typography color="text.secondary">
-              Maximum batch size: {MAX_BATCH_SIZE.toLocaleString()} molecules per analysis
-            </Typography>
-          </Stack>
-
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
-            <Button variant="outlined" component="label" startIcon={<UploadFileOutlinedIcon />}>
-              Select CSV
-              <input
-                hidden
-                type="file"
-                accept=".csv,text/csv"
-                onChange={(event) => {
-                  const file = event.target.files?.[0] ?? null;
-                  onSelectUploadFile(file);
-                }}
-              />
-            </Button>
-            <Typography color="text.secondary">
-              {uploadState.selectedFile?.name ?? 'No file selected'}
-            </Typography>
-            {uploadState.counting ? (
-              <Typography color="text.secondary">Detecting molecule count...</Typography>
-            ) : uploadState.detectedRows !== null ? (
-              <Typography color="text.secondary">
-                Detected molecule records: {uploadState.detectedRows.toLocaleString()}
-              </Typography>
-            ) : null}
-          </Stack>
-
-          {uploadState.error && <Alert severity="error">{uploadState.error}</Alert>}
-          {uploadState.upload && (
-            <Alert severity="success">
-              Uploaded {uploadState.upload.filename} with upload_id {uploadState.upload.upload_id}
-            </Alert>
-          )}
-
-          <Box>
-            <Button
-              variant="contained"
-              onClick={onUpload}
-              disabled={
-                uploadState.loading
-                || uploadState.counting
-                || !uploadState.selectedFile
-                || uploadState.detectedRows === null
-                || Boolean(batchSizeError(uploadState.detectedRows ?? 0))
-              }
-              startIcon={uploadState.loading ? <CircularProgress size={18} color="inherit" /> : null}
-            >
-              {uploadState.loading ? 'Uploading' : 'Upload molecules'}
-            </Button>
-          </Box>
-
-          {uploadState.upload && (
-            <MetadataPanel
-              rows={[
-                ['Status', uploadState.upload.status],
-                ['Upload ID', uploadState.upload.upload_id],
-                ['Rows', uploadState.upload.rows],
-                ['Stored path', uploadState.upload.path],
-              ]}
-            />
-          )}
-        </Stack>
-      </Paper>
-    </Stack>
-  );
+function UploadMoleculesPage({ uploadState, onUpload, onChange, onContinue }) {
+  return <MoleculeInputPanel uploadState={uploadState} onImport={onUpload} onChange={onChange} onContinue={onContinue} />;
 }
 
 function CandidateExportPanel({ rows }) {
@@ -2638,14 +2963,11 @@ function CandidateExportPanel({ rows }) {
   );
 }
 
-function PrioritizationPage({
+export function PrioritizationPage({
   uploadState,
-  receptorState,
-  setReceptorState,
   prioritizationState,
   onStartPrioritization,
   onCancelPrioritization,
-  onReceptorUpload,
   pubchemLookupEnabled,
   setPubchemLookupEnabled,
   chemblLookupEnabled,
@@ -2656,36 +2978,42 @@ function PrioritizationPage({
   setTargetReferenceEnabled,
   targetContext,
   setTargetContext,
+  prioritizationSettings,
+  setPrioritizationSettings,
   annotationsState,
   onSaveReviewAnnotation,
+  onNavigate,
 }) {
   const resultRows = prioritizationState.result?.results ?? [];
-  const [filters, setFilters] = useState(defaultEvidenceFilters);
-  const filteredRows = useMemo(() => applyEvidenceFilters(resultRows, filters), [resultRows, filters]);
-  const [selectedCompoundKey, setSelectedCompoundKey] = useState(null);
-  const selectedCompound =
-    filteredRows.find((row, index) => compoundRowKey(row, index) === selectedCompoundKey) ?? null;
-
-  useEffect(() => {
-    setSelectedCompoundKey(null);
-  }, [prioritizationState.result?.output_file, filters]);
+  const single = uploadState.upload?.analysis_mode === 'single_compound'
+    || prioritizationState.job?.analysis_mode === 'single_compound';
 
   return (
     <Stack spacing={3}>
       <PageIntro
-        title="Molecular Prioritization"
-        description="Start the Phase 1 backend pipeline for the uploaded molecule CSV and inspect the returned job metadata and top ranked records."
+        title={single ? 'Compound Assessment' : 'Prioritization'}
+        description={single
+          ? 'Run molecular properties, ADMET, optional docking, and profile interpretation without fabricating library-relative scores or rank.'
+          : 'Choose the scoring method and profile, inspect scoring readiness, and run the existing auditable library prioritization pipeline.'}
+      />
+
+      {single ? <Alert severity="info">Available: Molecular Properties, ADMET, Docking, and Profile Interpretation. Not applicable: Library Prioritization, Pareto Analysis, and Rank Sensitivity.</Alert> : null}
+
+      <PrioritizationSettings
+        apiBaseUrl={apiBaseUrl}
+        value={prioritizationSettings}
+        onChange={setPrioritizationSettings}
       />
 
       <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
         <Stack spacing={2.5}>
           <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
             <Stack spacing={0.75}>
-              <Typography variant="h2">Prioritization Job</Typography>
+              <Typography variant="h2">{single ? 'Single Compound Analysis' : 'Prioritization Job'}</Typography>
               <Typography color="text.secondary">
                 {uploadState.upload
                   ? `Ready to run upload_id ${uploadState.upload.upload_id}`
-                  : 'Upload a molecule CSV before starting a prioritization job.'}
+                  : 'Load one or more valid compounds before starting a calculation.'}
               </Typography>
             </Stack>
             <Stack spacing={1.25} alignItems={{ xs: 'stretch', md: 'flex-end' }}>
@@ -2735,13 +3063,9 @@ function PrioritizationPage({
                 label="Enable local Vina docking"
               />
               {targetContext.enable_docking && (
-                <DockingSetupFields
-                  targetContext={targetContext}
-                  setTargetContext={setTargetContext}
-                  receptorState={receptorState}
-                  setReceptorState={setReceptorState}
-                  onReceptorUpload={onReceptorUpload}
-                />
+                <Typography variant="caption" color="text.secondary">
+                  Docking configuration: {targetContext.docking_configuration_id || 'not configured on Receptor & Docking page'}
+                </Typography>
               )}
               {targetReferenceEnabled && (
                 <TargetContextFields targetContext={targetContext} setTargetContext={setTargetContext} />
@@ -2749,10 +3073,15 @@ function PrioritizationPage({
               <Button
                 variant="contained"
                 onClick={onStartPrioritization}
-                disabled={!uploadState.upload || prioritizationState.loading}
+                disabled={
+                  !uploadState.upload
+                  || prioritizationState.loading
+                  || (prioritizationSettings.method === 'v2'
+                    && !prioritizationSettings.validation?.scoreable)
+                }
                 startIcon={prioritizationState.loading ? <CircularProgress size={18} color="inherit" /> : null}
               >
-                {prioritizationState.loading ? 'Running' : 'Start prioritization'}
+                {prioritizationState.loading ? 'Running' : single ? 'Start compound assessment' : 'Start prioritization'}
               </Button>
               {prioritizationState.job
                 && !TERMINAL_JOB_STATUSES.has(prioritizationState.job.status) ? (
@@ -2782,19 +3111,19 @@ function PrioritizationPage({
                 ['Docking successes', prioritizationState.job.docking_success_count ?? 0],
                 ['Docking failures', prioritizationState.job.docking_failure_count ?? 0],
                 ['Valid molecules', prioritizationState.job.eligible_count ?? 0],
-                ['Fully scored', prioritizationState.job.fully_scored_count ?? 0],
-                ['Partially scored', prioritizationState.job.partially_scored_count ?? 0],
+                [single ? 'Library score' : 'Fully scored', single ? 'Not applicable' : prioritizationState.job.fully_scored_count ?? 0],
+                [single ? 'Library rank' : 'Partially scored', single ? 'Not applicable' : prioritizationState.job.partially_scored_count ?? 0],
                 ['Unscorable / invalid', prioritizationState.job.unscorable_count ?? 0],
-                ['Scientifically ranked', prioritizationState.job.ranked_count ?? 0],
-                ['Eligible for final ranking', prioritizationState.job.eligible_for_ranking_count ?? 0],
+                ['Scientifically ranked', single ? 'Not applicable' : prioritizationState.job.ranked_count ?? 0],
+                ['Eligible for final ranking', single ? 'Not applicable' : prioritizationState.job.eligible_for_ranking_count ?? 0],
                 ['Awaiting / missing docking', prioritizationState.job.awaiting_or_missing_docking_count ?? 0],
                 ['Docking failed / unavailable', prioritizationState.job.docking_failed_or_unavailable_count ?? 0],
                 ['Warnings', prioritizationState.job.warning_count],
                 ['Cancellation requested', prioritizationState.job.cancellation_requested ? 'yes' : 'no'],
                 ['Output file', prioritizationState.job.output_file],
                 ['Completed at', prioritizationState.job.completed_at ?? ''],
-                ['Candidate shortlist', formatReviewCounts(resultRows)],
-                ['Chemical diversity', formatDiversitySummary(resultRows)],
+                ['Candidate shortlist', single ? 'Not applicable' : formatReviewCounts(resultRows)],
+                ['Chemical diversity', single ? 'Not applicable' : formatDiversitySummary(resultRows)],
                 ['Target reference set', formatTargetReferenceSet(prioritizationState.result?.target_references)],
               ]}
             />
@@ -2804,52 +3133,11 @@ function PrioritizationPage({
 
       {prioritizationState.result && (
         <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
-          <Stack spacing={2}>
-            <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1}>
-              <Typography variant="h2">Result Preview</Typography>
-              <Chip
-                label={`Showing ${filteredRows.length} of ${resultRows.length} molecules`}
-                color={prioritizationState.result.status === 'completed' ? 'success' : 'warning'}
-                variant="outlined"
-              />
-            </Stack>
-            <Typography color="text.secondary">
-              Result file: {prioritizationState.result.output_file}
-            </Typography>
-            {resultRows.length > 0 ? (
-              <>
-                <EvidenceFilterPanel
-                  rows={resultRows}
-                  filteredRows={filteredRows}
-                  filters={filters}
-                  onChange={setFilters}
-                  onReset={() => setFilters(defaultEvidenceFilters)}
-                  exportFilename="moloptima-prioritization-filtered.csv"
-                />
-                <ResultPreview
-                  rows={filteredRows.slice(0, 5)}
-                  selectedCompoundKey={selectedCompoundKey}
-                  onSelectCompound={setSelectedCompoundKey}
-                />
-                {filteredRows.length > 5 && (
-                  <Typography variant="caption" color="text.secondary">
-                    Preview shows the first 5 filtered molecules.
-                  </Typography>
-                )}
-              </>
-            ) : (
-              <Alert severity="info">No result rows were returned for this job.</Alert>
-            )}
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} justifyContent="space-between">
+            <Box><Typography variant="h2">{single ? 'Single Compound Assessment complete' : 'Prioritization complete'}</Typography><Typography color="text.secondary">{resultRows.length} result row{resultRows.length === 1 ? ' is' : 's are'} ready for inspection.</Typography></Box>
+            <Button variant="contained" onClick={() => onNavigate('Results')}>Open Results</Button>
           </Stack>
         </Paper>
-      )}
-
-      {selectedCompound && (
-        <CompoundDetailPanel
-          compound={selectedCompound}
-          annotationsState={annotationsState}
-          onSaveReviewAnnotation={onSaveReviewAnnotation}
-        />
       )}
     </Stack>
   );
@@ -2919,62 +3207,15 @@ function TargetContextFields({ targetContext, setTargetContext }) {
   );
 }
 
-const DOCKING_NUMERIC_FIELDS = [
-  ['docking_center_x', 'Box center X'],
-  ['docking_center_y', 'Box center Y'],
-  ['docking_center_z', 'Box center Z'],
-  ['docking_size_x', 'Box size X'],
-  ['docking_size_y', 'Box size Y'],
-  ['docking_size_z', 'Box size Z'],
-  ['docking_exhaustiveness', 'Exhaustiveness'],
-  ['docking_num_modes', 'Number of modes'],
-  ['docking_seed', 'Random seed'],
+const DOCKING_REQUEST_NUMERIC_FIELDS = [
+  'docking_center_x', 'docking_center_y', 'docking_center_z',
+  'docking_size_x', 'docking_size_y', 'docking_size_z',
+  'docking_exhaustiveness', 'docking_num_modes', 'docking_energy_range',
+  'docking_seed', 'docking_worker_count',
 ];
 
-function DockingSetupFields({ targetContext, setTargetContext, receptorState, setReceptorState, onReceptorUpload }) {
-  const update = (key, value) => setTargetContext({ ...targetContext, [key]: value });
-  return (
-    <Box sx={{ width: '100%', maxWidth: 620, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-      <Stack spacing={1.25}>
-        <Typography variant="subtitle2" sx={{ fontWeight: 750 }}>Prepared receptor and explicit Vina configuration</Typography>
-        <Typography variant="caption" color="text.secondary">
-          Upload an already prepared PDBQT receptor. MolOptima does not infer a binding box or receptor-preparation parameters.
-        </Typography>
-        <TextField
-          label="Receptor identifier"
-          size="small"
-          value={targetContext.receptor_id ?? ''}
-          onChange={(event) => update('receptor_id', event.target.value)}
-        />
-        <Button variant="outlined" component="label" startIcon={<UploadFileOutlinedIcon />}>
-          Select receptor PDBQT
-          <input
-            hidden type="file" accept=".pdbqt"
-            onChange={(event) => setReceptorState({ selectedFile: event.target.files?.[0] ?? null, upload: null, loading: false, error: '' })}
-          />
-        </Button>
-        <Typography variant="caption">{receptorState.selectedFile?.name ?? 'No receptor selected'}</Typography>
-        <Button variant="outlined" onClick={onReceptorUpload} disabled={!receptorState.selectedFile || receptorState.loading}>
-          {receptorState.loading ? 'Uploading receptor' : 'Upload prepared receptor'}
-        </Button>
-        {receptorState.upload ? <Alert severity="success">Validated receptor {receptorState.upload.receptor_id}; SHA-256 {receptorState.upload.prepared_receptor_sha256}</Alert> : null}
-        {receptorState.error ? <Alert severity="warning">{receptorState.error}</Alert> : null}
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 1 }}>
-          {DOCKING_NUMERIC_FIELDS.map(([key, label]) => (
-            <TextField
-              key={key} label={label} size="small" type="number"
-              value={targetContext[key] ?? ''}
-              onChange={(event) => update(key, event.target.value)}
-            />
-          ))}
-        </Box>
-      </Stack>
-    </Box>
-  );
-}
-
-function dockingRequestPayload(targetContext) {
-  return Object.fromEntries(DOCKING_NUMERIC_FIELDS.map(([key]) => [
+function normalizedDockingRequest(targetContext) {
+  return Object.fromEntries(DOCKING_REQUEST_NUMERIC_FIELDS.map((key) => [
     key,
     targetContext[key] === '' || targetContext[key] === null || targetContext[key] === undefined
       ? null
@@ -3463,6 +3704,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
           <TableRow>
             <TableCell>Molecule</TableCell>
             <TableCell>Valid</TableCell>
+            <TableCell>Rank</TableCell>
             <TableCell>Score</TableCell>
             <TableCell>Review status</TableCell>
             <TableCell>Review note</TableCell>
@@ -3505,8 +3747,9 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 sx={{ cursor: 'pointer' }}
               >
                 <TableCell>{row.molecule_id}</TableCell>
-                <TableCell>{row.valid_molecule}</TableCell>
-                <TableCell>{row.priority_score}</TableCell>
+                <TableCell>{formatDetailValue(row.valid_molecule)}</TableCell>
+                <TableCell>{formatDetailValue(row.v2_rank ?? row.scientific_rank ?? row.prioritization?.ranking_position)}</TableCell>
+                <TableCell>{formatDetailValue(row.v2_score ?? row.scientific_ranking_score ?? row.priority_score)}</TableCell>
                 <TableCell>{formatReviewStatus(row.review_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 {hasEvidenceSynthesis && (
@@ -4840,7 +5083,130 @@ function formatDetailValue(value) {
   return String(value);
 }
 
-function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRefreshSourceStatus }) {
+function formatStructuredDetail(value) {
+  if (!value || typeof value !== 'object' || Object.keys(value).length === 0) return null;
+  return JSON.stringify(value, null, 2);
+}
+
+export async function fetchScientificRuntimeStatus(baseUrl = apiBaseUrl, { refresh = false } = {}) {
+  const response = await fetch(
+    `${baseUrl}/api/scientific-runtime/${refresh ? 'refresh' : 'status'}`,
+    refresh ? { method: 'POST' } : undefined,
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || `Scientific runtime status failed (HTTP ${response.status}).`);
+  return payload;
+}
+
+export const SCIENTIFIC_RUNTIME_POLL_INTERVAL_MS = 3000;
+
+export function scientificRuntimePollDelay(payload) {
+  if (!payload) return null;
+  if (payload.qualification_state === 'checking' || payload.refreshing) {
+    return SCIENTIFIC_RUNTIME_POLL_INTERVAL_MS;
+  }
+  return Object.values(payload.components ?? {}).some(
+    (component) => component?.status === 'checking' || component?.refreshing,
+  ) ? SCIENTIFIC_RUNTIME_POLL_INTERVAL_MS : null;
+}
+
+function RuntimeStatusChip({ status }) {
+  const normalized = String(status || 'unavailable').toLowerCase();
+  const color = normalized === 'available' ? 'success' : normalized === 'incompatible' || normalized === 'error' ? 'error' : 'warning';
+  return <Chip label={normalized[0].toUpperCase() + normalized.slice(1)} color={color} variant="outlined" />;
+}
+
+function RuntimeCard({ title, status, refreshing = false, children }) {
+  return (
+    <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider', height: '100%' }}>
+      <Stack spacing={1}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1}>
+          <Typography variant="h6">{title}</Typography>
+          <Stack direction="row" spacing={1} alignItems="center">
+            {refreshing ? <Typography variant="caption" color="text.secondary">Refreshing</Typography> : null}
+            <RuntimeStatusChip status={status} />
+          </Stack>
+        </Stack>
+        {children}
+      </Stack>
+    </Paper>
+  );
+}
+
+export function ScientificRuntimePanel({ runtimeState, onRefresh }) {
+  const components = runtimeState.payload?.components ?? {};
+  const chemberta = components.chemberta ?? {};
+  const gmc = components.gmc_mpnn_bbb ?? {};
+  const chemprop = components.chemprop_regression ?? {};
+  const receptor = components.receptor_preparation ?? {};
+  const docking = components.docking ?? {};
+  const vina = docking.vina ?? {};
+  const openbabel = docking.openbabel ?? {};
+  const sourceText = (value) => value || 'Not available';
+  const dependencyText = (label, dependency) => dependency?.status === 'checking'
+    ? `${label} · checking`
+    : `${label} ${sourceText(dependency?.version)} · ${sourceText(dependency?.status)}`;
+  const nativeRuntimeText = (label, runtime) => runtime?.status === 'checking'
+    ? `${label}: Checking...`
+    : `${label}: ${sourceText(runtime?.identity)} · ${sourceText(runtime?.status)}`;
+  const pollPending = scientificRuntimePollDelay(runtimeState.payload) !== null;
+
+  return (
+    <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+      <Stack spacing={2.5}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1.5}>
+          <Stack spacing={0.5}>
+            <Typography variant="h2">Scientific Runtime</Typography>
+            <Typography color="text.secondary">
+              Status comes from backend production runtime contract probes. Opening Settings does not run scientific inference.
+            </Typography>
+          </Stack>
+          <Button variant="outlined" onClick={onRefresh} disabled={runtimeState.loading}>Refresh runtime status</Button>
+        </Stack>
+        {runtimeState.loading && !runtimeState.payload ? <Alert severity="info">Loading scientific runtime status...</Alert> : null}
+        {pollPending ? (
+          <Alert severity="info">
+            Production runtime qualification is running in the background. Completed runtimes are shown as they finish.
+          </Alert>
+        ) : null}
+        {runtimeState.error ? <Alert severity="error">{runtimeState.error}</Alert> : null}
+        {!runtimeState.loading && !runtimeState.error && !runtimeState.payload ? (
+          <Alert severity="info">Scientific runtime status has not been checked.</Alert>
+        ) : null}
+        {runtimeState.payload ? (
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
+            <RuntimeCard title="ChemBERTa classification" status={chemberta.status} refreshing={chemberta.refreshing}>
+              <Typography variant="body2">{chemberta.public_endpoint_count ?? 9} public classification endpoints</Typography>
+              <Typography variant="body2" color="text.secondary">Runtime source: {sourceText(chemberta.runtime_source)}</Typography>
+            </RuntimeCard>
+            <RuntimeCard title="GMC-MPNN BBB" status={gmc.status} refreshing={gmc.refreshing}>
+              <Typography variant="body2">5-seed ensemble · raw unweighted ensemble mean · population SD</Typography>
+              <Typography variant="body2">Threshold 0.5 · provisional raw · calibration not frozen</Typography>
+              <Typography variant="body2" color="text.secondary">Runtime source: {sourceText(gmc.runtime_source)}</Typography>
+            </RuntimeCard>
+            <RuntimeCard title="Chemprop regression" status={chemprop.status} refreshing={chemprop.refreshing}>
+              <Typography variant="body2">5 regression endpoints · 5-seed ensemble · sample SD</Typography>
+              <Typography variant="body2" color="text.secondary">Runtime source: {sourceText(chemprop.runtime_source)}</Typography>
+            </RuntimeCard>
+            <RuntimeCard title="Receptor Preparation" status={receptor.status} refreshing={receptor.refreshing}>
+              <Typography variant="body2">{dependencyText('Meeko', receptor.meeko)}</Typography>
+              <Typography variant="body2">{dependencyText('Gemmi', receptor.gemmi)}</Typography>
+              <Typography variant="body2" color="text.secondary">Hydrogen completion does not establish pH-correct protonation.</Typography>
+            </RuntimeCard>
+            <RuntimeCard title="Docking" status={docking.status} refreshing={docking.refreshing}>
+              <Typography variant="body2">{nativeRuntimeText('Vina', vina)}</Typography>
+              <Typography variant="body2">{nativeRuntimeText('Open Babel', openbabel)}</Typography>
+              <Typography variant="body2" color="text.secondary">Vina reports protocol-dependent docking scores/affinities, not binding free energy.</Typography>
+            </RuntimeCard>
+          </Box>
+        ) : null}
+      </Stack>
+    </Paper>
+  );
+}
+
+export function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRefreshSourceStatus }) {
+  const [runtimeState, setRuntimeState] = useState({ payload: null, loading: true, error: '' });
   const payload = sourceStatusState.payload ?? {};
   const modelManifest = payload.model_manifest ?? {};
   const publicManifest = payload.public_data_manifest ?? {};
@@ -4853,25 +5219,68 @@ function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRef
   const placeholderUsed = Boolean(latestRun?.fallback_placeholder_used);
   const sources = Object.values(publicManifest.sources ?? {});
 
+  async function refreshScientificRuntime() {
+    setRuntimeState((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const runtimePayload = await fetchScientificRuntimeStatus(apiBaseUrl, { refresh: true });
+      setRuntimeState({ payload: runtimePayload, loading: false, error: '' });
+    } catch (error) {
+      setRuntimeState((current) => ({ ...current, loading: false, error: readableError(error) }));
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+    fetchScientificRuntimeStatus().then(
+      (runtimePayload) => active && setRuntimeState({ payload: runtimePayload, loading: false, error: '' }),
+      (error) => active && setRuntimeState({ payload: null, loading: false, error: readableError(error) }),
+    );
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const delay = scientificRuntimePollDelay(runtimeState.payload);
+    if (delay === null) return undefined;
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const runtimePayload = await fetchScientificRuntimeStatus();
+        if (active) setRuntimeState({ payload: runtimePayload, loading: false, error: '' });
+      } catch (error) {
+        if (active) setRuntimeState((current) => ({ ...current, loading: false, error: readableError(error) }));
+      }
+    }, delay);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [runtimeState.payload]);
+
   return (
     <Stack spacing={3}>
       <PageIntro
         title="Model and Data Sources"
-        description="Inspect the app-managed BBB model cache, latest run model status, and public lookup source state."
+        description="Inspect production scientific runtime compatibility and optional public data-source state."
       />
 
-      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+      <ScientificRuntimePanel runtimeState={runtimeState} onRefresh={refreshScientificRuntime} />
+
+      <Box component="details" sx={{ '& > summary': { cursor: 'pointer' } }}>
+        <Box component="summary" sx={{ fontWeight: 700, color: 'text.secondary', mb: 1 }}>
+          Advanced diagnostics · legacy BBB cache and run manifests
+        </Box>
+        <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
         <Stack spacing={2.5}>
           <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
             <Stack spacing={0.75}>
-              <Typography variant="h2">Local Model Cache</Typography>
+              <Typography variant="h2">Legacy BBB Cache Diagnostics</Typography>
               <Typography color="text.secondary">
-                Model status is recorded in output CSVs and run manifests.
+                Compatibility-only diagnostics for the retired cache-oriented BBB presentation. Production GMC-MPNN status is shown above.
               </Typography>
             </Stack>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
               <Button variant="outlined" onClick={onCheckLocalModelCache} disabled={sourceStatusState.loading}>
-                Check local model cache
+                Check legacy cache
               </Button>
               <Button variant="outlined" onClick={onRefreshSourceStatus} disabled={sourceStatusState.loading}>
                 Refresh source status
@@ -4909,7 +5318,8 @@ function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRef
             ]}
           />
         </Stack>
-      </Paper>
+        </Paper>
+      </Box>
 
       <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
         <Stack spacing={2}>
@@ -4965,37 +5375,8 @@ function useBackendHealth() {
   });
 
   useEffect(() => {
-    let isMounted = true;
-
-    async function checkHealth() {
-      try {
-        const response = await fetch(`${apiBaseUrl}/health`);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const payload = await response.json();
-        if (isMounted) {
-          setState({
-            status: 'online',
-            label: 'Online',
-            message: JSON.stringify(payload),
-          });
-        }
-      } catch (error) {
-        if (isMounted) {
-          setState({
-            status: 'offline',
-            label: 'Offline',
-            message: error instanceof Error ? error.message : 'Backend health check failed.',
-          });
-        }
-      }
-    }
-
-    checkHealth();
-    return () => {
-      isMounted = false;
-    };
+    const controller = startBackendHealthPolling({ apiBaseUrl, onState: setState });
+    return () => controller.stop();
   }, []);
 
   return useMemo(() => state, [state]);

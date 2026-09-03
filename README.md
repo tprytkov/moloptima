@@ -157,7 +157,7 @@ cd desktop
 npm.cmd run package
 ```
 
-The packaged app is written under `desktop/dist/`, which is ignored by Git. See [docs/desktop_app.md](docs/desktop_app.md) and [docs/windows_packaging.md](docs/windows_packaging.md) for details. The package includes the versioned GMC and regression inference entry points and their SHA-256 resource manifest. Family-specific Python runtimes, model-release archives, and local caches remain separately provisioned large assets.
+The packaged app is written under `desktop/dist/`, which is ignored by Git. See [docs/desktop_app.md](docs/desktop_app.md) and [docs/windows_packaging.md](docs/windows_packaging.md) for details. The package includes the versioned GMC and regression inference entry points, plus SHA-256-verified Windows Open Babel and AutoDock Vina runtime resources. Family-specific Python runtimes, model-release archives, and local caches remain separately provisioned large assets.
 
 The desktop app includes `MolOptima > Runtime Diagnostics` for checking `MOLOPTIMA_PYTHON`, backend health, frontend mode, app-data access, and cache paths.
 Phase 5D also prepares the launcher to discover a future bundled Python runtime under `desktop/runtime/python/` or packaged `resources/runtime/python/`; `MOLOPTIMA_PYTHON` remains the first-priority override.
@@ -237,8 +237,8 @@ Relevant environment variables:
 
 - `MOLOPTIMA_BBB_MODEL_CACHE`: override the app-managed model cache location.
 - `MOLOPTIMA_ALLOW_MODEL_DOWNLOAD=1`: allow intentional local model download behavior.
-- `MOLOPTIMA_VINA_EXECUTABLE`: path to the local AutoDock Vina executable.
-- `MOLOPTIMA_OBABEL_EXECUTABLE`: path to the local Open Babel executable used for ligand PDBQT conversion.
+- `MOLOPTIMA_VINA_PATH`: path to the local AutoDock Vina executable (`MOLOPTIMA_VINA_EXECUTABLE` remains a compatibility alias).
+- `MOLOPTIMA_OBABEL_PATH`: path to the local Open Babel executable used for ligand PDBQT conversion (`MOLOPTIMA_OBABEL_EXECUTABLE` remains a compatibility alias).
 - `MOLOPTIMA_VINA_TIMEOUT_SECONDS`: per-molecule Vina timeout; defaults to 1800 seconds.
 
 Manifests:
@@ -251,8 +251,8 @@ The Settings page exposes model cache status, latest run model status, and publi
 
 ## Limitations / Not Yet Implemented
 
-- MolOptima validates already prepared receptor PDBQT files but does not prepare raw PDB/mmCIF receptors or infer binding-site coordinates.
-- AutoDock Vina and Open Babel are not downloaded automatically. Missing runtimes produce explicit docking-family failures while preserving ADMET results.
+- MolOptima stores and visualizes receptor PDB files, identifies plausible non-water bound ligands, and validates separately supplied prepared PDBQT files. It does not automatically prepare raw PDB/mmCIF receptors or infer receptor-specific box dimensions.
+- The Windows package includes verified AutoDock Vina and Open Babel runtime assets; explicit local overrides remain supported. Missing, incomplete, or hash-mismatched runtime assets fail closed while preserving ADMET results.
 - Docking scores remain receptor-, site-, and protocol-dependent screening values. They are not binding free energies and do not confirm binding.
 - Scientific prioritization policy `moloptima_scientific_priority_v1` preserves the existing descriptor/BBB base formula and optional 70% base + 30% normalized Vina combined score. ChemBERTa classification, Chemprop regression, heuristic SA, and structural alerts remain visible but are not weighted because no approved weights exist for them.
 - Final scientific rank requires a valid base score plus successful finite Vina docking and run-level normalization. Molecules awaiting docking or carrying docking failures retain their base/ADMET diagnostics but receive no ranking score or rank.

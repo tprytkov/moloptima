@@ -14,7 +14,11 @@ from molecular_prioritization.admet_release import (
     resolve_release_root,
     sha256_file,
 )
-from molecular_prioritization.admet_runtime import ADMETRuntimeError, resolve_admet_runtime
+from molecular_prioritization.admet_runtime import (
+    ADMETRuntimeError,
+    isolated_runtime_environment,
+    resolve_admet_runtime,
+)
 
 
 SEEDS = (13, 37, 73, 101, 137)
@@ -74,6 +78,13 @@ class GMCBBBPredictor:
         self.python_source = runtime.python_source
         self.runner_source = runtime.runner_source
         self.runtime_versions = dict(runtime.versions)
+        self.runtime_identity = {
+            **dict(runtime.identity),
+            "family": "gmc_mpnn_bbb",
+            "model_source": "packaged",
+            "release_archive_sha256": sha256_file(archive),
+            "release_manifest_sha256": sha256_file(self.manifest),
+        }
 
     def predict_batch(self, molecule_ids: list[str], canonical_smiles: list[str]) -> list[dict[str, object]]:
         if len(molecule_ids) != len(canonical_smiles):
@@ -93,7 +104,13 @@ class GMCBBBPredictor:
                 "--artifact-root", str(self.artifact_root), "--input-csv", str(input_path),
                 "--output-csv", str(output_path), "--num-workers", "0",
             ]
-            completed = subprocess.run(command, capture_output=True, text=True, shell=False)
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                env=isolated_runtime_environment(),
+                text=True,
+                shell=False,
+            )
             if completed.returncode != 0:
                 diagnostic = (completed.stderr or completed.stdout).lower()
                 code = "runtime_incompatible" if "runtime" in diagnostic or "version" in diagnostic else "runner_failed"

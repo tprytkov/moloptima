@@ -20,6 +20,11 @@ from molecular_prioritization.pipeline import prioritize_smiles
 
 
 class FakeChemBERTa:
+    runtime_identity = {
+        "family": "chemberta", "runtime_source": "application_process",
+        "model_source": "packaged", "release_archive_sha256": "chemberta-release-sha",
+    }
+
     def predict_batch(self, smiles):
         return [
             {"prediction_status": "available", "endpoints": {
@@ -31,6 +36,11 @@ class FakeChemBERTa:
 
 
 class FakeGMC:
+    runtime_identity = {
+        "family": "gmc_mpnn_bbb", "runtime_source": "packaged",
+        "runner_sha256": "gmc-runner-sha", "private_path": r"C:\Users\private\runner.py",
+    }
+
     def predict_batch(self, molecule_ids, smiles):
         return [{
             "status": "success", "seed_probabilities": {str(seed): 0.6 for seed in SEEDS},
@@ -42,6 +52,11 @@ class FakeGMC:
 
 
 class FakeRegression:
+    runtime_identity = {
+        "family": "chemprop_regression", "runtime_source": "packaged",
+        "runner_sha256": "chemprop-runner-sha",
+    }
+
     def predict_batch(self, molecule_ids, smiles):
         return [{"status": "success", "endpoint_order": list(REGRESSION_ENDPOINTS), "endpoints": {
             name: {"status": "success", "unit": "frozen-unit", "ensemble_mean": 1.0}
@@ -76,6 +91,25 @@ def test_one_family_failure_preserves_other_results():
     assert result["bbb"]["status"] == "model_unavailable"
 
 
+def test_registry_retains_only_successfully_executed_portable_runtime_identities():
+    engine = registry()
+    engine.predict_batch(["one"], ["CCO"])
+    assert [identity["family"] for identity in engine.runtime_identities] == [
+        "chemberta", "gmc_mpnn_bbb", "chemprop_regression",
+    ]
+    assert engine.runtime_identities[0]["release_archive_sha256"] == "chemberta-release-sha"
+    assert engine.runtime_identities[1]["runner_sha256"] == "gmc-runner-sha"
+    assert engine.runtime_identities[2]["runner_sha256"] == "chemprop-runner-sha"
+    assert all(identity["status"] == "success" for identity in engine.runtime_identities)
+    assert "C:\\Users" not in str(engine.runtime_identities)
+
+    partial = registry(gmc=lambda: (_ for _ in ()).throw(RuntimeError("missing GMC")))
+    partial.predict_batch(["one"], ["CCO"])
+    assert [identity["family"] for identity in partial.runtime_identities] == [
+        "chemberta", "chemprop_regression",
+    ]
+
+
 def test_pipeline_batches_only_valid_molecules_and_preserves_order():
     class RecordingRegistry:
         def __init__(self):
@@ -103,6 +137,7 @@ def test_pipeline_batches_only_valid_molecules_and_preserves_order():
     }
     assert progress[-1]["processed_count"] == 3
     assert progress[-1]["admet_success_count"] == 2
+    assert progress[1]["admet_runtime_identities"] == []
 
 
 def test_gmc_adapter_verifies_arithmetic_mean_and_threshold(monkeypatch, tmp_path):
@@ -115,6 +150,8 @@ def test_gmc_adapter_verifies_arithmetic_mean_and_threshold(monkeypatch, tmp_pat
         sum((probability - 0.5) ** 2 for probability in probabilities) / 5
     )
     def fake_run(command, **kwargs):
+        assert "RDBASE" not in kwargs["env"]
+        assert kwargs["env"]["MOLOPTIMA_TEST"] == "kept"
         output = Path(command[command.index("--output-csv") + 1])
         with output.open("w", newline="", encoding="utf-8") as handle:
             fields = ["molecule_id", *(f"seed{s}_probability" for s in SEEDS), "ensemble_probability", "ensemble_standard_deviation", "threshold", "prediction", "status", "model_family", "manifest_version", "model_interface_version", "error_code", "error_message"]
@@ -122,6 +159,8 @@ def test_gmc_adapter_verifies_arithmetic_mean_and_threshold(monkeypatch, tmp_pat
             writer.writeheader()
             writer.writerow({"molecule_id": "one", **{f"seed{s}_probability": p for s, p in zip(SEEDS, probabilities)}, "ensemble_probability": 0.5, "ensemble_standard_deviation": expected_standard_deviation, "threshold": 0.5, "prediction": "BBB+", "status": "success", "model_family": "gmc"})
         return type("Completed", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+    monkeypatch.setenv("RDBASE", "backend-rdkit-data")
+    monkeypatch.setenv("MOLOPTIMA_TEST", "kept")
     monkeypatch.setattr("molecular_prioritization.gmc_bbb_predictor.subprocess.run", fake_run)
     result = predictor.predict_batch(["one"], ["CCO"])[0]
     assert result["ensemble_probability"] == pytest.approx(sum(probabilities) / 5)
@@ -139,6 +178,8 @@ def test_regression_adapter_exposes_exact_units_and_transforms(monkeypatch, tmp_
     predictor.manifest, predictor.artifact_root = tmp_path / "manifest.json", tmp_path
     predictor.runner.touch()
     def fake_run(command, **kwargs):
+        assert "RDBASE" not in kwargs["env"]
+        assert kwargs["env"]["MOLOPTIMA_TEST"] == "kept"
         output = Path(command[command.index("--output-csv") + 1])
         base = {"molecule_id": "one", "status": "success", "endpoint_order_json": __import__('json').dumps(ENDPOINTS)}
         for endpoint in ENDPOINTS:
@@ -150,6 +191,8 @@ def test_regression_adapter_exposes_exact_units_and_transforms(monkeypatch, tmp_
             writer = csv.DictWriter(handle, fieldnames=list(base))
             writer.writeheader(); writer.writerow(base)
         return type("Completed", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+    monkeypatch.setenv("RDBASE", "backend-rdkit-data")
+    monkeypatch.setenv("MOLOPTIMA_TEST", "kept")
     monkeypatch.setattr("molecular_prioritization.chemprop_regression_predictor.subprocess.run", fake_run)
     result = predictor.predict_batch(["one"], ["CCO"])[0]
     assert tuple(result["endpoints"]) == ENDPOINTS

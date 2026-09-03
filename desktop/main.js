@@ -2,6 +2,11 @@ const { app, BrowserWindow, dialog, Menu } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const {
+  classifyBackendTermination,
+  createSafeLogger,
+  stopChildProcess,
+} = require('./lifecycle.js');
 
 const examplePythonPath = 'C:\\path\\to\\conda-env\\python.exe';
 const backendUrl = process.env.MOLOPTIMA_BACKEND_URL || 'http://127.0.0.1:8000';
@@ -13,6 +18,12 @@ let backendProcess = null;
 let frontendProcess = null;
 let mainWindow = null;
 let frontendLoaded = false;
+let backendShutdownExpected = false;
+let lastBackendStderr = '';
+let backendLifecycle = {
+  status: 'not_started', expected: false, code: null, signal: null, summary: 'backend not started',
+};
+const lifecycleLog = createSafeLogger();
 
 function getProjectRoot() {
   if (app.isPackaged) {
@@ -147,6 +158,8 @@ async function collectDiagnostics() {
     frontendLoaded: frontendLoaded ? 'yes' : 'no',
     backendHealth: await checkBackendHealth(),
     backendProcess: backendProcess && !backendProcess.killed ? `started (pid ${backendProcess.pid})` : 'not running',
+    backendLifecycle: backendLifecycle.summary,
+    lastBackendStderr: lastBackendStderr || 'none recorded',
     pythonSource: pythonRuntime.source,
     pythonPath: pythonRuntime.executable || 'unavailable',
     pythonPathExists: pythonConfigured ? (pythonExists ? 'yes' : 'no') : 'not set',
@@ -160,6 +173,7 @@ async function collectDiagnostics() {
     appDataFolders: appDataFolders.map((folderPath) => `${folderPath}: ${pathStatus(folderPath)}`),
     bbbCachePath: getBbbCacheRoot(),
     bbbCacheStatus: pathStatus(getBbbCacheRoot()),
+    recentLifecycleLogs: lifecycleLog.recent().slice(-20),
   };
 }
 
@@ -170,6 +184,8 @@ function formatDiagnostics(diagnostics) {
     `Frontend loaded: ${diagnostics.frontendLoaded}`,
     `Backend health: ${diagnostics.backendHealth}`,
     `Backend process: ${diagnostics.backendProcess}`,
+    `Backend lifecycle: ${diagnostics.backendLifecycle}`,
+    `Last backend stderr: ${diagnostics.lastBackendStderr}`,
     `Python source selected: ${diagnostics.pythonSource}`,
     `Python path: ${diagnostics.pythonPath}`,
     `Python path exists: ${diagnostics.pythonPathExists}`,
@@ -186,6 +202,9 @@ function formatDiagnostics(diagnostics) {
     '',
     `BBB cache path: ${diagnostics.bbbCachePath}`,
     `BBB cache status: ${diagnostics.bbbCacheStatus}`,
+    '',
+    'Recent lifecycle logs:',
+    ...diagnostics.recentLifecycleLogs.map((entry) => `- ${entry.level}: ${entry.message}`),
   ].join('\n');
 }
 
@@ -253,19 +272,28 @@ function installMenu() {
 }
 
 function spawnProcess(command, args, options = {}) {
+  const { onStdout, onStderr, onError, ...spawnOptions } = options;
   const child = spawn(command, args, {
     cwd: getProjectRoot(),
     env: process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
-    ...options,
+    ...spawnOptions,
   });
 
   child.stdout.on('data', (data) => {
-    console.log(`[${command}] ${data.toString().trimEnd()}`);
+    const message = data.toString().trimEnd();
+    onStdout?.(message);
+    lifecycleLog.info(`[${command}] ${message}`);
   });
   child.stderr.on('data', (data) => {
-    console.error(`[${command}] ${data.toString().trimEnd()}`);
+    const message = data.toString().trimEnd();
+    onStderr?.(message);
+    lifecycleLog.error(`[${command}] ${message}`);
+  });
+  child.on('error', (error) => {
+    onError?.(error);
+    lifecycleLog.error(`Failed to run ${command}: ${error.stack || error.message}`);
   });
 
   return child;
@@ -277,7 +305,11 @@ function startBackend() {
     throw new Error(pythonRuntime.error);
   }
 
-  backendProcess = spawnProcess(pythonRuntime.executable, [
+  backendShutdownExpected = false;
+  backendLifecycle = {
+    status: 'starting', expected: false, code: null, signal: null, summary: 'backend starting',
+  };
+  const child = spawnProcess(pythonRuntime.executable, [
     '-m',
     'uvicorn',
     'backend.main:app',
@@ -285,11 +317,33 @@ function startBackend() {
     '127.0.0.1',
     '--port',
     '8000',
-  ]);
+  ], {
+    onStderr: (message) => {
+      lastBackendStderr = message.slice(-2000);
+    },
+    onError: (error) => {
+      backendLifecycle = {
+        status: 'failed_to_start', expected: false, code: error.code || null, signal: null,
+        summary: `backend process error; code=${error.code || null}; message=${error.message}`,
+      };
+    },
+  });
+  backendProcess = child;
+  backendLifecycle = {
+    status: 'running', expected: false, code: null, signal: null,
+    summary: `backend running; pid=${child.pid}`,
+  };
 
-  backendProcess.once('exit', (code, signal) => {
-    if (!app.isQuitting) {
-      console.error(`MolOptima backend exited unexpectedly. code=${code} signal=${signal}`);
+  child.once('exit', (code, signal) => {
+    const expected = backendShutdownExpected || Boolean(app.isQuitting);
+    backendLifecycle = classifyBackendTermination({ code, signal, expected });
+    if (backendProcess === child) {
+      backendProcess = null;
+    }
+    if (!expected) {
+      lifecycleLog.error(`MolOptima backend exited unexpectedly. code=${code} signal=${signal}`);
+    } else {
+      lifecycleLog.info(`MolOptima backend stopped during application shutdown. code=${code} signal=${signal}`);
     }
   });
 }
@@ -348,22 +402,6 @@ async function createWindow() {
   await mainWindow.loadURL(frontendUrl);
 }
 
-function stopChildProcess(child) {
-  if (!child || child.killed) {
-    return;
-  }
-
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    return;
-  }
-
-  child.kill('SIGTERM');
-}
-
 async function startMolOptima() {
   startBackend();
   if (startFrontend) {
@@ -392,7 +430,7 @@ app.whenReady().then(async () => {
   try {
     await startMolOptima();
   } catch (error) {
-    console.error(error);
+    lifecycleLog.error(error);
     const diagnostics = await collectDiagnostics();
     dialog.showErrorBox(
       'MolOptima could not start',
@@ -404,6 +442,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   app.isQuitting = true;
+  backendShutdownExpected = true;
   stopChildProcess(backendProcess);
   stopChildProcess(frontendProcess);
 });

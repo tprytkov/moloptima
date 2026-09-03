@@ -6,6 +6,7 @@ import csv
 import inspect
 import io
 import json
+import math
 import os
 import shutil
 from threading import RLock
@@ -18,18 +19,46 @@ from rdkit import Chem
 from rdkit.Chem import rdDepictor
 from rdkit.Chem.Draw import rdMolDraw2D
 
-from molecular_prioritization import model_sources
+from molecular_prioritization import model_sources, runtime_qualification
 from molecular_prioritization.admet_multitask_predictor import (
     unavailable_admet_prediction,
 )
 from molecular_prioritization.admet_registry import CLASSIFICATION_ENDPOINTS
+from molecular_prioritization.admet_runtime import portable_runtime_identities
+from molecular_prioritization.builtin_profiles import builtin_profile_catalog
+from molecular_prioritization.desirability import (
+    TRANSFORM_PARAMETER_SCHEMAS,
+    TRANSFORM_TYPES,
+)
 from molecular_prioritization.pipeline import prioritize_csv
+from molecular_prioritization.molecule_inputs import (
+    SourceInput,
+    import_molecule_collection,
+    write_canonical_collection,
+)
+from molecular_prioritization.prioritization_analysis import (
+    analyze_pareto_fronts,
+    analyze_weight_sensitivity,
+)
+from molecular_prioritization.prioritization_profiles import (
+    ADMET_SCORING_DOMAINS,
+    ENDPOINT_ROLES,
+    MISSING_POLICIES,
+    SCIENTIFIC_DOMAINS,
+    SCORING_COMPONENTS,
+    TARGET_MODES,
+    UNCERTAINTY_POLICIES,
+    PrioritizationProfile,
+    profile_sha256,
+)
 from molecular_prioritization.receptor import (
     ReceptorValidationError,
     VinaBoxConfig,
     validate_prepared_receptor,
 )
-from backend import job_runner
+from molecular_prioritization.vina_docking import DockingCancelled
+from molecular_prioritization.scientific_endpoints import SCIENTIFIC_ENDPOINTS
+from backend import job_runner, receptor_store, results_package
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -122,6 +151,151 @@ SDF_EXPORT_PROPERTIES = [
 ]
 
 
+def prioritization_metadata() -> dict[str, object]:
+    """Return public, read-only profile-editor metadata from scientific registries."""
+
+    endpoints = []
+    for definition in SCIENTIFIC_ENDPOINTS.definitions(public_only=True):
+        endpoints.append({
+            "endpoint_id": definition.endpoint_id,
+            "model_family": definition.model_family,
+            "value_type": definition.value_type,
+            "units": definition.units,
+            "semantic_direction": definition.semantic_direction,
+            "description": definition.description,
+            "uncertainty_available": definition.uncertainty_field is not None,
+        })
+    return {
+        "endpoints": endpoints,
+        "builtin_profiles": builtin_profile_catalog(),
+        "profile_options": {
+            "prioritization_methods": ["legacy_v1", "v2"],
+            "target_modes": sorted(TARGET_MODES),
+            "component_ids": sorted(SCORING_COMPONENTS),
+            "domains": sorted(SCIENTIFIC_DOMAINS),
+            "admet_domains": sorted(ADMET_SCORING_DOMAINS),
+            "endpoint_roles": sorted(ENDPOINT_ROLES),
+            "missing_policies": sorted(MISSING_POLICIES),
+            "uncertainty_policies": sorted(UNCERTAINTY_POLICIES),
+            "transform_types": sorted(TRANSFORM_TYPES),
+            "transform_schemas": {
+                name: [dict(parameter) for parameter in TRANSFORM_PARAMETER_SCHEMAS[name]]
+                for name in sorted(TRANSFORM_PARAMETER_SCHEMAS)
+            },
+            "docking_normalizations": ["within_library"],
+        },
+    }
+
+
+def validate_prioritization_profile(payload: dict[str, object]) -> dict[str, object]:
+    """Deserialize and validate through the sole PrioritizationProfile authority."""
+
+    try:
+        profile = PrioritizationProfile.from_dict(payload)
+        digest = profile_sha256(profile)
+    except (TypeError, ValueError) as exc:
+        return {
+            "structurally_valid": False,
+            "scoreable": False,
+            "profile_sha256": None,
+            "warnings": [],
+            "errors": [str(exc)],
+            "profile": None,
+        }
+    try:
+        warnings = list(profile.validate_for_scoring())
+    except ValueError as exc:
+        return {
+            "structurally_valid": True,
+            "scoreable": False,
+            "profile_sha256": digest,
+            "warnings": list(profile.validation_warnings()),
+            "errors": [str(exc)],
+            "profile": profile.to_dict(),
+        }
+    return {
+        "structurally_valid": True,
+        "scoreable": True,
+        "profile_sha256": digest,
+        "warnings": warnings,
+        "errors": [],
+        "profile": profile.to_dict(),
+    }
+
+
+def run_pareto_analysis(
+    results: list[dict[str, object]], dimensions: list[str],
+    *, job_id: str = "",
+) -> dict[str, object]:
+    """Run opt-in explanatory Pareto analysis without modifying stored results."""
+
+    if any(row.get("analysis_mode") == "single_compound" for row in results):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Pareto analysis is not applicable to Single Compound Analysis.",
+        )
+    try:
+        source_results = get_result(job_id)["results"] if job_id else results
+        analysis = analyze_pareto_fronts(source_results, dimensions)
+        if job_id:
+            _persist_job_analysis(job_id, "pareto", analysis)
+        return analysis
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Pareto analysis is invalid: {exc}",
+        ) from exc
+
+
+def run_weight_sensitivity_analysis(
+    candidates: list[dict[str, object]],
+    profile_payload: dict[str, object],
+    *,
+    perturbation_magnitude: float,
+    number_of_samples: int,
+    analysis_seed: int,
+    job_id: str = "",
+) -> dict[str, object]:
+    """Run opt-in v2 sensitivity through the existing production scoring engine."""
+
+    if any(row.get("analysis_mode") == "single_compound" for row in candidates):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Rank sensitivity is not applicable to Single Compound Analysis.",
+        )
+    try:
+        source_candidates = candidates
+        source_profile_payload = profile_payload
+        if job_id:
+            stored = get_result(job_id)
+            source_candidates = list(stored["results"])
+            persisted_profile = stored.get("prioritization_profile")
+            if not isinstance(persisted_profile, dict):
+                raise ValueError("The completed job does not contain an exact persisted v2 profile.")
+            requested_sha = profile_sha256(PrioritizationProfile.from_dict(profile_payload))
+            stored_sha = str(stored.get("prioritization_profile_sha256") or "")
+            if requested_sha != stored_sha:
+                raise ValueError("Sensitivity profile/result SHA mismatch.")
+            source_profile_payload = persisted_profile
+        profile = PrioritizationProfile.from_dict(source_profile_payload)
+        profile.validate_for_scoring()
+        analysis = analyze_weight_sensitivity(
+            source_candidates,
+            profile,
+            perturbation_magnitude=perturbation_magnitude,
+            number_of_samples=number_of_samples,
+            analysis_seed=analysis_seed,
+        )
+        if job_id:
+            _persist_job_analysis(job_id, "sensitivity", analysis)
+        return analysis
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Sensitivity analysis requires a valid scoreable v2 profile: {exc}",
+        ) from exc
+
+
 def save_upload(file: UploadFile) -> dict[str, object]:
     """Save an uploaded molecule CSV and return upload metadata."""
 
@@ -155,6 +329,67 @@ def save_upload(file: UploadFile) -> dict[str, object]:
     }
 
 
+def save_molecule_import(
+    *,
+    files: list[UploadFile],
+    smiles_text: str = "",
+    selected_structure_column: str = "",
+) -> dict[str, object]:
+    """Normalize all supported molecule inputs into one canonical collection."""
+
+    source_inputs = [
+        SourceInput(filename=Path(file.filename or "unnamed").name, content=file.file.read())
+        for file in files
+    ]
+    collection = import_molecule_collection(
+        smiles_text=smiles_text,
+        files=source_inputs,
+        selected_structure_column=selected_structure_column,
+    )
+    summary = dict(collection["summary"])
+    submitted_count = int(summary["submitted_count"])
+    if submitted_count > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Maximum batch size is {MAX_BATCH_SIZE:,} submitted molecule records.",
+        )
+    if submitted_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No supported molecule records were submitted.",
+        )
+
+    upload_id = uuid4().hex
+    upload_dir = UPLOAD_DIR / upload_id
+    sources_dir = upload_dir / "source_structures"
+    upload_dir.mkdir(parents=True, exist_ok=False)
+    sources_dir.mkdir()
+    try:
+        for index, source in enumerate(source_inputs, start=1):
+            safe_name = Path(source.filename).name
+            target = sources_dir / f"{index:04d}_{safe_name}"
+            target.write_bytes(source.content)
+        canonical_path = upload_dir / "canonical_molecules.csv"
+        manifest_path = upload_dir / "molecule_collection.json"
+        write_canonical_collection(collection, canonical_path, manifest_path)
+    except Exception:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
+
+    preview = list(collection["records"])[:20]
+    return {
+        "upload_id": upload_id,
+        "status": "ready" if int(summary["valid_count"]) else "no_valid_compounds",
+        "filename": "mixed molecule collection" if len(source_inputs) + bool(smiles_text.strip()) > 1 else (
+            source_inputs[0].filename if source_inputs else "entered_smiles.txt"
+        ),
+        "rows": submitted_count,
+        "path": relative_path(canonical_path),
+        **summary,
+        "preview": preview,
+    }
+
+
 def save_receptor(file: UploadFile, *, receptor_id: str = "") -> dict[str, object]:
     """Store and validate an already prepared receptor PDBQT artifact."""
 
@@ -180,6 +415,38 @@ def save_receptor(file: UploadFile, *, receptor_id: str = "") -> dict[str, objec
         "prepared_receptor_sha256": artifact.prepared_receptor_sha256,
         "size_bytes": artifact.size_bytes,
     }
+
+
+def save_docking_receptor(
+    file: UploadFile,
+    *,
+    receptor_id: str = "",
+    display_name: str = "",
+) -> dict[str, object]:
+    return receptor_store.save_receptor_upload(
+        file, receptor_id=receptor_id, display_name=display_name,
+    )
+
+
+def get_docking_receptor(receptor_id: str) -> dict[str, object]:
+    return receptor_store.read_receptor(receptor_id)
+
+
+def get_docking_receptor_structure(receptor_id: str) -> tuple[str, str]:
+    path, structure_format = receptor_store.receptor_structure(receptor_id)
+    return path.read_text(encoding="utf-8", errors="strict"), structure_format
+
+
+def get_receptor_preparation_runtime() -> dict[str, object]:
+    return receptor_store.preparation_runtime_status()
+
+
+def prepare_docking_receptor(receptor_id: str, values: dict[str, object]) -> dict[str, object]:
+    return receptor_store.prepare_stored_receptor(receptor_id, values)
+
+
+def save_docking_configuration(values: dict[str, object]) -> dict[str, object]:
+    return receptor_store.save_configuration(values)
 
 
 def render_molecule_structure_svg(smiles: str, width: int = 280, height: int = 220) -> str:
@@ -268,13 +535,47 @@ def run_prioritization_job(
     enable_docking: bool = True,
     receptor_upload_id: str = "",
     receptor_id: str = "",
+    docking_configuration_id: str = "",
     docking_configuration: dict[str, object] | None = None,
+    prioritization_method: str = "legacy_v1",
+    prioritization_profile: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Create and enqueue one local molecular prioritization job."""
+
+    if prioritization_method not in {"legacy_v1", "v2"}:
+        raise HTTPException(status_code=422, detail="Unknown prioritization method.")
+    validated_profile = None
+    profile_digest = None
+    if prioritization_method == "v2":
+        if prioritization_profile is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Prioritization v2 requires an explicit complete profile.",
+            )
+        validation = validate_prioritization_profile(prioritization_profile)
+        if not validation["scoreable"]:
+            raise HTTPException(
+                status_code=422,
+                detail="Prioritization v2 profile is not scoreable: "
+                + " | ".join(str(error) for error in validation["errors"]),
+            )
+        validated_profile = validation["profile"]
+        profile_digest = validation["profile_sha256"]
 
     pubchem_lookup_requested = enable_public_lookup if enable_pubchem_lookup is None else enable_pubchem_lookup
     input_path = find_upload_path(upload_id)
     submitted_count = validate_molecule_csv(input_path)
+    import_manifest = read_molecule_collection_manifest(upload_id)
+    import_summary = dict(import_manifest.get("summary") or {})
+    imported_valid_count = import_summary.get("valid_count")
+    analysis_mode = str(import_summary.get("analysis_mode") or "library")
+    if imported_valid_count is not None and int(imported_valid_count) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="At least one chemically valid compound is required to start an analysis.",
+        )
+    if analysis_mode not in {"single_compound", "library"}:
+        analysis_mode = "library"
     job_id = uuid4().hex
     job_dir = JOB_OUTPUT_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -285,19 +586,34 @@ def run_prioritization_job(
     docking_config = None
     docking_setup_error = ""
     if enable_docking:
-        if not receptor_upload_id.strip():
-            docking_setup_error = "Prepared receptor upload is required for docking."
-        else:
+        if docking_configuration_id.strip():
             try:
+                saved_config = receptor_store.read_configuration(docking_configuration_id)
+                saved_receptor_id = str(saved_config["receptor_id"])
+                saved_receptor = receptor_store.read_receptor(saved_receptor_id)
                 receptor = validate_prepared_receptor(
-                    find_receptor_path(receptor_upload_id), receptor_id=receptor_id,
+                    receptor_store.prepared_receptor_path(saved_receptor_id),
+                    receptor_id=saved_receptor_id,
+                    source=str(saved_receptor.get("receptor_source") or "user_supplied_pdbqt"),
+                    source_filename=str(saved_receptor.get("original_filename") or "receptor.pdbqt"),
                 )
+                docking_config = VinaBoxConfig.from_mapping(saved_config)
             except (HTTPException, ReceptorValidationError) as exc:
                 docking_setup_error = str(getattr(exc, "detail", exc))
-        try:
-            docking_config = VinaBoxConfig.from_mapping(docking_configuration or {})
-        except ReceptorValidationError as exc:
-            docking_setup_error = " | ".join(filter(None, (docking_setup_error, str(exc))))
+        else:
+            if not receptor_upload_id.strip():
+                docking_setup_error = "Prepared receptor upload is required for docking."
+            else:
+                try:
+                    receptor = validate_prepared_receptor(
+                        find_receptor_path(receptor_upload_id), receptor_id=receptor_id,
+                    )
+                except (HTTPException, ReceptorValidationError) as exc:
+                    docking_setup_error = str(getattr(exc, "detail", exc))
+            try:
+                docking_config = VinaBoxConfig.from_mapping(docking_configuration or {})
+            except ReceptorValidationError as exc:
+                docking_setup_error = " | ".join(filter(None, (docking_setup_error, str(exc))))
     metadata = {
         "job_id": job_id,
         "upload_id": upload_id,
@@ -311,13 +627,14 @@ def run_prioritization_job(
         "error_message": "",
         "row_count": 0,
         "submitted_count": submitted_count,
-        "valid_count": None,
-        "invalid_count": None,
-        "duplicate_count": None,
+        "valid_count": int(imported_valid_count) if imported_valid_count is not None else None,
+        "invalid_count": int(import_summary.get("invalid_count")) if import_summary.get("invalid_count") is not None else None,
+        "duplicate_count": int(import_summary.get("duplicate_count")) if import_summary.get("duplicate_count") is not None else None,
         "processed_count": 0,
         "total_count": submitted_count,
         "admet_success_count": 0,
         "admet_failure_count": 0,
+        "admet_runtime_identities": [],
         "docking_success_count": 0,
         "docking_failure_count": 0,
         "eligible_count": 0,
@@ -338,11 +655,17 @@ def run_prioritization_job(
         "target_context": clean_target_context,
         "target_reference_file": relative_path(target_reference_output_path),
         "docking_requested": enable_docking,
+        "docking_configuration_id": docking_configuration_id,
         "receptor_upload_id": receptor_upload_id,
         "receptor_id": receptor.receptor_id if receptor else receptor_id,
         "prepared_receptor_sha256": receptor.prepared_receptor_sha256 if receptor else None,
         "docking_configuration": docking_config.as_dict() if docking_config else {},
         "docking_setup_error": docking_setup_error,
+        "prioritization_method": prioritization_method,
+        "prioritization_profile_sha256": profile_digest,
+        "prioritization_profile": validated_profile,
+        "receptor_source": receptor.source if receptor else None,
+        "analysis_mode": analysis_mode,
     }
     write_job_metadata(metadata)
     job_runner.submit(
@@ -363,6 +686,10 @@ def run_prioritization_job(
         docking_config=docking_config,
         docking_output_root=job_dir,
         docking_setup_error=docking_setup_error,
+        docking_configuration_id=docking_configuration_id,
+        prioritization_method=prioritization_method,
+        prioritization_profile=validated_profile,
+        analysis_mode=analysis_mode,
     )
     return metadata
 
@@ -386,10 +713,22 @@ def _execute_prioritization_job(
     )
     try:
         def progress_callback(**values: object) -> None:
+            if "admet_runtime_identities" in values:
+                values["admet_runtime_identities"] = portable_runtime_identities(
+                    values["admet_runtime_identities"]
+                )
             update_job_metadata(job_id, **values)
 
+        def cancellation_requested() -> bool:
+            metadata = read_job_metadata(job_id)
+            return bool(metadata and metadata.get("cancellation_requested"))
+
         rows = call_prioritize_csv(
-            input_path, output_path, progress_callback=progress_callback, **options
+            input_path,
+            output_path,
+            progress_callback=progress_callback,
+            cancellation_requested=cancellation_requested,
+            **options,
         )
         update_job_metadata(job_id, stage="prioritization")
         valid_count = sum(row.get("valid_molecule") is True for row in rows)
@@ -458,6 +797,14 @@ def _execute_prioritization_job(
             awaiting_or_missing_docking_count=awaiting_or_missing_docking_count,
             docking_failed_or_unavailable_count=docking_failed_or_unavailable_count,
             warning_count=warning_count,
+        )
+    except DockingCancelled:
+        update_job_metadata(
+            job_id,
+            status="cancelled",
+            stage="completed",
+            completed_at=utc_timestamp(),
+            error_message="",
         )
     except Exception as exc:
         update_job_metadata(
@@ -542,6 +889,13 @@ def _deserialize_result_row(row: dict[str, str]) -> dict[str, object]:
     """Restore nested ADMET output stored in the pipeline result CSV."""
 
     restored: dict[str, object] = dict(row)
+    restored["v2_score"] = _optional_csv_float(restored.get("v2_score"))
+    restored["v2_rank"] = _optional_csv_int(restored.get("v2_rank"))
+    for optional_field in (
+        "v2_rank_eligible", "rank_eligible", "valid_molecule", "duplicate_structure", "input_has_3d",
+    ):
+        if optional_field in restored:
+            restored[optional_field] = _optional_csv_bool(restored.get(optional_field))
     status_value = str(row.get("admet_model_status") or "model_unavailable")
     warning_value = str(
         row.get("admet_warning")
@@ -568,7 +922,7 @@ def _deserialize_result_row(row: dict[str, str]) -> dict[str, object]:
         row.get("admet_warning") or ""
     )
     restored["admet_predictions"] = fallback
-    for field in ("bbb_result", "admet_regression", "admet_family_status", "docking_result", "prioritization"):
+    for field in ("bbb_result", "admet_regression", "admet_family_status", "docking_result", "prioritization", "prioritization_v2"):
         serialized_nested = row.get(field, "")
         if serialized_nested:
             try:
@@ -579,6 +933,101 @@ def _deserialize_result_row(row: dict[str, str]) -> dict[str, object]:
         else:
             restored[field] = {}
     return restored
+
+
+def _optional_csv_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value or "").strip().casefold()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    return None
+
+
+def _optional_csv_float(value: object) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        converted = float(value)
+    except (TypeError, ValueError):
+        return None
+    return converted if math.isfinite(converted) else None
+
+
+def _optional_csv_int(value: object) -> int | None:
+    converted = _optional_csv_float(value)
+    return int(converted) if converted is not None and converted.is_integer() else None
+
+
+def get_results_package(job_id: str) -> dict[str, object]:
+    """Build and describe the deterministic bundle for one completed job."""
+
+    result = get_result(job_id)
+    job_dir = (JOB_OUTPUT_DIR / job_id).resolve()
+    try:
+        return results_package.build_results_package(
+            job_dir=job_dir,
+            job=result,
+            rows=list(result["results"]),
+            molecule_manifest=read_molecule_collection_manifest(str(result.get("upload_id") or "")),
+            receptor_root=receptor_store.RECEPTOR_ROOT,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Results package could not be generated: {exc}",
+        ) from exc
+
+
+def get_results_artifact(job_id: str, relative_path_value: str) -> Path:
+    """Return one current-job package artifact without permitting path traversal."""
+
+    get_results_package(job_id)
+    root = (JOB_OUTPUT_DIR / job_id / "results").resolve()
+    candidate = (root / relative_path_value).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result artifact not found.")
+    if not candidate.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result artifact not found.")
+    return candidate
+
+
+def get_results_zip(job_id: str) -> Path:
+    get_results_package(job_id)
+    path = (JOB_OUTPUT_DIR / job_id / "results_package.zip").resolve()
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Results package ZIP not found.")
+    return path
+
+
+def get_persisted_results_analysis(job_id: str, analysis_name: str) -> dict[str, object]:
+    """Read one job-scoped persisted secondary analysis without recalculating it."""
+
+    validate_existing_job_id(job_id)
+    if analysis_name not in {"pareto", "sensitivity"}:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved analysis not found.")
+    path = JOB_OUTPUT_DIR / job_id / "analysis" / f"{analysis_name}.json"
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved analysis not found.")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Saved analysis is invalid.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Saved analysis is invalid.")
+    return payload
+
+
+def _persist_job_analysis(job_id: str, name: str, payload: dict[str, object]) -> None:
+    validate_existing_job_id(job_id)
+    directory = JOB_OUTPUT_DIR / job_id / "analysis"
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary = directory / f"{name}.json.tmp"
+    target = directory / f"{name}.json"
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    temporary.replace(target)
 
 
 def get_latest_completed_job() -> dict[str, object]:
@@ -929,6 +1378,7 @@ def normalize_job_metadata(metadata: dict[str, object]) -> dict[str, object]:
     normalized.setdefault("total_count", row_count)
     normalized.setdefault("admet_success_count", 0)
     normalized.setdefault("admet_failure_count", 0)
+    normalized.setdefault("admet_runtime_identities", [])
     normalized.setdefault("docking_success_count", 0)
     normalized.setdefault("docking_failure_count", 0)
     normalized.setdefault("eligible_count", 0)
@@ -941,6 +1391,7 @@ def normalize_job_metadata(metadata: dict[str, object]) -> dict[str, object]:
     normalized.setdefault("docking_failed_or_unavailable_count", 0)
     normalized.setdefault("warning_count", 0)
     normalized.setdefault("cancellation_requested", False)
+    normalized.setdefault("analysis_mode", "library")
     return normalized
 
 
@@ -963,6 +1414,17 @@ def find_upload_path(upload_id: str) -> Path:
             detail="Uploaded CSV not found.",
         )
     return csv_files[0]
+
+
+def read_molecule_collection_manifest(upload_id: str) -> dict[str, object]:
+    manifest_path = UPLOAD_DIR / upload_id / "molecule_collection.json"
+    if not manifest_path.is_file():
+        return {}
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def find_receptor_path(receptor_upload_id: str) -> Path:
@@ -990,6 +1452,14 @@ def check_model_and_source_status() -> dict[str, object]:
     """Return current app-managed model and public source status."""
 
     return model_sources.current_status_payload()
+
+
+def get_scientific_runtime_status(*, refresh: bool = False) -> dict[str, object]:
+    """Return production runtime contract status without running inference."""
+
+    return runtime_qualification.scientific_runtime_status(
+        application_root=PROJECT_ROOT, refresh=refresh
+    )
 
 
 def refresh_public_source_status() -> dict[str, object]:

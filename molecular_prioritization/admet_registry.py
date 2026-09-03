@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Mapping
 
 from molecular_prioritization.admet_multitask_predictor import load_admet_multitask_predictor
-from molecular_prioritization.admet_release import ADMETReleaseError, extracted_archive, only_child_directory, resolve_release_root, verify_bundle_inventory
+from molecular_prioritization.admet_release import ADMETReleaseError, extracted_archive, only_child_directory, resolve_release_root, sha256_file, verify_bundle_inventory
+from molecular_prioritization.admet_runtime import portable_runtime_identity
 from molecular_prioritization.chemprop_regression_predictor import ChempropRegressionPredictor
 from molecular_prioritization.gmc_bbb_predictor import GMCBBBPredictor
 
@@ -40,11 +41,13 @@ class ADMETRegistry:
         self.chemberta_factory = chemberta_factory or _load_chemberta
         self.gmc_factory = gmc_factory or GMCBBBPredictor
         self.regression_factory = regression_factory or ChempropRegressionPredictor
+        self.runtime_identities: list[dict[str, object]] = []
 
     def predict_batch(self, molecule_ids: list[str], canonical_smiles: list[str]) -> list[dict[str, object]]:
         if len(molecule_ids) != len(canonical_smiles):
             raise ValueError("molecule_ids and canonical_smiles must have equal lengths")
         family_outputs: dict[str, list[dict[str, object]] | FamilyFailure] = {}
+        self.runtime_identities = []
         for family, factory, method in (
             ("chemberta", self.chemberta_factory, "chemberta"),
             ("gmc_bbb", self.gmc_factory, "external"),
@@ -57,6 +60,9 @@ class ADMETRegistry:
                     family_outputs[family] = [_classification_result(item) for item in raw]
                 else:
                     family_outputs[family] = predictor.predict_batch(molecule_ids, canonical_smiles)
+                identity = _successful_runtime_identity(family, predictor, family_outputs[family])
+                if identity:
+                    self.runtime_identities.append(identity)
             except Exception as exc:
                 family_outputs[family] = FamilyFailure("model_unavailable", str(exc))
 
@@ -117,11 +123,46 @@ def load_chemberta_predictor(*, application_root: str | None = None):
     )
     bundle = only_child_directory(extracted)
     verify_bundle_inventory(bundle)
-    return load_admet_multitask_predictor(bundle)
+    predictor = load_admet_multitask_predictor(bundle)
+    predictor.runtime_identity = {
+        "family": "chemberta",
+        "runtime_source": "application_process",
+        "model_source": "packaged",
+        "release_archive_sha256": sha256_file(archive),
+    }
+    return predictor
 
 
 def _load_chemberta():
     return load_chemberta_predictor()
+
+
+def _successful_runtime_identity(
+    family: str,
+    predictor: object,
+    rows: list[dict[str, object]] | FamilyFailure,
+) -> dict[str, object]:
+    identity = getattr(predictor, "runtime_identity", None)
+    if not isinstance(identity, Mapping) or isinstance(rows, FamilyFailure) or not rows:
+        return {}
+    statuses = {str(row.get("status") or row.get("prediction_status") or "") for row in rows}
+    if not statuses.intersection({"success", "available"}):
+        return {}
+    first = rows[0]
+    manifest_identity = {
+        key: first.get(key)
+        for key in (
+            "manifest_version", "model_interface_version", "manifest_schema_version",
+            "manifest_sha256", "release_status", "model_family",
+        )
+        if first.get(key) is not None
+    }
+    return portable_runtime_identity({
+        **dict(identity),
+        "family": identity.get("family") or family,
+        "status": "success",
+        "production_manifest_identity": manifest_identity,
+    })
 
 
 def _classification_result(raw: dict[str, object]) -> dict[str, object]:

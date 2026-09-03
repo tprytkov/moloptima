@@ -1,0 +1,64 @@
+{
+  "schema_version": "moloptima-native-runtime-v1",
+  "runtime": "openbabel",
+  "version": "3.1.0",
+  "distribution": "conda-forge openbabel 3.1.1 py311h6f56430_9",
+  "license": "GPL-2.0-only",
+  "executable": "obabel.exe",
+  "files": [
+    {
+      "path": "obabel.exe",
+      "role": "command_line_executable",
+      "size_bytes": 35328,
+      "sha256": "8f567ac13b0e4ad140b9afd0408a7ea3ac738c54b5206ef3d813d873259be93e"
+    },
+    {
+      "path": "openbabel-3.dll",
+      "role": "core_runtime",
+      "size_bytes": 2216960,
+      "sha256": "1e464579ad16b54d0bb043f232f493be2920ae56526d91d53da17f5bb6862309"
+    },
+    {
+      "path": "formats_common.obf",
+      "role": "pdb_sdf_format_plugin",
+      "size_bytes": 326144,
+      "sha256": "118e0f4744ecaef201c95e5b50b23f413d91bb5c3ae5f829ae126c9d0ed3dc74"
+    },
+    {
+      "path": "formats_misc.obf",
+      "role": "pdbqt_format_plugin",
+      "size_bytes": 1122816,
+      "sha256": "45c60ccba94c0c17746b47bcc9b27e86ffc2f19ef6880ade635830d5fb38b233"
+    },
+    {
+      "path": "inchi.dll",
+      "role": "formats_common_dependency",
+      "size_bytes": 908288,
+      "sha256": "007eedf82491df534ff61afb53875e74747f4671588b457766f3d621beb24d05"
+    },
+    {
+      "path": "zlib.dll",
+      "role": "core_runtime_dependency",
+      "size_bytes": 89088,
+      "sha256": "7d86de8659d728d0cc22615ea37248ca83b24af64a9fc19ecc4548105308ee0a"
+    },
+    {
+      "path": "msvcp140.dll",
+      "role": "msvc_runtime_dependency",
+      "size_bytes": 557648,
+      "sha256": "8f141b4454fa78db34bc1f28c571b4da0e00cd2c43f7ad0e282f313036826aae"
+    },
+    {
+      "path": "vcruntime140.dll",
+      "role": "msvc_runtime_dependency",
+      "size_bytes": 124496,
+      "sha256": "0205071c36c17f1efbd70178c852cb7d49985c484202752b8704b7ac6b184e60"
+    },
+    {
+      "path": "vcruntime140_1.dll",
+      "role": "msvc_runtime_dependency",
+      "size_bytes": 49744,
+      "sha256": "963e45edd064545962e216c12d68071ced94dc8e11862a18f07f14eb2690a57c"
+    }
+  ]
+}

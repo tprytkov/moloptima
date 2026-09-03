@@ -20,9 +20,14 @@ from molecular_prioritization.descriptors import MolecularDescriptors
 from molecular_prioritization.docking import DockingResult
 from molecular_prioritization.structural_alerts import StructuralAlertResult
 from molecular_prioritization.synthetic_accessibility import SyntheticAccessibilityResult
+from molecular_prioritization.prioritization_v2 import (
+    PRIORITIZATION_METHOD_PROFILE_V2,
+    score_candidates_v2,
+)
 
 
 PRIORITIZATION_RANKING_VERSION = "moloptima_scientific_priority_v1"
+PRIORITIZATION_METHOD_LEGACY_V1 = "legacy_v1"
 
 
 def calculate_priority_score(

@@ -2,14 +2,19 @@
   "name": "moloptima-desktop",
   "version": "0.1.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tprytkov/moloptima.git"
+  },
   "description": "Phase 5A Electron desktop launcher for MolOptima.",
   "main": "main.js",
   "scripts": {
+    "test:lifecycle": "node --test lifecycle.test.js",
     "build:frontend": "cd ../frontend && npm.cmd run build",
     "dev": "electron .",
     "start": "electron .",
     "package": "npm run build:frontend && electron-builder --win dir",
-    "dist": "npm run build:frontend && electron-builder --win nsis"
+    "dist": "npm run build:frontend && electron-builder --win nsis-web"
   },
   "build": {
     "appId": "local.moloptima.desktop",
@@ -20,6 +25,7 @@
     "afterPack": "build/afterPack.js",
     "files": [
       "main.js",
+      "lifecycle.js",
       "preload.js",
       "package.json"
     ],
@@ -67,7 +73,8 @@
         "from": "../app_data",
         "to": "moloptima-app/app_data",
         "filter": [
-          "**/.gitkeep"
+          "**/.gitkeep",
+          "model_resources/admet/**/*"
         ]
       },
       {
@@ -76,6 +83,12 @@
         "filter": [
           "admet/runtime_manifest.json",
           "admet/runners/**/*",
+          "vina/**/*",
+          "openbabel/**/*",
+          "prioritization_profiles/**/*",
+          "receptor_preparation/runtime_manifest.json",
+          "runtime/vina/**/*",
+          "runtime/openbabel/**/*",
           "!**/__pycache__/**",
           "!**/*.pyc"
         ]
@@ -85,7 +98,7 @@
       "signAndEditExecutable": false,
       "target": [
         "dir",
-        "nsis"
+        "nsis-web"
       ]
     },
     "nsis": {
