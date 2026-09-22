@@ -4,18 +4,101 @@ import {
   Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
+import ReceptorViewer from './ReceptorViewer.jsx';
 
 export const DEFAULT_VINA_SETTINGS = Object.freeze({
   exhaustiveness: '8', numModes: '9', energyRange: '', seed: '2025', workerCount: '4',
 });
 const EMPTY_BOX = Object.freeze({ centerX: '', centerY: '', centerZ: '', sizeX: '', sizeY: '', sizeZ: '' });
 
-export async function uploadDockingReceptor(apiBaseUrl, file, receptorId = '') {
+export const RECEPTOR_STATE_POLICY = Object.freeze({
+  box: 'clear on receptor ID change; preserve on same-receptor artifact change',
+  method: 'clear on receptor ID change; reset if an artifact change invalidates its selection',
+  selectedAtom: 'clear on receptor ID or artifact change',
+  selectedResidues: 'clear on receptor ID or artifact change',
+  selectedLigandId: 'clear on receptor ID or artifact change',
+  selectedChains: 'initialize for a different receptor; preserve for same-receptor artifact change',
+  heteroChoices: 'clear on receptor ID change; preserve for same-receptor artifact change',
+  altlocChoices: 'clear on receptor ID change; preserve for same-receptor artifact change',
+  pocketGroupId: 'clear on receptor ID change; preserve for same-receptor artifact change',
+  confirmed: 'clear whenever receptor metadata is refreshed',
+});
+
+export function receptorArtifactIdentity(receptor) {
+  if (!receptor) return '';
+  const representation = receptor.docking_ready ? 'docking' : 'source';
+  const digest = receptor.docking_ready
+    ? receptor.docking_receptor_sha256
+    : receptor.source_receptor_sha256;
+  return [receptor.receptor_id, representation, receptor.preparation_id || '', digest || ''].join(':');
+}
+
+export function classifyReceptorTransition(previousReceptor, nextReceptor) {
+  const receptorChanged = previousReceptor?.receptor_id !== nextReceptor?.receptor_id;
+  return {
+    receptorChanged,
+    artifactChanged: !receptorChanged
+      && receptorArtifactIdentity(previousReceptor) !== receptorArtifactIdentity(nextReceptor),
+  };
+}
+
+export function createReceptorScopedState(overrides = {}) {
+  return {
+    method: 'manual', selectedAtom: null, selectedResidues: [], selectedLigandId: '',
+    box: { ...EMPTY_BOX }, confirmed: null, selectedChains: [], heteroChoices: {},
+    altlocChoices: {}, pocketGroupId: '', ...overrides,
+  };
+}
+
+export function transitionReceptorScopedState(current, previousReceptor, nextReceptor) {
+  const transition = classifyReceptorTransition(previousReceptor, nextReceptor);
+  if (transition.receptorChanged) {
+    const chains = nextReceptor?.structure_inventory?.protein?.chains ?? [];
+    return createReceptorScopedState({ selectedChains: chains.map((item) => item.chain) });
+  }
+  if (transition.artifactChanged) {
+    return {
+      ...current,
+      method: 'manual',
+      selectedAtom: null,
+      selectedResidues: [],
+      selectedLigandId: '',
+      confirmed: null,
+    };
+  }
+  return { ...current, confirmed: null };
+}
+
+export function createLatestRequestGuard(AbortControllerClass = globalThis.AbortController) {
+  let generation = 0;
+  let controller = null;
+  return {
+    start() {
+      controller?.abort();
+      controller = new AbortControllerClass();
+      const requestController = controller;
+      const requestGeneration = ++generation;
+      return {
+        signal: requestController.signal,
+        isCurrent: () => requestGeneration === generation && !requestController.signal.aborted,
+      };
+    },
+    invalidate() {
+      generation += 1;
+      controller?.abort();
+      controller = null;
+    },
+  };
+}
+
+export async function uploadDockingReceptor(apiBaseUrl, file, receptorId = '', signal) {
   const formData = new FormData();
   formData.append('file', file);
   const query = new URLSearchParams();
   if (receptorId) query.set('receptor_id', receptorId);
-  return decodeResponse(await fetch(`${apiBaseUrl}/api/docking/receptors?${query}`, { method: 'POST', body: formData }));
+  return decodeResponse(await fetch(`${apiBaseUrl}/api/docking/receptors?${query}`, {
+    method: 'POST', body: formData, signal,
+  }));
 }
 
 export async function submitDockingConfiguration(apiBaseUrl, payload) {
@@ -28,10 +111,46 @@ export async function fetchReceptorPreparationRuntime(apiBaseUrl) {
   return decodeResponse(await fetch(`${apiBaseUrl}/api/docking/receptor-preparation/runtime`));
 }
 
-export async function prepareDockingReceptor(apiBaseUrl, receptorId, payload) {
+export async function prepareDockingReceptor(apiBaseUrl, receptorId, payload, signal) {
   return decodeResponse(await fetch(`${apiBaseUrl}/api/docking/receptors/${receptorId}/prepare`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal,
   }));
+}
+
+export function receptorStructureUrl(apiBaseUrl, receptor) {
+  const representation = receptor.docking_ready ? 'docking' : 'source';
+  return `${apiBaseUrl}/api/docking/receptors/${receptor.receptor_id}/structure?representation=${representation}`;
+}
+
+export async function fetchReceptorStructure(apiBaseUrl, receptor, signal) {
+  const expectedRepresentation = receptor.docking_ready ? 'docking' : 'source';
+  const response = await fetch(receptorStructureUrl(apiBaseUrl, receptor), { signal });
+  if (!response.ok) throw new Error(await response.text());
+  const identity = {
+    representation: response.headers.get('X-MolOptima-Structure-Representation') || '',
+    receptorId: response.headers.get('X-MolOptima-Receptor-ID') || '',
+    artifactSha256: response.headers.get('X-MolOptima-Artifact-SHA256') || '',
+    preparationId: response.headers.get('X-MolOptima-Preparation-ID') || '',
+    dockingReceptorSha256: response.headers.get('X-MolOptima-Docking-Receptor-SHA256') || '',
+  };
+  const format = response.headers.get('X-MolOptima-Structure-Format') || '';
+  if (identity.representation !== expectedRepresentation || identity.receptorId !== receptor.receptor_id) {
+    throw new Error('Receptor visualization identity does not match the requested receptor representation.');
+  }
+  const expectedDigest = receptor.docking_ready
+    ? receptor.docking_receptor_sha256
+    : receptor.source_receptor_sha256;
+  if (!format || !identity.artifactSha256 || identity.artifactSha256 !== expectedDigest) {
+    throw new Error('Receptor visualization artifact identity does not match receptor metadata.');
+  }
+  if (receptor.docking_ready && (
+    format !== 'pdbqt'
+    || identity.dockingReceptorSha256 !== expectedDigest
+    || (receptor.preparation_id && identity.preparationId !== receptor.preparation_id)
+  )) {
+    throw new Error('Docking receptor visualization does not match the validated Vina receptor.');
+  }
+  return { text: await response.text(), format, identity };
 }
 
 export function preparationPayload(selectedChains, heteroChoices, altlocChoices, pocketGroupId = '') {
@@ -124,25 +243,35 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [receptor, setReceptor] = useState(null);
   const [structure, setStructure] = useState(null);
-  const [method, setMethod] = useState('manual');
-  const [selectedAtom, setSelectedAtom] = useState(null);
-  const [selectedResidues, setSelectedResidues] = useState([]);
-  const [selectedLigandId, setSelectedLigandId] = useState('');
   const [padding, setPadding] = useState('4');
-  const [box, setBox] = useState(EMPTY_BOX);
   const [advanced, setAdvanced] = useState(DEFAULT_VINA_SETTINGS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [confirmed, setConfirmed] = useState(null);
   const [preparationRuntime, setPreparationRuntime] = useState(null);
-  const [selectedChains, setSelectedChains] = useState([]);
-  const [heteroChoices, setHeteroChoices] = useState({});
-  const [altlocChoices, setAltlocChoices] = useState({});
-  const [pocketGroupId, setPocketGroupId] = useState('');
   const [preparing, setPreparing] = useState(false);
-  const viewerHostRef = useRef(null);
+  const [receptorState, setReceptorState] = useState(() => createReceptorScopedState());
+  const {
+    method, selectedAtom, selectedResidues, selectedLigandId, box, confirmed,
+    selectedChains, heteroChoices, altlocChoices, pocketGroupId,
+  } = receptorState;
+  const setReceptorField = (field, value) => setReceptorState((current) => ({
+    ...current,
+    [field]: typeof value === 'function' ? value(current[field]) : value,
+  }));
+  const setMethod = (value) => setReceptorField('method', value);
+  const setSelectedAtom = (value) => setReceptorField('selectedAtom', value);
+  const setSelectedResidues = (value) => setReceptorField('selectedResidues', value);
+  const setSelectedLigandId = (value) => setReceptorField('selectedLigandId', value);
+  const setBox = (value) => setReceptorField('box', value);
+  const setConfirmed = (value) => setReceptorField('confirmed', value);
+  const setSelectedChains = (value) => setReceptorField('selectedChains', value);
+  const setHeteroChoices = (value) => setReceptorField('heteroChoices', value);
+  const setAltlocChoices = (value) => setReceptorField('altlocChoices', value);
+  const setPocketGroupId = (value) => setReceptorField('pocketGroupId', value);
   const viewerRef = useRef(null);
-  const boxShapeRef = useRef(null);
+  const receptorRef = useRef(null);
+  const requestGuardRef = useRef(null);
+  if (!requestGuardRef.current) requestGuardRef.current = createLatestRequestGuard();
 
   useEffect(() => {
     let active = true;
@@ -152,63 +281,33 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
     return () => { active = false; };
   }, [apiBaseUrl]);
 
-  useEffect(() => {
-    if (!structure || !viewerHostRef.current) return undefined;
-    let disposed = false;
-    let viewer;
-    async function initializeViewer() {
-      try {
-        const { createViewer } = await import('3dmol/build/3Dmol.es6.js');
-        if (disposed || !viewerHostRef.current) return;
-        viewer = createViewer(viewerHostRef.current, { backgroundColor: '#f7f9fb' });
-        viewer.addModel(structure.text, structure.format);
-        viewer.setStyle({}, { cartoon: { color: 'spectrum' } });
-        viewer.addStyle({ hetflag: true }, { stick: { radius: 0.22, colorscheme: 'Jmol' } });
-        viewer.setClickable({}, true, (atom) => setSelectedAtom(atomDetails(atom)));
-        viewer.zoomTo(); viewer.render(); viewerRef.current = viewer;
-      } catch (viewerError) { setError(`Interactive receptor viewer unavailable: ${viewerError.message ?? viewerError}`); }
-    }
-    initializeViewer();
-    return () => { disposed = true; if (viewer) viewer.clear(); viewerRef.current = null; };
-  }, [structure]);
+  useEffect(() => () => requestGuardRef.current?.invalidate(), []);
 
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-    if (boxShapeRef.current) viewer.removeShape(boxShapeRef.current);
-    boxShapeRef.current = null;
-    const values = [box.centerX, box.centerY, box.centerZ, box.sizeX, box.sizeY, box.sizeZ].map(Number);
-    if (values.every(Number.isFinite) && values.slice(3).every((value) => value > 0)) {
-      boxShapeRef.current = viewer.addBox({
-        center: { x: values[0], y: values[1], z: values[2] }, dimensions: { w: values[3], h: values[4], d: values[5] },
-        color: '#df6c3b', opacity: 0.22, wireframe: true,
-      });
-    }
-    selectedResidues.forEach((residue) => viewer.addStyle(
-      { chain: residue.chain, resi: residue.residueNumber, resn: residue.residueName },
-      { stick: { radius: 0.28, color: '#df6c3b' } },
-    ));
-    viewer.render();
-  }, [box, selectedResidues]);
+  function commitLoadedReceptor(metadata, nextStructure) {
+    const previousReceptor = receptorRef.current;
+    setReceptorState((current) => transitionReceptorScopedState(current, previousReceptor, metadata));
+    receptorRef.current = metadata;
+    setReceptor(metadata);
+    setStructure(nextStructure);
+  }
 
   async function handleUpload() {
     if (!selectedFile) return;
-    setLoading(true); setError('');
+    const request = requestGuardRef.current.start();
+    const file = selectedFile;
+    setPreparing(false); setLoading(true); setError('');
     try {
-      const associationId = receptor && selectedFile.name.toLowerCase().endsWith('.pdbqt') ? receptor.receptor_id : '';
-      const metadata = await uploadDockingReceptor(apiBaseUrl, selectedFile, associationId);
-      const response = await fetch(`${apiBaseUrl}/api/docking/receptors/${metadata.receptor_id}/structure`);
-      if (!response.ok) throw new Error(await response.text());
-      setReceptor(metadata);
-      setStructure({ text: await response.text(), format: response.headers.get('X-MolOptima-Structure-Format') || 'pdb' });
-      const chains = metadata.structure_inventory?.protein?.chains ?? [];
-      setSelectedChains(chains.map((item) => item.chain));
-      setHeteroChoices({});
-      setAltlocChoices({});
-      setPocketGroupId('');
-      setConfirmed(null); setSelectedFile(null);
-    } catch (uploadError) { setError(uploadError.message ?? String(uploadError)); }
-    finally { setLoading(false); }
+      const associationId = receptorRef.current && file.name.toLowerCase().endsWith('.pdbqt')
+        ? receptorRef.current.receptor_id : '';
+      const metadata = await uploadDockingReceptor(apiBaseUrl, file, associationId, request.signal);
+      if (!request.isCurrent()) return;
+      const nextStructure = await fetchReceptorStructure(apiBaseUrl, metadata, request.signal);
+      if (!request.isCurrent()) return;
+      commitLoadedReceptor(metadata, nextStructure);
+      setSelectedFile(null);
+    } catch (uploadError) {
+      if (request.isCurrent() && uploadError.name !== 'AbortError') setError(uploadError.message ?? String(uploadError));
+    } finally { if (request.isCurrent()) setLoading(false); }
   }
 
   const boundLigands = receptor?.bound_ligands ?? [];
@@ -268,17 +367,22 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
 
   async function handlePrepare() {
     if (!receptor || !preparationReady || !preparationRuntime?.available) return;
-    setPreparing(true); setError('');
+    const request = requestGuardRef.current.start();
+    setLoading(false); setPreparing(true); setError('');
     try {
       const metadata = await prepareDockingReceptor(
         apiBaseUrl,
         receptor.receptor_id,
         preparationPayload(selectedChains, heteroChoices, altlocChoices, pocketGroupId),
+        request.signal,
       );
-      setReceptor(metadata);
-      setConfirmed(null);
-    } catch (preparationError) { setError(preparationError.message ?? String(preparationError)); }
-    finally { setPreparing(false); }
+      if (!request.isCurrent()) return;
+      const nextStructure = await fetchReceptorStructure(apiBaseUrl, metadata, request.signal);
+      if (!request.isCurrent()) return;
+      commitLoadedReceptor(metadata, nextStructure);
+    } catch (preparationError) {
+      if (request.isCurrent() && preparationError.name !== 'AbortError') setError(preparationError.message ?? String(preparationError));
+    } finally { if (request.isCurrent()) setPreparing(false); }
   }
 
   async function handleConfirm() {
@@ -350,10 +454,14 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
           </Stack>
         </Box>
 
-        <Box sx={{ position: 'relative' }}>
-          <Box ref={viewerHostRef} data-testid="receptor-viewer" sx={{ height: 430, border: '1px solid', borderColor: 'divider', borderRadius: 1, overflow: 'hidden', bgcolor: '#f7f9fb' }} />
-          {!structure ? <Box sx={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}><Typography color="text.secondary">Upload a PDB or prepared PDBQT to view the receptor.</Typography></Box> : null}
-        </Box>
+        <ReceptorViewer
+          ref={viewerRef}
+          structure={structure}
+          box={box}
+          selectedResidues={selectedResidues}
+          onAtomSelect={(atom) => setSelectedAtom(atomDetails(atom))}
+          onError={(viewerError) => setError(`Interactive receptor viewer unavailable: ${viewerError.message ?? viewerError}`)}
+        />
 
         <Box sx={{ p: 1.5, bgcolor: '#f7f9fb', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
           <Stack spacing={1}><Typography variant="subtitle2">Selected atom</Typography>

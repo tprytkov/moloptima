@@ -85,6 +85,198 @@ test('runtime and preparation helpers use focused production APIs', async () => 
   assert.equal(calls[1].options.method, 'POST');
 });
 
+test('selects source before preparation and exact docking representation when ready', () => {
+  const source = { receptor_id: 'a'.repeat(32), docking_ready: false };
+  const prepared = { receptor_id: 'b'.repeat(32), docking_ready: true };
+  assert.equal(
+    module.receptorStructureUrl('http://localhost:8000', source),
+    `http://localhost:8000/api/docking/receptors/${source.receptor_id}/structure?representation=source`,
+  );
+  assert.equal(
+    module.receptorStructureUrl('http://localhost:8000', prepared),
+    `http://localhost:8000/api/docking/receptors/${prepared.receptor_id}/structure?representation=docking`,
+  );
+});
+
+test('retains and verifies docking receptor identity metadata', async () => {
+  const originalFetch = globalThis.fetch;
+  const receptor = {
+    receptor_id: 'b'.repeat(32), docking_ready: true,
+    docking_receptor_sha256: 'd'.repeat(64), preparation_id: 'p'.repeat(32),
+  };
+  globalThis.fetch = async (url) => {
+    assert.match(String(url), /representation=docking$/);
+    return new Response('PDBQT', { headers: {
+      'X-MolOptima-Structure-Format': 'pdbqt',
+      'X-MolOptima-Structure-Representation': 'docking',
+      'X-MolOptima-Receptor-ID': receptor.receptor_id,
+      'X-MolOptima-Artifact-SHA256': receptor.docking_receptor_sha256,
+      'X-MolOptima-Preparation-ID': receptor.preparation_id,
+      'X-MolOptima-Docking-Receptor-SHA256': receptor.docking_receptor_sha256,
+    } });
+  };
+  try {
+    assert.deepEqual(await module.fetchReceptorStructure('http://localhost:8000', receptor), {
+      text: 'PDBQT', format: 'pdbqt', identity: {
+        representation: 'docking', receptorId: receptor.receptor_id,
+        artifactSha256: receptor.docking_receptor_sha256,
+        preparationId: receptor.preparation_id,
+        dockingReceptorSha256: receptor.docking_receptor_sha256,
+      },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('rejects receptor structure responses whose identity does not match metadata', async () => {
+  const originalFetch = globalThis.fetch;
+  const receptor = {
+    receptor_id: 'b'.repeat(32), docking_ready: true,
+    docking_receptor_sha256: 'd'.repeat(64), preparation_id: '',
+  };
+  globalThis.fetch = async () => new Response('PDBQT', { headers: {
+    'X-MolOptima-Structure-Format': 'pdbqt',
+    'X-MolOptima-Structure-Representation': 'source',
+    'X-MolOptima-Receptor-ID': receptor.receptor_id,
+    'X-MolOptima-Artifact-SHA256': receptor.docking_receptor_sha256,
+    'X-MolOptima-Docking-Receptor-SHA256': receptor.docking_receptor_sha256,
+  } });
+  try {
+    await assert.rejects(
+      module.fetchReceptorStructure('http://localhost:8000', receptor),
+      /identity does not match the requested receptor representation/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function lifecycleReceptor(id, overrides = {}) {
+  return {
+    receptor_id: id,
+    docking_ready: false,
+    source_receptor_sha256: `source-${id}`,
+    structure_inventory: { protein: { chains: [{ chain: id.toUpperCase() }] } },
+    ...overrides,
+  };
+}
+
+function populatedReceptorState() {
+  return module.createReceptorScopedState({
+    method: 'selected_region',
+    selectedAtom: { chain: 'A', residueName: 'TYR', residueNumber: 42 },
+    selectedResidues: [{ key: 'A:TYR:42', chain: 'A', residueName: 'TYR', residueNumber: 42 }],
+    selectedLigandId: 'LIG:A:401:_',
+    box: { centerX: '1', centerY: '2', centerZ: '3', sizeX: '20', sizeY: '21', sizeZ: '22' },
+    confirmed: { configuration_id: 'configured' },
+    selectedChains: ['A'],
+    heteroChoices: { ligand: 'exclude' },
+    altlocChoices: { residue: 'A' },
+    pocketGroupId: 'LIG:A:401:_',
+  });
+}
+
+test('different receptor clears box, selections, highlights, and receptor preparation choices', () => {
+  const receptorA = lifecycleReceptor('a');
+  const receptorB = lifecycleReceptor('b');
+  const next = module.transitionReceptorScopedState(populatedReceptorState(), receptorA, receptorB);
+  assert.deepEqual(next.box, {
+    centerX: '', centerY: '', centerZ: '', sizeX: '', sizeY: '', sizeZ: '',
+  });
+  assert.equal(next.method, 'manual');
+  assert.equal(next.selectedAtom, null);
+  assert.deepEqual(next.selectedResidues, []);
+  assert.equal(next.selectedLigandId, '');
+  assert.deepEqual(next.selectedChains, ['B']);
+  assert.deepEqual(next.heteroChoices, {});
+  assert.deepEqual(next.altlocChoices, {});
+  assert.equal(next.pocketGroupId, '');
+  assert.equal(next.confirmed, null);
+});
+
+test('same receptor preparation preserves one authoritative box and clears unmappable selections', () => {
+  const source = lifecycleReceptor('a');
+  const prepared = lifecycleReceptor('a', {
+    docking_ready: true,
+    preparation_id: 'preparation-1',
+    docking_receptor_sha256: 'prepared-hash',
+  });
+  const current = populatedReceptorState();
+  const next = module.transitionReceptorScopedState(current, source, prepared);
+  assert.deepEqual(next.box, current.box);
+  assert.equal(next.method, 'manual');
+  assert.equal(next.selectedAtom, null);
+  assert.deepEqual(next.selectedResidues, []);
+  assert.equal(next.selectedLigandId, '');
+  assert.deepEqual(next.selectedChains, current.selectedChains);
+  assert.deepEqual(next.heteroChoices, current.heteroChoices);
+  assert.deepEqual(next.altlocChoices, current.altlocChoices);
+  assert.equal(next.pocketGroupId, current.pocketGroupId);
+  assert.equal(next.confirmed, null);
+});
+
+test('same receptor with a new preparation or docking hash is an artifact change', () => {
+  const first = lifecycleReceptor('a', {
+    docking_ready: true, preparation_id: 'preparation-1', docking_receptor_sha256: 'hash-1',
+  });
+  const second = { ...first, preparation_id: 'preparation-2', docking_receptor_sha256: 'hash-2' };
+  assert.deepEqual(module.classifyReceptorTransition(first, second), {
+    receptorChanged: false, artifactChanged: true,
+  });
+  assert.notEqual(module.receptorArtifactIdentity(first), module.receptorArtifactIdentity(second));
+});
+
+test('latest request guard prevents delayed receptor A from replacing receptor B', async () => {
+  const guard = module.createLatestRequestGuard();
+  const requestA = guard.start();
+  let releaseA;
+  const delayedA = new Promise((resolve) => { releaseA = resolve; });
+  let activeReceptor = null;
+  const commitA = delayedA.then((value) => {
+    if (requestA.isCurrent()) activeReceptor = value;
+  });
+  const requestB = guard.start();
+  assert.equal(requestA.signal.aborted, true);
+  if (requestB.isCurrent()) activeReceptor = 'B';
+  releaseA('A');
+  await commitA;
+  assert.equal(activeReceptor, 'B');
+});
+
+test('failed prepared-structure load cannot replace the existing source visualization state', async () => {
+  const originalFetch = globalThis.fetch;
+  const sourceState = populatedReceptorState();
+  const snapshot = structuredClone(sourceState);
+  const prepared = lifecycleReceptor('a', {
+    docking_ready: true, preparation_id: 'preparation-1', docking_receptor_sha256: 'hash-1',
+  });
+  globalThis.fetch = async () => new Response('Prepared artifact unavailable', { status: 503 });
+  try {
+    await assert.rejects(
+      module.fetchReceptorStructure('http://localhost:8000', prepared),
+      /Prepared artifact unavailable/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.deepEqual(sourceState, snapshot);
+});
+
+test('direct PDBQT receptor remains on a stable docking representation', () => {
+  const direct = lifecycleReceptor('a', {
+    docking_ready: true, receptor_source: 'uploaded_pdbqt', docking_receptor_sha256: 'direct-hash',
+  });
+  assert.match(module.receptorStructureUrl('http://localhost:8000', direct), /representation=docking$/);
+  assert.deepEqual(module.classifyReceptorTransition(direct, { ...direct }), {
+    receptorChanged: false, artifactChanged: false,
+  });
+  const current = populatedReceptorState();
+  assert.deepEqual(module.transitionReceptorScopedState(current, direct, { ...direct }), {
+    ...current, confirmed: null,
+  });
+});
+
 test('reports clicked atom identity and finite coordinates', () => {
   assert.deepEqual(module.atomDetails({ chain: 'A', resn: 'TYR', resi: 115, atom: 'OH', x: 1, y: -2.5, z: 3 }), {
     chain: 'A', residueName: 'TYR', residueNumber: 115, atomName: 'OH', x: 1, y: -2.5, z: 3,
