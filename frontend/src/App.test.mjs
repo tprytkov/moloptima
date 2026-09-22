@@ -31,6 +31,34 @@ test('primary-page scroll reset targets the provided scrolling element', () => {
   assert.deepEqual(options, { top: 0, left: 0, behavior: 'auto' });
 });
 
+test('home status uses one human-readable status and a concise job ID', () => {
+  const fullJobId = 'b1d1b0f655ce46ba8d2dc350ec7718b7';
+  assert.equal(module.compactJobId(fullJobId), 'b1d1b0f6…');
+  assert.equal(module.currentJobStatusLabel({ status: 'completed', stage: 'completed' }), 'Completed');
+  assert.equal(module.currentJobStatusLabel({ status: 'completed_with_warnings', stage: 'completed' }), 'Completed with warnings');
+
+  const html = renderToStaticMarkup(React.createElement(module.NewCalculationPage, {
+    workflowStatuses: {}, onStart: () => {}, analysisMode: 'library',
+    currentJob: { job_id: fullJobId, status: 'completed', stage: 'completed' },
+  }));
+  assert.match(html, /Current job:[\s\S]*b1d1b0f6…[\s\S]*· Completed/);
+  assert.match(html, new RegExp(`title="Full job ID: ${fullJobId}"`));
+  assert.doesNotMatch(html, /completed · completed/i);
+});
+
+test('compound-detail reveal scrolls and focuses the mounted detail container', () => {
+  const calls = [];
+  module.revealCompoundDetail({
+    scrollIntoView: (options) => calls.push(['scroll', options]),
+    focus: (options) => calls.push(['focus', options]),
+  });
+  assert.deepEqual(calls, [
+    ['scroll', { behavior: 'smooth', block: 'start' }],
+    ['focus', { preventScroll: true }],
+  ]);
+  assert.equal(module.revealCompoundDetail(null), undefined);
+});
+
 test('Results export and Compound Detail actions expose meaningful accessible names', () => {
   const filterHtml = renderToStaticMarkup(React.createElement(module.EvidenceFilterPanel, {
     rows: [], filteredRows: [], filters: {}, onChange: () => {}, onReset: () => {}, exportFilename: 'results.csv',
@@ -47,6 +75,20 @@ test('Results export and Compound Detail actions expose meaningful accessible na
   }));
   assert.match(detailHtml, /aria-label="Download compound detail as Markdown report"/);
   assert.match(detailHtml, /aria-label="Close compound detail"/);
+  assert.match(detailHtml, /tabindex="-1"/);
+  assert.match(detailHtml, /aria-labelledby="compound-detail-heading"/);
+});
+
+test('readable cards are capped without imposing a global table width', () => {
+  const pageHtml = renderToStaticMarkup(React.createElement(module.NewCalculationPage, {
+    workflowStatuses: {}, onStart: () => {}, currentJob: null, analysisMode: 'library',
+  }));
+  assert.match(pageHtml, new RegExp(`max-width:${module.READABLE_CONTENT_MAX_WIDTH}px`));
+
+  const filterHtml = renderToStaticMarkup(React.createElement(module.EvidenceFilterPanel, {
+    rows: [], filteredRows: [], filters: {}, onChange: () => {}, onReset: () => {}, exportFilename: 'results.csv',
+  }));
+  assert.match(filterHtml, new RegExp(`max-width:${module.READABLE_CONTENT_MAX_WIDTH}px`));
 });
 
 test('production UI source contains no Phase 1 terminology', async () => {
@@ -81,12 +123,28 @@ test('scientific runtime Settings panel presents backend-qualified production co
   assert.match(html, /5-seed ensemble · raw unweighted ensemble mean · population SD/);
   assert.match(html, /Threshold 0\.5 · provisional raw · calibration not frozen/);
   assert.match(html, /5 regression endpoints · 5-seed ensemble · sample SD/);
-  assert.match(html, /Meeko 0\.7\.1 · available/);
-  assert.match(html, /Gemmi 0\.7\.5 · available/);
+  assert.match(html, /Meeko 0\.7\.1 · Available/);
+  assert.match(html, /Gemmi 0\.7\.5 · Available/);
   assert.match(html, /AutoDock Vina 1\.1\.2/);
   assert.match(html, /Open Babel 3\.1\.0/);
   assert.match(html, /does not establish pH-correct protonation/);
   assert.match(html, /not binding free energy/);
+  assert.match(html, /Runtime source: Current application process/);
+  assert.match(html, /Runtime source: Packaged scientific runtime/);
+  assert.doesNotMatch(html, /application_process/);
+});
+
+test('scientific presentation mappings preserve distinct states and safely label runtime sources', () => {
+  assert.equal(module.formatScientificPresentationValue('not_requested'), 'Not requested');
+  assert.equal(module.formatScientificPresentationValue('not_used'), 'Not used');
+  assert.equal(module.formatScientificPresentationValue('not_provided'), 'Not provided');
+  assert.equal(module.formatScientificPresentationValue('model_unavailable'), 'Model unavailable');
+  assert.equal(module.formatScientificPresentationValue('failed'), 'Failed');
+  assert.equal(module.formatScientificPresentationValue(null), 'Not available');
+  assert.equal(module.formatScientificPresentationValue('unmapped_scientific_state'), 'unmapped_scientific_state');
+  assert.equal(module.formatScientificPresentationValue(false), 'No');
+  assert.equal(module.formatRuntimeSource('application_process'), 'Current application process');
+  assert.equal(module.formatRuntimeSource('future_runtime_source'), 'Future runtime source');
 });
 
 test('Settings moves obsolete BBB cache presentation under Advanced diagnostics', () => {
@@ -99,6 +157,9 @@ test('Settings moves obsolete BBB cache presentation under Advanced diagnostics'
   assert.match(html, /Advanced diagnostics · legacy BBB cache and run manifests/);
   assert.match(html, /<details/);
   assert.match(html, /Legacy BBB Cache Diagnostics/);
+  assert.match(html, /retired cache-backed BBB classifier/);
+  assert.match(html, /does not describe current production ChemBERTa classification or GMC-MPNN BBB inference/);
+  assert.doesNotMatch(html, /BBB\/ChemBERTa model/);
   assert.doesNotMatch(html, />Local Model Cache</);
 });
 
@@ -272,8 +333,37 @@ test('library Results mode reports ranks, profile, receptor, and partial failure
   assert.match(html, /Library Prioritization Results/);
   assert.match(html, /Prioritized/);
   assert.match(html, /profile-a \/ 1\.0\.0 \/ status unavailable \/ profile-sha/);
-  assert.match(html, /user_supplied_pdbqt/);
+  assert.match(html, /User-supplied PDBQT/);
+  assert.match(html, /Run provenance and identifiers/);
   assert.match(html, /partial failures or unavailable scientific outputs/);
+});
+
+test('Compound Detail curates decision fields and keeps diagnostics available', () => {
+  const compound = {
+    molecule_id: 'cmpd-1', canonical_smiles: 'CCO', valid_molecule: true,
+    validation_status: 'valid', identity_check_status: 'exact_match', known_compound_match: true,
+    known_compound_name: 'Ethanol', known_compound_source: 'local_reference',
+    pubchem_lookup_status: 'not_requested', pubchem_cache_status: 'not_used',
+    chembl_lookup_status: 'not_requested', chembl_cache_status: 'not_used',
+    patent_lookup_status: 'not_requested', patent_cache_status: 'not_used',
+    bbb_model_status: 'model_unavailable', docking_status: 'not_requested', lipinski_pass: 'True',
+  };
+  const sections = module.compoundDetailSummarySections(compound);
+  assert.deepEqual(sections.map(({ title }) => title), [
+    'Molecule Identity', 'Prioritization and Evidence', 'Physicochemical Properties',
+    'Model Outputs', 'Docking and Structural Context', 'Public Evidence Context',
+  ]);
+  const html = renderToStaticMarkup(React.createElement(module.CompoundDetailPanel, {
+    compound, annotationsState: {}, onSaveReviewAnnotation: () => {}, onClose: () => {},
+  }));
+  assert.match(html, /Model unavailable/);
+  assert.match(html, /Not requested/);
+  assert.match(html, /Local reference/);
+  assert.match(html, /Complete provenance and diagnostic fields/);
+  assert.match(html, /Docking score[\s\S]*Not available/);
+  assert.match(html, /Lipinski assessment[\s\S]*Pass/);
+  assert.doesNotMatch(html, />model_unavailable</);
+  assert.doesNotMatch(html, />local_reference</);
 });
 
 test('prioritization page adapts to compound assessment for one valid compound', () => {
@@ -331,6 +421,28 @@ test('fully valid upload preserves scientific continuation', () => {
   assert.doesNotMatch(continueToAdmetButton(html), /disabled/);
 });
 
+test('docking result selection exposes a keyboard-operable action and readable status', () => {
+  const noop = () => {};
+  const html = renderToStaticMarkup(React.createElement(module.DockingWorkflowPage, {
+    uploadState: { upload: { rows: 1, submitted_count: 1, valid_count: 1 } },
+    prioritizationState: {
+      job: { status: 'completed' }, loading: false, error: '',
+      result: { results: [{
+        molecule_id: 'a-very-long-molecule-name-used-to-check-wrapping',
+        docking_result: {
+          status: 'runtime_unavailable', returned_mode_count: 0, modes: [],
+          warning: 'Vina executable missing.',
+        },
+      }] },
+    },
+    targetContext: {}, onDockingSetupConfirmed: noop, onRunDocking: noop, onNavigate: noop,
+  }));
+  assert.match(html, /aria-label="Current docking results"/);
+  assert.match(html, /aria-label="View docking result for a-very-long-molecule-name-used-to-check-wrapping"/);
+  assert.match(html, /Vina runtime unavailable/);
+  assert.doesNotMatch(html, />runtime_unavailable</);
+});
+
 test('normalizes current-format completed prioritization from result rows', () => {
   const summary = module.normalizePrioritizationSummary({
     job: { status: 'completed', submitted_count: 2, total_count: 2 },
@@ -376,8 +488,17 @@ test('Biopharma evidence fields use unique semantic keys across repeated renderi
     nearest_active_activity_class: 'active', target_reference_source: 'local',
   };
   const rows = module.biopharmaEvidenceRows(compound);
+  const provenanceRows = module.biopharmaProvenanceRows({
+    ...compound, pubchem_cache_status: 'cache_hit', chembl_cache_status: 'not_used', patent_cache_status: 'not_used',
+  });
   const labels = rows.map(([label]) => label);
   assert.equal(new Set(labels).size, labels.length);
+  assert.equal(rows.find(([label]) => label === 'Reference source'), undefined);
+  assert.deepEqual(provenanceRows.slice(0, 3), [
+    ['Reference source', 'Local reference'],
+    ['PubChem cache status', 'Cache hit'],
+    ['ChEMBL cache status', 'Not used'],
+  ]);
 
   const originalError = console.error;
   const errors = [];

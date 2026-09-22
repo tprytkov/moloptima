@@ -49,7 +49,7 @@ import AdmetResultsSection, {
   aggregateAdmetFamilyStatus,
   deriveAdmetFamilyStatuses,
 } from './AdmetResultsSection.jsx';
-import DockingResultsSection from './DockingResultsSection.jsx';
+import DockingResultsSection, { dockingStatusLabel } from './DockingResultsSection.jsx';
 import DockingSetup from './DockingSetup.jsx';
 import PrioritizationExplanationSection from './PrioritizationExplanationSection.jsx';
 import PrioritizationAnalysisPanel from './PrioritizationAnalysisPanel.jsx';
@@ -65,9 +65,97 @@ import { startBackendHealthPolling } from './backendHealth.js';
 
 const drawerWidth = 216;
 const apiBaseUrl = 'http://localhost:8000';
+export const READABLE_CONTENT_MAX_WIDTH = 1440;
+export const SUMMARY_CONTENT_MAX_WIDTH = 1200;
+
+const SCIENTIFIC_VALUE_LABELS = {
+  legacy_v1: 'Legacy v1 compatibility scoring',
+  not_requested: 'Not requested',
+  not_used: 'Not used',
+  not_run: 'Not run',
+  not_provided: 'Not provided',
+  not_run_invalid_molecule: 'Not run — invalid molecule',
+  unavailable: 'Unavailable',
+  model_unavailable: 'Model unavailable',
+  model_available: 'Model available',
+  available: 'Available',
+  checking: 'Checking',
+  completed: 'Completed',
+  failed: 'Failed',
+  success: 'Successful',
+  incompatible: 'Incompatible',
+  error: 'Error',
+  valid: 'Valid',
+  invalid: 'Invalid',
+  lookup_failed: 'Lookup failed',
+  exact_match: 'Exact match',
+  no_exact_match: 'No exact match',
+  similarity_match: 'Similarity match',
+  match_found: 'Match found',
+  no_match: 'No match',
+  closest_match_found: 'Closest match found',
+  fresh_lookup: 'Fresh lookup',
+  cache_hit: 'Cache hit',
+  cache_miss: 'Cache miss',
+  local_reference: 'Local reference',
+  local_curated: 'Local curated reference',
+  local: 'Local reference',
+  user_supplied_pdbqt: 'User-supplied PDBQT',
+  moloptima_prepared: 'Prepared by MolOptima',
+  completed_with_warnings: 'Completed with warnings',
+  heuristic_synthetic_accessibility: 'Heuristic synthetic accessibility',
+};
+
+const RUNTIME_SOURCE_LABELS = {
+  application_process: 'Current application process',
+  packaged: 'Packaged scientific runtime',
+  explicit_override: 'Explicit runtime override',
+  pending: 'Qualification pending',
+  unavailable: 'Unavailable',
+  test: 'Test runtime',
+};
+
+function humanizeIdentifier(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return 'Not available';
+  const words = text.replace(/[_-]+/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+export function formatScientificPresentationValue(value) {
+  if (value === null || value === undefined || value === '') return 'Not available';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return SCIENTIFIC_VALUE_LABELS[value] ?? String(value);
+}
+
+export function formatRuntimeSource(value) {
+  if (value === null || value === undefined || value === '') return 'Not available';
+  return RUNTIME_SOURCE_LABELS[value] ?? humanizeIdentifier(value);
+}
 
 export function resetPrimaryPageScroll(scrollContainer = globalThis.document?.scrollingElement) {
   scrollContainer?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+}
+
+export function compactJobId(jobId, visibleLength = 8) {
+  const value = String(jobId ?? '');
+  return value.length > visibleLength ? `${value.slice(0, visibleLength)}…` : value;
+}
+
+export function compactLocalPath(value) {
+  const path = String(value ?? '');
+  return path.split(/[\\/]/).filter(Boolean).pop() || 'Not available';
+}
+
+export function currentJobStatusLabel(job) {
+  const value = String(job?.status || job?.stage || 'Status unavailable').replace(/[_-]+/g, ' ');
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+export function revealCompoundDetail(detailElement) {
+  if (!detailElement) return;
+  detailElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  detailElement.focus({ preventScroll: true });
 }
 
 export const PRIMARY_NAVIGATION = [
@@ -1047,7 +1135,7 @@ export function NewCalculationPage({ workflowStatuses, onStart, currentJob, anal
     ? ['Molecule', 'Receptor & Docking', 'ADMET', 'Compound Assessment', 'Results']
     : WORKFLOW_STEPS;
   return (
-    <Stack spacing={2}>
+    <Stack spacing={2} sx={{ width: '100%', maxWidth: READABLE_CONTENT_MAX_WIDTH, mx: 'auto' }}>
       <PageIntro
         title="New Calculation"
         description="Integrated molecular docking, ADMET prediction, and multiparameter molecular prioritization."
@@ -1073,7 +1161,15 @@ export function NewCalculationPage({ workflowStatuses, onStart, currentJob, anal
           </Box>
           {currentJob ? (
             <Typography variant="caption" color="text.secondary">
-              Current job: {currentJob.job_id} · {currentJob.status} · {currentJob.stage || 'stage unavailable'}
+              Current job:{' '}
+              <Box
+                component="span"
+                title={`Full job ID: ${currentJob.job_id}`}
+                sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}
+              >
+                {compactJobId(currentJob.job_id)}
+              </Box>
+              {' · '}{currentJobStatusLabel(currentJob)}
             </Typography>
           ) : null}
           <Box><Button variant="contained" onClick={onStart}>Start New Calculation</Button></Box>
@@ -1114,9 +1210,9 @@ export function DockingWorkflowPage({
             <Typography variant="caption" color="text.secondary">
               Run Docking starts the existing combined local calculation; ADMET and {single ? 'compound assessment' : 'prioritization'} continue in the same auditable job.
             </Typography>
-            <Typography variant="caption" color="text.secondary">Ligand preparation: RDKit 3D → Open Babel PDBQT</Typography>
-            <Typography variant="caption" color="text.secondary">Vina runtime: {vinaVersion ? `available · ${vinaVersion}` : 'not yet verified for this calculation'}</Typography>
-            <Typography variant="caption" color="text.secondary">Receptor: validated prepared PDBQT required</Typography>
+            <Typography component="div" variant="caption" color="text.secondary">Ligand preparation: RDKit 3D → Open Babel PDBQT</Typography>
+            <Typography component="div" variant="caption" color="text.secondary">Vina runtime: {vinaVersion ? `available · ${vinaVersion}` : 'not yet verified for this calculation'}</Typography>
+            <Typography component="div" variant="caption" color="text.secondary">Receptor: validated prepared PDBQT required</Typography>
             <Button variant="contained" disabled={!ready || prioritizationState.loading} onClick={onRunDocking}>
               {prioritizationState.loading ? 'Calculation running' : 'Run Docking'}
             </Button>
@@ -1128,19 +1224,32 @@ export function DockingWorkflowPage({
       {dockedRows.length ? (
         <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
           <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1} sx={{ mb: 1 }}><Box><Typography variant="h2">Current docking results</Typography><Typography variant="caption" color="text.secondary">Successful: {successfulDocking} / {dockedRows.length}</Typography></Box><Button variant="outlined" disabled={!dockedRows.length} onClick={() => setSelectedKey(compoundRowKey(dockedRows[0], 0))}>View Docking Results</Button></Stack>
-          <Table size="small"><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>Best affinity (kcal/mol)</TableCell><TableCell>Best mode</TableCell><TableCell>Modes returned</TableCell><TableCell>Status</TableCell></TableRow></TableHead>
-            <TableBody>{dockedRows.map((row, index) => {
-              const result = row.docking_result || {};
-              const key = compoundRowKey(row, index);
-              return <TableRow hover selected={selectedKey === key} onClick={() => setSelectedKey(key)} key={key} sx={{ cursor: 'pointer' }}>
-                <TableCell>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</TableCell>
-                <TableCell>{formatDetailValue(result.best_vina_affinity_kcal_mol ?? result.best_affinity_kcal_mol)}</TableCell>
-                <TableCell>{formatDetailValue(result.best_mode)}</TableCell>
-                <TableCell>{formatDetailValue(result.returned_mode_count ?? result.mode_count ?? result.modes?.length)}</TableCell>
-                <TableCell>{result.status || row.docking_status || 'Not available'}</TableCell>
-              </TableRow>;
-            })}</TableBody>
-          </Table>
+          <Box sx={{ overflowX: 'auto' }}>
+            <Table size="small" aria-label="Current docking results" sx={{ minWidth: 760 }}><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>Best affinity (kcal/mol)</TableCell><TableCell>Best mode</TableCell><TableCell>Modes returned</TableCell><TableCell>Status</TableCell><TableCell align="right">Action</TableCell></TableRow></TableHead>
+              <TableBody>{dockedRows.map((row, index) => {
+                const result = row.docking_result || {};
+                const key = compoundRowKey(row, index);
+                const moleculeLabel = row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`;
+                return <TableRow hover selected={selectedKey === key} key={key}>
+                  <TableCell sx={{ maxWidth: 280, overflowWrap: 'anywhere' }}>{moleculeLabel}</TableCell>
+                  <TableCell>{formatDetailValue(result.best_vina_affinity_kcal_mol ?? result.best_affinity_kcal_mol)}</TableCell>
+                  <TableCell>{formatDetailValue(result.best_mode)}</TableCell>
+                  <TableCell>{formatDetailValue(result.returned_mode_count ?? result.mode_count ?? result.modes?.length)}</TableCell>
+                  <TableCell>{dockingStatusLabel(result.status || row.docking_status)}</TableCell>
+                  <TableCell align="right">
+                    <Button
+                      size="small"
+                      variant={selectedKey === key ? 'contained' : 'text'}
+                      aria-label={`View docking result for ${moleculeLabel}`}
+                      onClick={() => setSelectedKey(key)}
+                    >
+                      {selectedKey === key ? 'Selected' : 'View'}
+                    </Button>
+                  </TableCell>
+                </TableRow>;
+              })}</TableBody>
+            </Table>
+          </Box>
         </Paper>
       ) : <Alert severity="info">No docking results are available for the current calculation.</Alert>}
       {selected ? <DockingResultsSection compound={selected} /> : null}
@@ -1208,6 +1317,7 @@ export function ResultsWorkflowPage({ prioritizationState, annotationsState, onS
   const [filters, setFilters] = useState(defaultEvidenceFilters);
   const filtered = useMemo(() => applyEvidenceFilters(rows, filters), [rows, filters]);
   const [selectedKey, setSelectedKey] = useState('');
+  const detailRef = useRef(null);
   const selected = filtered.find((row, index) => compoundRowKey(row, index) === selectedKey) ?? null;
   const admetCompleted = rows.filter((row) => row.admet_model_status === 'model_available').length;
   const dockingCompleted = rows.filter((row) => row.docking_result?.status === 'success').length;
@@ -1217,13 +1327,18 @@ export function ResultsWorkflowPage({ prioritizationState, annotationsState, onS
   const profile = prioritizationState.result?.prioritization_profile
     || prioritizationState.job?.prioritization_profile;
   const profileIdentity = profile
-    ? `${profile.profile_id || 'unknown'} / ${profile.profile_version || 'unknown'} / ${profile.status || 'status unavailable'} / ${prioritizationState.result?.prioritization_profile_sha256 || prioritizationState.job?.prioritization_profile_sha256 || 'SHA unavailable'}`
+    ? `${profile.profile_id || 'unknown'} / ${profile.profile_version || 'unknown'} / ${formatScientificPresentationValue(profile.status || 'status unavailable')} / ${prioritizationState.result?.prioritization_profile_sha256 || prioritizationState.job?.prioritization_profile_sha256 || 'SHA unavailable'}`
     : 'Not used or unavailable';
   const hasPartialFailures = rows.length > 0 && (
     validCount < rows.length
     || admetCompleted < validCount
     || (prioritizationState.job?.docking_requested && dockingCompleted < validCount)
   );
+
+  useEffect(() => {
+    if (selectedKey) revealCompoundDetail(detailRef.current);
+  }, [selectedKey]);
+
   return (
     <Stack spacing={2}>
       <PageIntro
@@ -1231,15 +1346,24 @@ export function ResultsWorkflowPage({ prioritizationState, annotationsState, onS
         description={single ? 'Review and export the compound-level computational assessment.' : 'Inspect, filter, annotate, and export the current library prioritization outputs.'}
       />
       {prioritizationState.job ? <MetadataPanel rows={[
-        ['Calculation', prioritizationState.job.status], ['Total compounds', rows.length],
+        ['Calculation', formatScientificPresentationValue(prioritizationState.job.status)], ['Total compounds', rows.length],
         ['Chemically valid', validCount],
         ['ADMET completed', admetCompleted], ['Docking completed', dockingCompleted],
         [single ? 'Library prioritization' : 'Prioritized', single ? 'Not applicable' : prioritizationState.job.ranked_count ?? 0], ['Warnings / invalid source records', `${prioritizationState.job.warning_count ?? 0} / ${rows.length - validCount}`],
-        ['Method', prioritizationState.result?.prioritization_method || 'Not available'],
-        ['Profile identity', profileIdentity],
-        ['Receptor source', prioritizationState.result?.receptor_source || prioritizationState.job?.receptor_source || 'Not used or unavailable'],
-        ['Job ID', prioritizationState.job.job_id],
+        ['Method', formatScientificPresentationValue(prioritizationState.result?.prioritization_method)],
       ]} /> : null}
+      {prioritizationState.job ? (
+        <Box component="details" sx={{ '& > summary': { cursor: 'pointer' } }}>
+          <Box component="summary" sx={{ fontWeight: 700, color: 'text.secondary', mb: 1 }}>
+            Run provenance and identifiers
+          </Box>
+          <MetadataPanel rows={[
+            ['Profile identity', profileIdentity],
+            ['Receptor source', formatScientificPresentationValue(prioritizationState.result?.receptor_source || prioritizationState.job?.receptor_source || 'not_used')],
+            ['Full job ID', prioritizationState.job.job_id],
+          ]} />
+        </Box>
+      ) : null}
       {hasPartialFailures ? <Alert severity="warning">This calculation contains partial failures or unavailable scientific outputs. Exported all-compound results retain affected source records and their status.</Alert> : null}
       {rows.length && single ? <SingleCompoundAssessment
         compound={rows.find((row) => isTrueValue(row.valid_molecule)) ?? rows[0]}
@@ -1252,7 +1376,7 @@ export function ResultsWorkflowPage({ prioritizationState, annotationsState, onS
         <CandidateExportPanel rows={filtered} />
       </> : null}
       {!rows.length ? <Alert severity="info">No result rows are available for the current calculation.</Alert> : null}
-      {selected ? <CompoundDetailPanel compound={selected} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} onClose={() => setSelectedKey('')} /> : null}
+      {selected ? <CompoundDetailPanel compound={selected} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} onClose={() => setSelectedKey('')} containerRef={detailRef} /> : null}
       {prioritizationState.job ? <ResultsPackageDownloads apiBaseUrl={apiBaseUrl} jobId={prioritizationState.job.job_id} analysisMode={single ? 'single_compound' : 'library'} /> : null}
     </Stack>
   );
@@ -1341,7 +1465,7 @@ function DashboardPage({ health, activeItem, latestRunState }) {
   const latestRunSummary = buildLatestRunSummary(latestRunState);
 
   return (
-    <Stack spacing={3}>
+    <Stack spacing={3} sx={{ width: '100%', maxWidth: READABLE_CONTENT_MAX_WIDTH, mx: 'auto' }}>
       <Paper elevation={0} sx={{ p: { xs: 2.5, md: 3 }, border: '1px solid', borderColor: 'divider' }}>
         <Stack spacing={1.25} sx={{ maxWidth: 760 }}>
           <Typography component="h1" variant="h1">
@@ -1617,7 +1741,7 @@ function BiopharmaIntelligencePage({ latestRunState, annotationsState, onSaveRev
               <RunSummaryCard
                 label="Target reference set"
                 value={`${targetReferences.reference_count ?? 0} references`}
-                detail={`${targetReferences.source ?? 'not used'}; ${targetReferences.lookup_status ?? 'not_requested'}`}
+                detail={`${formatScientificPresentationValue(targetReferences.source ?? 'not_used')}; ${formatScientificPresentationValue(targetReferences.lookup_status ?? 'not_requested')}`}
               />
             </Box>
           ) : !latestRunState.loading && (
@@ -1670,39 +1794,15 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
       <Table size="small" aria-label="Biopharma local reference context">
         <TableHead>
           <TableRow>
-            <TableCell>molecule_id</TableCell>
-            <TableCell>review_status</TableCell>
-            <TableCell>review_note</TableCell>
-            <TableCell>evidence_summary_category</TableCell>
-            <TableCell>biopharma_context_level</TableCell>
-            <TableCell>structural_alerts</TableCell>
-            <TableCell>pains_alert</TableCell>
-            <TableCell>brenk_alert</TableCell>
-            <TableCell>diversity_cluster</TableCell>
-            <TableCell>cluster_representative</TableCell>
-            <TableCell>nearest_neighbor_similarity</TableCell>
-            <TableCell>combined_candidate_score</TableCell>
-            <TableCell>docking_priority_signal</TableCell>
-            <TableCell>active_neighborhood_signal</TableCell>
-            <TableCell>nearest_active_reference</TableCell>
-            <TableCell>nearest_active_similarity</TableCell>
-            <TableCell>known_compound_match</TableCell>
-            <TableCell>known_compound_name</TableCell>
-            <TableCell>pubchem_exact_match</TableCell>
-            <TableCell>pubchem_cid</TableCell>
-            <TableCell>pubchem_lookup_status</TableCell>
-            <TableCell>chembl_lookup_status</TableCell>
-            <TableCell>chembl_molecule_id</TableCell>
-            <TableCell>chembl_activity_count</TableCell>
-            <TableCell>chembl_target_summary</TableCell>
-            <TableCell>patent_lookup_status</TableCell>
-            <TableCell>surechembl_returned_records</TableCell>
-            <TableCell>patent_top_record_id</TableCell>
-            <TableCell>closest_known_compound_name</TableCell>
-            <TableCell>closest_known_compound_similarity</TableCell>
-            <TableCell>identity_check_status</TableCell>
-            <TableCell>similarity_check_status</TableCell>
-            <TableCell>recommended_review_focus</TableCell>
+            {['Molecule', 'Review status', 'Review note', 'Evidence summary', 'Biopharma context',
+              'Structural alerts', 'PAINS alert', 'Brenk alert', 'Diversity cluster', 'Cluster representative',
+              'Nearest-neighbor similarity', 'Combined candidate score', 'Docking priority signal',
+              'Active-neighborhood signal', 'Nearest active reference', 'Nearest active similarity',
+              'Known-compound match', 'Known-compound name', 'PubChem exact match', 'PubChem CID',
+              'PubChem lookup status', 'ChEMBL lookup status', 'ChEMBL molecule ID', 'ChEMBL activity records',
+              'ChEMBL target summary', 'Patent lookup status', 'SureChEMBL returned records', 'Top patent record ID',
+              'Closest known compound', 'Closest-known similarity', 'Identity status', 'Similarity status',
+              'Recommended review focus'].map((label) => <TableCell key={label}>{label}</TableCell>)}
           </TableRow>
         </TableHead>
         <TableBody>
@@ -1739,23 +1839,23 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatEvidenceCategory(row.active_neighborhood_signal)}</TableCell>
                 <TableCell>{formatDetailValue(row.nearest_active_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.nearest_active_similarity)}</TableCell>
-                <TableCell>{formatDetailValue(row.known_compound_match)}</TableCell>
+                <TableCell>{formatBooleanLabel(row.known_compound_match)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
-                <TableCell>{formatDetailValue(row.pubchem_exact_match)}</TableCell>
+                <TableCell>{formatBooleanLabel(row.pubchem_exact_match)}</TableCell>
                 <TableCell>{formatDetailValue(row.pubchem_cid)}</TableCell>
-                <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
-                <TableCell>{formatDetailValue(row.chembl_lookup_status)}</TableCell>
+                <TableCell>{formatScientificPresentationValue(row.pubchem_lookup_status)}</TableCell>
+                <TableCell>{formatScientificPresentationValue(row.chembl_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_molecule_id || row.chembl_similarity_molecule_id)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_activity_count)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_target_summary)}</TableCell>
-                <TableCell>{formatDetailValue(row.patent_lookup_status)}</TableCell>
+                <TableCell>{formatScientificPresentationValue(row.patent_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.patent_record_count)}</TableCell>
                 <TableCell>{formatDetailValue(row.patent_top_record_id)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_name)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
-                <TableCell>{formatDetailValue(row.identity_check_status)}</TableCell>
-                <TableCell>{formatDetailValue(row.similarity_check_status)}</TableCell>
-                <TableCell>{formatDetailValue(row.recommended_review_focus)}</TableCell>
+                <TableCell>{formatScientificPresentationValue(row.identity_check_status)}</TableCell>
+                <TableCell>{formatScientificPresentationValue(row.similarity_check_status)}</TableCell>
+                <TableCell>{formatEvidenceCategory(row.recommended_review_focus)}</TableCell>
               </TableRow>
             );
           })}
@@ -1779,7 +1879,6 @@ export function biopharmaEvidenceRows(compound) {
     ['Active-neighborhood signal', formatEvidenceCategory(compound.active_neighborhood_signal)],
     ['Reference activity', formatTargetReferenceActivity(compound)],
     ['Reference mechanism class', compound.nearest_active_mechanism_class],
-    ['Reference source', compound.target_reference_source],
     ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
     ['Recommended review focus', compound.recommended_review_focus],
     ['Combined candidate score', compound.combined_candidate_score],
@@ -1801,24 +1900,32 @@ export function biopharmaEvidenceRows(compound) {
     ['Chemical-space status', formatEvidenceCategory(compound.chemical_space_status)],
     ['Exact known compound', compound.known_compound_name],
     ['PubChem exact match', formatPubChemMatch(compound)],
-    ['PubChem lookup status', compound.pubchem_lookup_status],
-    ['PubChem cache status', compound.pubchem_cache_status],
+    ['PubChem lookup status', formatScientificPresentationValue(compound.pubchem_lookup_status)],
     ['ChEMBL match', formatChEMBLMatch(compound)],
-    ['ChEMBL lookup status', compound.chembl_lookup_status],
-    ['ChEMBL cache status', compound.chembl_cache_status],
+    ['ChEMBL lookup status', formatScientificPresentationValue(compound.chembl_lookup_status)],
     ['Known public bioactivity records', compound.chembl_activity_count],
     ['Associated public targets', compound.chembl_target_count],
     ['ChEMBL target summary', compound.chembl_target_summary],
     ['Patent-context evidence', formatPatentSignal(compound)],
-    ['Patent lookup status', compound.patent_lookup_status],
-    ['Patent source', compound.patent_source],
+    ['Patent lookup status', formatScientificPresentationValue(compound.patent_lookup_status)],
     ['SureChEMBL returned records for this structure/query', compound.patent_record_count],
     ['Top patent record ID', compound.patent_top_record_id],
     ['Top patent record title', compound.patent_top_record_title],
     ['Closest known compound', compound.closest_known_compound_name],
     ['Closest similarity', compound.closest_known_compound_similarity],
-    ['Identity status', compound.identity_check_status],
-    ['Similarity status', compound.similarity_check_status],
+    ['Identity status', formatScientificPresentationValue(compound.identity_check_status)],
+    ['Similarity status', formatScientificPresentationValue(compound.similarity_check_status)],
+  ];
+}
+
+export function biopharmaProvenanceRows(compound) {
+  return [
+    ['Reference source', formatScientificPresentationValue(compound.target_reference_source)],
+    ['PubChem cache status', formatScientificPresentationValue(compound.pubchem_cache_status)],
+    ['ChEMBL cache status', formatScientificPresentationValue(compound.chembl_cache_status)],
+    ['Patent cache status', formatScientificPresentationValue(compound.patent_cache_status)],
+    ['Patent source', formatScientificPresentationValue(compound.patent_source)],
+    ['Patent query identifier', compound.patent_query_identifier],
   ];
 }
 
@@ -1846,6 +1953,12 @@ export function BiopharmaInterpretationPanel({ compound, annotationsState, onSav
           <MetadataPanel
             rows={biopharmaEvidenceRows(compound)}
           />
+          <Box component="details" sx={{ '& > summary': { cursor: 'pointer' } }}>
+            <Box component="summary" sx={{ fontWeight: 700, color: 'text.secondary', mb: 1 }}>
+              Evidence provenance and diagnostics
+            </Box>
+            <MetadataPanel rows={biopharmaProvenanceRows(compound)} />
+          </Box>
         </Stack>
       </CardContent>
     </Card>
@@ -2002,7 +2115,7 @@ function RunHistoryPage({ runHistoryState, loadedJobId, onLoadHistoricalRun, onR
               </Typography>
             </Stack>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
-              {loadedJobId && <Chip label={`Loaded run: ${loadedJobId}`} color="secondary" variant="outlined" />}
+              {loadedJobId && <Chip title={`Full job ID: ${loadedJobId}`} label={`Loaded run: ${compactJobId(loadedJobId)}`} color="secondary" variant="outlined" />}
               <Button variant="outlined" onClick={onRefreshRunHistory} disabled={runHistoryState.loading}>
                 Refresh history
               </Button>
@@ -2017,14 +2130,14 @@ function RunHistoryPage({ runHistoryState, loadedJobId, onLoadHistoricalRun, onR
               <Table size="small" aria-label="Saved analysis run history">
                 <TableHead>
                   <TableRow>
-                    <TableCell>job_id</TableCell>
-                    <TableCell>completed_at</TableCell>
-                    <TableCell>rows</TableCell>
-                    <TableCell>lookup_sources</TableCell>
-                    <TableCell>input_file</TableCell>
-                    <TableCell>output_file</TableCell>
-                    <TableCell>status</TableCell>
-                    <TableCell>stage</TableCell>
+                    <TableCell>Job ID</TableCell>
+                    <TableCell>Completed at</TableCell>
+                    <TableCell>Rows</TableCell>
+                    <TableCell>Lookup sources</TableCell>
+                    <TableCell>Input file</TableCell>
+                    <TableCell>Output file</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell>Stage</TableCell>
                     <TableCell>Load</TableCell>
                   </TableRow>
                 </TableHead>
@@ -2034,15 +2147,15 @@ function RunHistoryPage({ runHistoryState, loadedJobId, onLoadHistoricalRun, onR
                     return (
                       <TableRow key={job.job_id} selected={isLoaded}>
                         <TableCell sx={{ fontFamily: 'ui-monospace, Consolas, monospace' }}>
-                          {formatDetailValue(job.job_id)}
+                          <Box component="span" title={`Full job ID: ${job.job_id}`}>{compactJobId(job.job_id)}</Box>
                         </TableCell>
                         <TableCell>{formatDetailValue(job.completed_at)}</TableCell>
                         <TableCell>{formatDetailValue(job.row_count)}</TableCell>
                         <TableCell>{formatLookupSources(job)}</TableCell>
-                        <TableCell>{formatDetailValue(job.input_file)}</TableCell>
-                        <TableCell>{formatDetailValue(job.output_file)}</TableCell>
-                        <TableCell>{formatDetailValue(job.status)}</TableCell>
-                        <TableCell>{formatDetailValue(job.stage)}</TableCell>
+                        <TableCell title={job.input_file || undefined}>{compactLocalPath(job.input_file)}</TableCell>
+                        <TableCell title={job.output_file || undefined}>{compactLocalPath(job.output_file)}</TableCell>
+                        <TableCell>{formatScientificPresentationValue(job.status)}</TableCell>
+                        <TableCell>{formatScientificPresentationValue(job.stage)}</TableCell>
                         <TableCell>
                           <Button
                             size="small"
@@ -2281,30 +2394,13 @@ function RunComparisonTable({ rows }) {
       <Table size="small" aria-label="Run comparison table">
         <TableHead>
           <TableRow>
-            <TableCell>molecule_id</TableCell>
-            <TableCell>2D structure</TableCell>
-            <TableCell>presence</TableCell>
-            <TableCell>priority_score_a</TableCell>
-            <TableCell>priority_score_b</TableCell>
-            <TableCell>priority_score_change</TableCell>
-            <TableCell>evidence_a</TableCell>
-            <TableCell>evidence_b</TableCell>
-            <TableCell>biopharma_context_a</TableCell>
-            <TableCell>biopharma_context_b</TableCell>
-            <TableCell>public_identity_a</TableCell>
-            <TableCell>public_identity_b</TableCell>
-            <TableCell>public_bioactivity_a</TableCell>
-            <TableCell>public_bioactivity_b</TableCell>
-            <TableCell>patent_context_a</TableCell>
-            <TableCell>patent_context_b</TableCell>
-            <TableCell>local_similarity_a</TableCell>
-            <TableCell>local_similarity_b</TableCell>
-            <TableCell>BBB_a</TableCell>
-            <TableCell>BBB_b</TableCell>
-            <TableCell>review_status_a</TableCell>
-            <TableCell>review_status_b</TableCell>
-            <TableCell>review_note_a</TableCell>
-            <TableCell>review_note_b</TableCell>
+            {['Molecule', '2D structure', 'Run presence', 'Priority score · run A', 'Priority score · run B',
+              'Priority score change', 'Evidence · run A', 'Evidence · run B', 'Biopharma context · run A',
+              'Biopharma context · run B', 'Public identity · run A', 'Public identity · run B',
+              'Public bioactivity · run A', 'Public bioactivity · run B', 'Patent context · run A',
+              'Patent context · run B', 'Local similarity · run A', 'Local similarity · run B',
+              'BBB · run A', 'BBB · run B', 'Review status · run A', 'Review status · run B',
+              'Review note · run A', 'Review note · run B'].map((label) => <TableCell key={label}>{label}</TableCell>)}
           </TableRow>
         </TableHead>
         <TableBody>
@@ -2384,7 +2480,7 @@ function ChemicalSpacePage({ latestRunState, annotationsState, onSaveReviewAnnot
               </Typography>
             </Stack>
             {latestRunState.job?.job_id && (
-              <Chip label={`Loaded run: ${latestRunState.job.job_id}`} color="secondary" variant="outlined" />
+              <Chip title={`Full job ID: ${latestRunState.job.job_id}`} label={`Loaded run: ${compactJobId(latestRunState.job.job_id)}`} color="secondary" variant="outlined" />
             )}
           </Stack>
 
@@ -2399,7 +2495,7 @@ function ChemicalSpacePage({ latestRunState, annotationsState, onSaveReviewAnnot
               }}
             >
               <RunSummaryCard label="Plotted molecules" value={summary.plottedCount} />
-              <RunSummaryCard label="Target references" value={plottedReferences.length} detail={latestRunState.result?.target_references?.source ?? 'not used'} />
+              <RunSummaryCard label="Target references" value={plottedReferences.length} detail={formatScientificPresentationValue(latestRunState.result?.target_references?.source ?? 'not_used')} />
               <RunSummaryCard label="Skipped molecules" value={summary.skippedCount} detail="Invalid or unavailable structures" />
               <RunSummaryCard label="Diversity clusters" value={summary.clusterCount} />
               <RunSummaryCard label="Selected candidates" value={summary.selectedCount} detail="Selected or watchlist" />
@@ -2719,28 +2815,12 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
       <Table size="small" aria-label="Compounds available for Markdown report export">
         <TableHead>
           <TableRow>
-            <TableCell>molecule_id</TableCell>
-            <TableCell>priority_score</TableCell>
-            <TableCell>valid_molecule</TableCell>
-            <TableCell>review_status</TableCell>
-            <TableCell>review_note</TableCell>
-            <TableCell>evidence_summary_category</TableCell>
-            <TableCell>structural_alerts</TableCell>
-            <TableCell>pains_alert</TableCell>
-            <TableCell>brenk_alert</TableCell>
-            <TableCell>diversity_cluster</TableCell>
-            <TableCell>cluster_representative</TableCell>
-            <TableCell>nearest_neighbor_similarity</TableCell>
-            <TableCell>combined_candidate_score</TableCell>
-            <TableCell>docking_priority_signal</TableCell>
-            <TableCell>known_compound_name</TableCell>
-            <TableCell>pubchem_lookup_status</TableCell>
-            <TableCell>chembl_lookup_status</TableCell>
-            <TableCell>chembl_activity_count</TableCell>
-            <TableCell>patent_lookup_status</TableCell>
-            <TableCell>surechembl_returned_records</TableCell>
-            <TableCell>closest_known_compound_similarity</TableCell>
-            <TableCell>bbb_prediction</TableCell>
+            {['Molecule', 'Priority score', 'Valid molecule', 'Review status', 'Review note', 'Evidence summary',
+              'Structural alerts', 'PAINS alert', 'Brenk alert', 'Diversity cluster', 'Cluster representative',
+              'Nearest-neighbor similarity', 'Combined candidate score', 'Docking priority signal',
+              'Known compound', 'PubChem lookup status', 'ChEMBL lookup status', 'ChEMBL activity records',
+              'Patent lookup status', 'SureChEMBL returned records', 'Closest-known similarity', 'BBB prediction']
+              .map((label) => <TableCell key={label}>{label}</TableCell>)}
             <TableCell>Export</TableCell>
           </TableRow>
         </TableHead>
@@ -2764,7 +2844,7 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
               >
                 <TableCell>{formatDetailValue(row.molecule_id)}</TableCell>
                 <TableCell>{formatDetailValue(row.priority_score)}</TableCell>
-                <TableCell>{formatDetailValue(row.valid_molecule)}</TableCell>
+                <TableCell>{formatBooleanLabel(row.valid_molecule)}</TableCell>
                 <TableCell>{formatReviewStatus(row.review_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.evidence_summary_category)}</TableCell>
@@ -2777,13 +2857,13 @@ function ReportsCompoundTable({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.combined_candidate_score)}</TableCell>
                 <TableCell>{formatEvidenceCategory(row.docking_priority_signal)}</TableCell>
                 <TableCell>{formatDetailValue(row.known_compound_name)}</TableCell>
-                <TableCell>{formatDetailValue(row.pubchem_lookup_status)}</TableCell>
-                <TableCell>{formatDetailValue(row.chembl_lookup_status)}</TableCell>
+                <TableCell>{formatScientificPresentationValue(row.pubchem_lookup_status)}</TableCell>
+                <TableCell>{formatScientificPresentationValue(row.chembl_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.chembl_activity_count)}</TableCell>
-                <TableCell>{formatDetailValue(row.patent_lookup_status)}</TableCell>
+                <TableCell>{formatScientificPresentationValue(row.patent_lookup_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.patent_record_count)}</TableCell>
                 <TableCell>{formatDetailValue(row.closest_known_compound_similarity)}</TableCell>
-                <TableCell>{formatDetailValue(row.bbb_prediction)}</TableCell>
+                <TableCell>{formatEvidenceCategory(row.bbb_prediction)}</TableCell>
                 <TableCell>
                   <Button
                     size="small"
@@ -2891,7 +2971,7 @@ function countValues(values) {
 
 function formatCounts(counts) {
   return Object.entries(counts)
-    .map(([label, count]) => `${label}: ${count}`)
+    .map(([label, count]) => `${formatScientificPresentationValue(label)}: ${count}`)
     .join(', ');
 }
 
@@ -3130,7 +3210,7 @@ export function PrioritizationPage({
           <Alert severity={pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled || targetReferenceEnabled ? 'warning' : 'info'}>
             {pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled || targetReferenceEnabled
               ? 'Selected public lookups may use the network. PubChem, ChEMBL, SureChEMBL, and target-reference results are cached locally and reported as research signals only.'
-              : 'Public compound lookup is off. Output rows will mark PubChem, ChEMBL, and patent-context lookup as not_requested.'}
+              : 'Public compound lookup is off. Output rows will mark PubChem, ChEMBL, and patent-context lookup as Not requested.'}
           </Alert>
 
           {prioritizationState.error && <Alert severity="error">{prioritizationState.error}</Alert>}
@@ -3248,7 +3328,7 @@ export function normalizePrioritizationSummary(prioritizationState) {
 
 function PageIntro({ title, description }) {
   return (
-    <Paper elevation={0} sx={{ p: { xs: 2.5, md: 3 }, border: '1px solid', borderColor: 'divider' }}>
+    <Paper elevation={0} sx={{ width: '100%', maxWidth: READABLE_CONTENT_MAX_WIDTH, mx: 'auto', p: { xs: 2.5, md: 3 }, border: '1px solid', borderColor: 'divider' }}>
       <Stack spacing={1.25} sx={{ maxWidth: 780 }}>
         <Typography component="h1" variant="h1">
           {title}
@@ -3330,6 +3410,9 @@ function MetadataPanel({ rows }) {
   return (
     <Box
       sx={{
+        width: '100%',
+        maxWidth: SUMMARY_CONTENT_MAX_WIDTH,
+        mx: 'auto',
         display: 'grid',
         gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
         gap: 1.5,
@@ -3402,9 +3485,9 @@ export function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onR
   };
 
   return (
-    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+    <Box sx={{ width: '100%', maxWidth: READABLE_CONTENT_MAX_WIDTH, mx: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
       <Stack spacing={2}>
-        <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
+        <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ xs: 'stretch', md: 'flex-start' }} justifyContent="space-between" gap={1.5}>
           <Stack spacing={0.25}>
             <Typography variant="h2">Evidence Filters</Typography>
             <Typography color="text.secondary">
@@ -3420,7 +3503,7 @@ export function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onR
               Medicinal chemistry alerts: {formatStructuralAlertSummary(rows)}
             </Typography>
           </Stack>
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} sx={{ flexShrink: 0 }}>
             <Button variant="outlined" onClick={onReset}>
               Clear filters
             </Button>
@@ -3767,6 +3850,7 @@ function applyEvidenceFilters(rows, filters) {
 }
 
 function filterOptions(rows, key) {
+  const booleanField = key === 'pains_alert' || key === 'brenk_alert' || key === 'diversity_representative';
   return Array.from(
     new Set(
       rows
@@ -3775,7 +3859,7 @@ function filterOptions(rows, key) {
     ),
   )
     .sort((left, right) => left.localeCompare(right))
-    .map((value) => [value, formatEvidenceCategory(value)]);
+    .map((value) => [value, booleanField ? formatBooleanLabel(value) : formatEvidenceCategory(value)]);
 }
 
 function normalizedFilterValue(value) {
@@ -3875,7 +3959,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                   <TableCell>{formatNearestNeighbor(row)}</TableCell>
                 )}
                 {hasIdentityStatus && (
-                  <TableCell>{row.known_compound_match === true ? row.known_compound_name : row.identity_check_status}</TableCell>
+                  <TableCell>{row.known_compound_match === true ? row.known_compound_name : formatScientificPresentationValue(row.identity_check_status)}</TableCell>
                 )}
                 {hasPublicIdentityStatus && (
                   <TableCell>{formatPubChemMatch(row)}</TableCell>
@@ -3896,9 +3980,9 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 {hasDockingScore && <TableCell>{formatEvidenceCategory(row.docking_priority_signal)}</TableCell>}
                 {hasSyntheticAccessibility && <TableCell>{row.sa_score ?? 'not available'}</TableCell>}
                 {hasSyntheticAccessibility && (
-                  <TableCell>{row.synthetic_feasibility_category ?? 'not available'}</TableCell>
+                  <TableCell>{formatEvidenceCategory(row.synthetic_feasibility_category)}</TableCell>
                 )}
-                <TableCell>{row.bbb_prediction ?? 'unavailable'}</TableCell>
+                <TableCell>{formatEvidenceCategory(row.bbb_prediction)}</TableCell>
                 <TableCell sx={{ fontFamily: 'ui-monospace, Consolas, monospace', maxWidth: 420 }}>
                   {row.canonical_smiles || row.input_smiles}
                 </TableCell>
@@ -3911,14 +3995,97 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   );
 }
 
-export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotation, onClose }) {
+export function compoundDetailSummarySections(compound) {
+  return [
+    {
+      title: 'Molecule Identity',
+      rows: [
+        ['Molecule ID', compound.molecule_id],
+        ['Canonical SMILES', compound.canonical_smiles || compound.input_smiles],
+        ['Validation status', formatScientificPresentationValue(compound.validation_status)],
+        ['Known-compound match', formatBooleanLabel(compound.known_compound_match)],
+        ['Known compound', compound.known_compound_name],
+        ['Identity status', formatScientificPresentationValue(compound.identity_check_status)],
+      ],
+    },
+    {
+      title: 'Prioritization and Evidence',
+      rows: [
+        ['Review status', formatReviewStatus(compound.review_status)],
+        ['Priority score', compound.priority_score],
+        ['Evidence summary', formatEvidenceCategory(compound.evidence_summary_category)],
+        ['Biopharma context', formatEvidenceCategory(compound.biopharma_context_level)],
+        ['Recommended review focus', formatEvidenceCategory(compound.recommended_review_focus)],
+        ['Combined candidate score', compound.combined_candidate_score],
+      ],
+    },
+    {
+      title: 'Physicochemical Properties',
+      rows: [
+        ['Molecular weight', compound.mw],
+        ['TPSA', compound.tpsa],
+        ['H-bond acceptors', compound.hba],
+        ['H-bond donors', compound.hbd],
+        ['Rotatable bonds', compound.rotatable_bonds],
+        ['QED', compound.qed],
+        ['Lipinski assessment', formatPassFail(compound.lipinski_pass)],
+      ],
+    },
+    {
+      title: 'Model Outputs',
+      rows: [
+        ['BBB prediction', formatEvidenceCategory(compound.bbb_prediction)],
+        ['BBB probability', compound.bbb_probability],
+        ['BBB model status', formatScientificPresentationValue(compound.bbb_model_status)],
+        ['SA score', compound.sa_score],
+        ['Synthetic feasibility', formatEvidenceCategory(compound.synthetic_feasibility_category)],
+        ['Synthetic feasibility status', formatScientificPresentationValue(compound.synthetic_feasibility_status)],
+      ],
+    },
+    {
+      title: 'Docking and Structural Context',
+      rows: [
+        ['Docking score', compound.docking_score],
+        ['Docking status', formatScientificPresentationValue(compound.docking_status)],
+        ['Docking priority signal', formatEvidenceCategory(compound.docking_priority_signal)],
+        ['Structural alerts', formatStructuralAlertStatus(compound)],
+        ['PAINS alert', formatBooleanLabel(compound.pains_alert)],
+        ['Brenk alert', formatBooleanLabel(compound.brenk_alert)],
+        ['Diversity cluster', formatDiversityCluster(compound)],
+      ],
+    },
+    {
+      title: 'Public Evidence Context',
+      rows: [
+        ['PubChem match', formatPubChemMatch(compound)],
+        ['ChEMBL match', formatChEMBLMatch(compound)],
+        ['Patent-context signal', formatPatentSignal(compound)],
+        ['Closest known compound', formatClosestKnownCompound(compound)],
+        ['Active-neighborhood signal', formatEvidenceCategory(compound.active_neighborhood_signal)],
+      ],
+    },
+  ];
+}
+
+export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotation, onClose, containerRef }) {
   return (
-    <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
+    <Card
+      ref={containerRef}
+      elevation={0}
+      tabIndex={-1}
+      aria-labelledby="compound-detail-heading"
+      sx={{
+        border: '1px solid',
+        borderColor: 'divider',
+        scrollMarginTop: 72,
+        '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 2 },
+      }}
+    >
       <CardContent sx={{ p: 3, '&:last-child': { pb: 3 } }}>
         <Stack spacing={2.5}>
           <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
             <Stack spacing={0.5}>
-              <Typography variant="h2">Compound Detail</Typography>
+              <Typography id="compound-detail-heading" variant="h2">Compound Detail</Typography>
               <Typography color="text.secondary">
                 {formatDetailValue(compound.molecule_id)}
               </Typography>
@@ -3958,6 +4125,24 @@ export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAn
             sx={{
               display: 'grid',
               gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
+              alignItems: 'start',
+              gap: 2,
+            }}
+          >
+            {compoundDetailSummarySections(compound).map((section) => (
+              <DetailTable key={section.title} title={section.title} rows={section.rows} />
+            ))}
+          </Box>
+
+          <Box component="details" sx={{ '& > summary': { cursor: 'pointer' } }}>
+            <Box component="summary" sx={{ fontWeight: 700, color: 'text.secondary', mb: 1 }}>
+              Complete provenance and diagnostic fields
+            </Box>
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
+              alignItems: 'start',
               gap: 2,
             }}
           >
@@ -3989,7 +4174,7 @@ export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAn
                 ['Diversity status', formatEvidenceCategory(compound.diversity_status)],
                 ['Chemical-space X', compound.chemical_space_x],
                 ['Chemical-space Y', compound.chemical_space_y],
-                ['Chemical-space method', compound.chemical_space_method],
+                ['Chemical-space method', formatScientificPresentationValue(compound.chemical_space_method)],
                 ['Chemical-space status', formatEvidenceCategory(compound.chemical_space_status)],
               ]}
             />
@@ -3999,38 +4184,38 @@ export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAn
                 ['Molecule ID', compound.molecule_id],
                 ['Input SMILES', compound.input_smiles],
                 ['Canonical SMILES', compound.canonical_smiles],
-                ['Valid molecule', compound.valid_molecule],
+                ['Valid molecule', formatBooleanLabel(compound.valid_molecule)],
                 ['Priority score', compound.priority_score],
-                ['Known compound match', compound.known_compound_match],
+                ['Known compound match', formatBooleanLabel(compound.known_compound_match)],
                 ['Known compound name', compound.known_compound_name],
-                ['Known compound source', compound.known_compound_source],
+                ['Known compound source', formatScientificPresentationValue(compound.known_compound_source)],
                 ['Known compound ID', compound.known_compound_id],
-                ['Identity check status', compound.identity_check_status],
-                ['PubChem exact match', compound.pubchem_exact_match],
+                ['Identity check status', formatScientificPresentationValue(compound.identity_check_status)],
+                ['PubChem exact match', formatBooleanLabel(compound.pubchem_exact_match)],
                 ['PubChem CID', compound.pubchem_cid],
                 ['PubChem preferred name', compound.pubchem_preferred_name],
-                ['PubChem lookup status', compound.pubchem_lookup_status],
-                ['PubChem cache status', compound.pubchem_cache_status],
+                ['PubChem lookup status', formatScientificPresentationValue(compound.pubchem_lookup_status)],
+                ['PubChem cache status', formatScientificPresentationValue(compound.pubchem_cache_status)],
                 ['PubChem warning', compound.pubchem_warning],
                 ['ChEMBL match', formatChEMBLMatch(compound)],
                 ['ChEMBL molecule ID', compound.chembl_molecule_id],
                 ['ChEMBL preferred name', compound.chembl_pref_name],
-                ['ChEMBL lookup status', compound.chembl_lookup_status],
-                ['ChEMBL cache status', compound.chembl_cache_status],
+                ['ChEMBL lookup status', formatScientificPresentationValue(compound.chembl_lookup_status)],
+                ['ChEMBL cache status', formatScientificPresentationValue(compound.chembl_cache_status)],
                 ['ChEMBL warning', compound.chembl_warning],
                 ['Known public bioactivity records', compound.chembl_activity_count],
                 ['Associated public targets', compound.chembl_target_count],
                 ['ChEMBL target summary', compound.chembl_target_summary],
-                ['ChEMBL similarity match', compound.chembl_similarity_match],
+                ['ChEMBL similarity match', formatBooleanLabel(compound.chembl_similarity_match)],
                 ['ChEMBL similarity score', compound.chembl_similarity_score],
                 ['ChEMBL similarity molecule ID', compound.chembl_similarity_molecule_id],
                 ['ChEMBL similarity preferred name', compound.chembl_similarity_pref_name],
-                ['ChEMBL similarity status', compound.chembl_similarity_status],
+                ['ChEMBL similarity status', formatScientificPresentationValue(compound.chembl_similarity_status)],
                 ['Patent-context signal', formatPatentSignal(compound)],
-                ['Patent lookup status', compound.patent_lookup_status],
-                ['Patent cache status', compound.patent_cache_status],
-                ['Public patent-associated evidence', compound.patent_public_evidence_match],
-                ['Patent source', compound.patent_source],
+                ['Patent lookup status', formatScientificPresentationValue(compound.patent_lookup_status)],
+                ['Patent cache status', formatScientificPresentationValue(compound.patent_cache_status)],
+                ['Public patent-associated evidence', formatBooleanLabel(compound.patent_public_evidence_match)],
+                ['Patent source', formatScientificPresentationValue(compound.patent_source)],
                 ['SureChEMBL returned records for this structure/query', compound.patent_record_count],
                 ['Top patent record ID', compound.patent_top_record_id],
                 ['Top patent record title', compound.patent_top_record_title],
@@ -4040,10 +4225,10 @@ export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAn
                 ['Closest known compound', compound.closest_known_compound_name],
                 ['Closest known compound ID', compound.closest_known_compound_id],
                 ['Closest known compound similarity', compound.closest_known_compound_similarity],
-                ['Closest known compound source', compound.closest_known_compound_source],
-                ['Similarity check status', compound.similarity_check_status],
+                ['Closest known compound source', formatScientificPresentationValue(compound.closest_known_compound_source)],
+                ['Similarity check status', formatScientificPresentationValue(compound.similarity_check_status)],
                 ['Docking score', compound.docking_score],
-                ['Docking status', compound.docking_status],
+                ['Docking status', formatScientificPresentationValue(compound.docking_status)],
                 ['Docking normalized score', compound.docking_score_normalized],
                 ['Docking priority signal', formatEvidenceCategory(compound.docking_priority_signal)],
                 ['Docking rank within run', compound.docking_rank_within_run],
@@ -4058,10 +4243,10 @@ export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAn
               rows={[
                 ['BBB prediction', compound.bbb_prediction],
                 ['BBB probability', compound.bbb_probability],
-                ['BBB model status', compound.bbb_model_status],
+                ['BBB model status', formatScientificPresentationValue(compound.bbb_model_status)],
                 ['SA score', compound.sa_score],
-                ['Synthetic feasibility category', compound.synthetic_feasibility_category],
-                ['Synthetic feasibility status', compound.synthetic_feasibility_status],
+                ['Synthetic feasibility category', formatEvidenceCategory(compound.synthetic_feasibility_category)],
+                ['Synthetic feasibility status', formatScientificPresentationValue(compound.synthetic_feasibility_status)],
               ]}
             />
             <DetailTable
@@ -4076,6 +4261,7 @@ export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAn
                 ['Lipinski pass/fail', formatPassFail(compound.lipinski_pass)],
               ]}
             />
+          </Box>
           </Box>
         </Stack>
       </CardContent>
@@ -4110,10 +4296,10 @@ function compoundRowKey(row, index) {
 }
 
 function formatPassFail(value) {
-  if (value === true) {
+  if (isTrueValue(value)) {
     return 'Pass';
   }
-  if (value === false) {
+  if (isFalseValue(value)) {
     return 'Fail';
   }
   return value;
@@ -4121,7 +4307,7 @@ function formatPassFail(value) {
 
 function formatClosestKnownCompound(row) {
   if (!row.closest_known_compound_name) {
-    return row.similarity_check_status ?? 'not available';
+    return formatScientificPresentationValue(row.similarity_check_status);
   }
   const similarity = row.closest_known_compound_similarity;
   if (similarity === null || similarity === undefined || similarity === '') {
@@ -4135,7 +4321,7 @@ function formatPubChemMatch(row) {
     const cid = row.pubchem_cid ? `CID ${row.pubchem_cid}` : 'PubChem';
     return `${row.pubchem_preferred_name || 'PubChem exact match'} (${cid})`;
   }
-  return row.pubchem_lookup_status ?? 'not available';
+  return formatScientificPresentationValue(row.pubchem_lookup_status);
 }
 
 function formatChEMBLMatch(row) {
@@ -4146,7 +4332,7 @@ function formatChEMBLMatch(row) {
     const score = row.chembl_similarity_score ? `, similarity ${row.chembl_similarity_score}` : '';
     return `${row.chembl_similarity_pref_name || row.chembl_similarity_molecule_id || 'ChEMBL analog'}${score}`;
   }
-  return row.chembl_lookup_status ?? 'not available';
+  return formatScientificPresentationValue(row.chembl_lookup_status);
 }
 
 function formatPatentSignal(row) {
@@ -4154,7 +4340,7 @@ function formatPatentSignal(row) {
     const count = row.patent_record_count ? `${row.patent_record_count} returned records` : 'returned records';
     return `${row.patent_source || 'SureChEMBL'} returned ${count} for this structure/query`;
   }
-  return row.patent_lookup_status ?? 'not available';
+  return formatScientificPresentationValue(row.patent_lookup_status);
 }
 
 function formatLookupSources(job) {
@@ -4341,7 +4527,7 @@ function formatTargetReferenceSet(targetReferences) {
   if (!targetReferences || !targetReferences.enabled) {
     return 'Not requested';
   }
-  return `${targetReferences.reference_count ?? 0} references; ${targetReferences.source ?? 'unknown source'}; ${targetReferences.lookup_status ?? 'not available'}`;
+  return `${targetReferences.reference_count ?? 0} references; ${formatScientificPresentationValue(targetReferences.source ?? 'unknown source')}; ${formatScientificPresentationValue(targetReferences.lookup_status)}`;
 }
 
 function buildChemicalSpaceSummary(rows) {
@@ -5188,7 +5374,7 @@ function formatDetailValue(value) {
     return 'Not available';
   }
   if (typeof value === 'boolean') {
-    return value ? 'True' : 'False';
+    return value ? 'Yes' : 'No';
   }
   return String(value);
 }
@@ -5255,10 +5441,10 @@ export function ScientificRuntimePanel({ runtimeState, onRefresh }) {
   const sourceText = (value) => value || 'Not available';
   const dependencyText = (label, dependency) => dependency?.status === 'checking'
     ? `${label} · checking`
-    : `${label} ${sourceText(dependency?.version)} · ${sourceText(dependency?.status)}`;
+    : `${label} ${sourceText(dependency?.version)} · ${formatScientificPresentationValue(dependency?.status)}`;
   const nativeRuntimeText = (label, runtime) => runtime?.status === 'checking'
     ? `${label}: Checking...`
-    : `${label}: ${sourceText(runtime?.identity)} · ${sourceText(runtime?.status)}`;
+    : `${label}: ${sourceText(runtime?.identity)} · ${formatScientificPresentationValue(runtime?.status)}`;
   const pollPending = scientificRuntimePollDelay(runtimeState.payload) !== null;
 
   return (
@@ -5287,16 +5473,16 @@ export function ScientificRuntimePanel({ runtimeState, onRefresh }) {
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
             <RuntimeCard title="ChemBERTa classification" status={chemberta.status} refreshing={chemberta.refreshing}>
               <Typography variant="body2">{chemberta.public_endpoint_count ?? 9} public classification endpoints</Typography>
-              <Typography variant="body2" color="text.secondary">Runtime source: {sourceText(chemberta.runtime_source)}</Typography>
+              <Typography variant="body2" color="text.secondary">Runtime source: {formatRuntimeSource(chemberta.runtime_source)}</Typography>
             </RuntimeCard>
             <RuntimeCard title="GMC-MPNN BBB" status={gmc.status} refreshing={gmc.refreshing}>
               <Typography variant="body2">5-seed ensemble · raw unweighted ensemble mean · population SD</Typography>
               <Typography variant="body2">Threshold 0.5 · provisional raw · calibration not frozen</Typography>
-              <Typography variant="body2" color="text.secondary">Runtime source: {sourceText(gmc.runtime_source)}</Typography>
+              <Typography variant="body2" color="text.secondary">Runtime source: {formatRuntimeSource(gmc.runtime_source)}</Typography>
             </RuntimeCard>
             <RuntimeCard title="Chemprop regression" status={chemprop.status} refreshing={chemprop.refreshing}>
               <Typography variant="body2">5 regression endpoints · 5-seed ensemble · sample SD</Typography>
-              <Typography variant="body2" color="text.secondary">Runtime source: {sourceText(chemprop.runtime_source)}</Typography>
+              <Typography variant="body2" color="text.secondary">Runtime source: {formatRuntimeSource(chemprop.runtime_source)}</Typography>
             </RuntimeCard>
             <RuntimeCard title="Receptor Preparation" status={receptor.status} refreshing={receptor.refreshing}>
               <Typography variant="body2">{dependencyText('Meeko', receptor.meeko)}</Typography>
@@ -5385,7 +5571,7 @@ export function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache
             <Stack spacing={0.75}>
               <Typography variant="h2">Legacy BBB Cache Diagnostics</Typography>
               <Typography color="text.secondary">
-                Compatibility-only diagnostics for the retired cache-oriented BBB presentation. Production GMC-MPNN status is shown above.
+                Compatibility-only diagnostics for the retired cache-backed BBB classifier. This does not describe current production ChemBERTa classification or GMC-MPNN BBB inference; both production runtimes are shown above.
               </Typography>
             </Stack>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
@@ -5402,13 +5588,13 @@ export function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache
           {sourceStatusState.error && <Alert severity="error">{sourceStatusState.error}</Alert>}
 
           {cached ? (
-            <Alert severity="success">BBB/ChemBERTa model is configured and cached.</Alert>
+            <Alert severity="success">The legacy BBB compatibility model is configured in the retired local cache.</Alert>
           ) : (
-            <Alert severity="warning">BBB/ChemBERTa model is not cached or unavailable.</Alert>
+            <Alert severity="warning">The legacy BBB compatibility model is not present in the retired local cache or is unavailable.</Alert>
           )}
 
           {latestRun && modelAvailable && (
-            <Alert severity="success">This run used the local BBB/ChemBERTa model.</Alert>
+            <Alert severity="success">This legacy run used the cached BBB compatibility model.</Alert>
           )}
           {latestRun && placeholderUsed && (
             <Alert severity="info">
@@ -5419,9 +5605,9 @@ export function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache
           <MetadataPanel
             rows={[
               ['BBB model cache path', modelManifest.cache_root ?? bbbModel.cache_path ?? ''],
-              ['Cached status', cached ? 'cached' : 'not cached'],
-              ['Model status from latest check', bbbModel.status ?? 'not checked'],
-              ['Actual model used or placeholder mode', latestRun?.actual_bbb_model_status ?? 'not run'],
+              ['Cached status', cached ? 'Cached' : 'Not cached'],
+              ['Model status from latest check', formatScientificPresentationValue(bbbModel.status ?? 'not checked')],
+              ['Actual legacy model status or placeholder mode', formatScientificPresentationValue(latestRun?.actual_bbb_model_status ?? 'not_run')],
               ['Latest run timestamp', latestRun?.timestamp ?? ''],
               ['Output file', latestRun?.output_file ?? ''],
               ['Rows', latestRun?.row_count ?? ''],
@@ -5454,9 +5640,9 @@ export function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache
                   {sources.map((source) => (
                     <TableRow key={source.source_name}>
                       <TableCell>{source.source_name}</TableCell>
-                      <TableCell>{source.status}</TableCell>
-                      <TableCell>{source.last_checked}</TableCell>
-                      <TableCell>{source.last_successful_lookup || 'not active'}</TableCell>
+                      <TableCell>{formatScientificPresentationValue(source.status)}</TableCell>
+                      <TableCell>{formatDetailValue(source.last_checked)}</TableCell>
+                      <TableCell>{source.last_successful_lookup ? formatDetailValue(source.last_successful_lookup) : 'Not active'}</TableCell>
                       <TableCell>{source.cache_path}</TableCell>
                     </TableRow>
                   ))}
