@@ -243,6 +243,42 @@ def receptor_structure(receptor_id: str) -> tuple[Path, str]:
     return path, "pdb" if path.suffix.lower() == ".pdb" else "pdbqt"
 
 
+def docking_visualization_structure(receptor_id: str) -> tuple[bytes, str, dict[str, str]]:
+    """Return the exact docking receptor, falling back to source PDB before preparation."""
+
+    metadata = read_receptor(receptor_id)
+    prepared = bool(metadata.get("prepared_pdbqt"))
+    if prepared:
+        path = prepared_receptor_path(receptor_id)
+        structure_format = "pdbqt"
+        expected_digest = str(metadata.get("docking_receptor_sha256") or "")
+    else:
+        path, structure_format = receptor_structure(receptor_id)
+        if structure_format != "pdb":
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unprepared docking visualization must use the stored source PDB.",
+            )
+        expected_digest = str(metadata.get("source_receptor_sha256") or "")
+
+    artifact_bytes = path.read_bytes()
+    artifact_digest = hashlib.sha256(artifact_bytes).hexdigest()
+    if not expected_digest or artifact_digest != expected_digest:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Stored receptor artifact identity does not match receptor metadata.",
+        )
+
+    identity = {
+        "receptor_id": receptor_id,
+        "preparation_id": str(metadata.get("preparation_id") or ""),
+        "artifact_sha256": artifact_digest,
+        "docking_receptor_sha256": str(metadata.get("docking_receptor_sha256") or "") if prepared else "",
+        "structure_format": structure_format,
+    }
+    return artifact_bytes, structure_format, identity
+
+
 def save_configuration(values: dict[str, object]) -> dict[str, object]:
     receptor_id = str(values.get("receptor_id") or "").strip()
     metadata = read_receptor(receptor_id)

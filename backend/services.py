@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import inspect
 import io
 import json
@@ -432,9 +433,25 @@ def get_docking_receptor(receptor_id: str) -> dict[str, object]:
     return receptor_store.read_receptor(receptor_id)
 
 
-def get_docking_receptor_structure(receptor_id: str) -> tuple[str, str]:
-    path, structure_format = receptor_store.receptor_structure(receptor_id)
-    return path.read_text(encoding="utf-8", errors="strict"), structure_format
+def get_docking_receptor_structure(
+    receptor_id: str,
+    *,
+    representation: str = "source",
+) -> tuple[bytes, str, dict[str, str]]:
+    if representation == "docking":
+        payload, structure_format, identity = receptor_store.docking_visualization_structure(receptor_id)
+    else:
+        path, structure_format = receptor_store.receptor_structure(receptor_id)
+        payload = path.read_bytes()
+        metadata = receptor_store.read_receptor(receptor_id)
+        identity = {
+            "receptor_id": receptor_id,
+            "preparation_id": str(metadata.get("preparation_id") or ""),
+            "artifact_sha256": hashlib.sha256(payload).hexdigest(),
+            "docking_receptor_sha256": "",
+            "structure_format": structure_format,
+        }
+    return payload, structure_format, identity
 
 
 def get_receptor_preparation_runtime() -> dict[str, object]:

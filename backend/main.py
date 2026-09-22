@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import FastAPI, File, Form, Query, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +49,14 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT"],
     allow_headers=["*"],
+    expose_headers=[
+        "X-MolOptima-Structure-Format",
+        "X-MolOptima-Structure-Representation",
+        "X-MolOptima-Receptor-ID",
+        "X-MolOptima-Preparation-ID",
+        "X-MolOptima-Artifact-SHA256",
+        "X-MolOptima-Docking-Receptor-SHA256",
+    ],
 )
 
 
@@ -117,12 +127,28 @@ def prepare_docking_receptor(
 
 
 @app.get("/api/docking/receptors/{receptor_id}/structure")
-def get_docking_receptor_structure(receptor_id: str) -> Response:
-    payload, structure_format = services.get_docking_receptor_structure(receptor_id)
+def get_docking_receptor_structure(
+    receptor_id: str,
+    representation: Literal["source", "docking"] = Query(default="source"),
+) -> Response:
+    payload, structure_format, identity = services.get_docking_receptor_structure(
+        receptor_id,
+        representation=representation,
+    )
+    headers = {
+        "X-MolOptima-Structure-Format": structure_format,
+        "X-MolOptima-Structure-Representation": representation,
+        "X-MolOptima-Receptor-ID": identity["receptor_id"],
+        "X-MolOptima-Artifact-SHA256": identity["artifact_sha256"],
+    }
+    if identity["preparation_id"]:
+        headers["X-MolOptima-Preparation-ID"] = identity["preparation_id"]
+    if identity["docking_receptor_sha256"]:
+        headers["X-MolOptima-Docking-Receptor-SHA256"] = identity["docking_receptor_sha256"]
     return Response(
         content=payload,
         media_type="chemical/x-pdb" if structure_format == "pdb" else "chemical/x-pdbqt",
-        headers={"X-MolOptima-Structure-Format": structure_format},
+        headers=headers,
     )
 
 
