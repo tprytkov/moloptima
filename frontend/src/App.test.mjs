@@ -25,6 +25,30 @@ test('primary navigation follows the scientific workflow and hides history tools
   assert.equal(labels.includes('Run Comparison'), false);
 });
 
+test('primary-page scroll reset targets the provided scrolling element', () => {
+  let options = null;
+  module.resetPrimaryPageScroll({ scrollTo: (value) => { options = value; } });
+  assert.deepEqual(options, { top: 0, left: 0, behavior: 'auto' });
+});
+
+test('Results export and Compound Detail actions expose meaningful accessible names', () => {
+  const filterHtml = renderToStaticMarkup(React.createElement(module.EvidenceFilterPanel, {
+    rows: [], filteredRows: [], filters: {}, onChange: () => {}, onReset: () => {}, exportFilename: 'results.csv',
+  }));
+  assert.match(filterHtml, /aria-label="Export filtered results as CSV"/);
+
+  const exportHtml = renderToStaticMarkup(React.createElement(module.CandidateExportPanel, { rows: [] }));
+  assert.match(exportHtml, />Export selected candidates<\/button>/);
+  assert.match(exportHtml, />Markdown handoff summary<\/button>/);
+
+  const detailHtml = renderToStaticMarkup(React.createElement(module.CompoundDetailPanel, {
+    compound: { molecule_id: 'cmpd-1', canonical_smiles: '', valid_molecule: true },
+    annotationsState: {}, onSaveReviewAnnotation: () => {}, onClose: () => {},
+  }));
+  assert.match(detailHtml, /aria-label="Download compound detail as Markdown report"/);
+  assert.match(detailHtml, /aria-label="Close compound detail"/);
+});
+
 test('production UI source contains no Phase 1 terminology', async () => {
   const source = await readFile(new URL('./App.jsx', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /Phase[ -]?1/i);
@@ -270,4 +294,102 @@ test('prioritization page adapts to compound assessment for one valid compound',
   assert.match(html, /Compound Assessment/);
   assert.match(html, /Start compound assessment/);
   assert.match(html, /Not applicable: Library Prioritization, Pareto Analysis, and Rank Sensitivity/);
+});
+
+function renderDockingWorkflow(upload) {
+  const noop = () => {};
+  return renderToStaticMarkup(React.createElement(module.DockingWorkflowPage, {
+    uploadState: { upload },
+    prioritizationState: { job: null, result: null, loading: false, error: '' },
+    targetContext: {},
+    onDockingSetupConfirmed: noop,
+    onRunDocking: noop,
+    onNavigate: noop,
+  }));
+}
+
+function continueToAdmetButton(html) {
+  return html.match(/<button[^>]*data-testid="continue-to-admet"[^>]*>/)?.[0] ?? '';
+}
+
+test('invalid-only upload reports zero valid molecules and blocks scientific continuation', () => {
+  const html = renderDockingWorkflow({ rows: 1, submitted_count: 1, valid_count: 0, invalid_count: 1 });
+  assert.match(html, /1 submitted; 0 valid molecules available/);
+  assert.match(continueToAdmetButton(html), /disabled/);
+  assert.equal(module.validatedMoleculeCount({ valid_count: 0 }), 0);
+});
+
+test('mixed upload allows continuation when one validated molecule remains', () => {
+  const html = renderDockingWorkflow({ rows: 2, submitted_count: 2, valid_count: 1, invalid_count: 1 });
+  assert.match(html, /2 submitted; 1 valid molecule available/);
+  assert.doesNotMatch(continueToAdmetButton(html), /disabled/);
+});
+
+test('fully valid upload preserves scientific continuation', () => {
+  const html = renderDockingWorkflow({ rows: 2, submitted_count: 2, valid_count: 2, invalid_count: 0 });
+  assert.match(html, /2 submitted; 2 valid molecules available/);
+  assert.doesNotMatch(continueToAdmetButton(html), /disabled/);
+});
+
+test('normalizes current-format completed prioritization from result rows', () => {
+  const summary = module.normalizePrioritizationSummary({
+    job: { status: 'completed', submitted_count: 2, total_count: 2 },
+    result: { prioritization_method: 'profile_v2', results: [
+      { valid_molecule: true, prioritization_status: 'fully_scored', scientific_rank: 1 },
+      { valid_molecule: false, prioritization_status: 'unscorable' },
+    ] },
+  });
+  assert.equal(summary.processedCount, 2);
+  assert.equal(summary.validCount, 1);
+  assert.equal(summary.rankedCount, 1);
+  assert.equal(summary.unscorableCount, 1);
+  assert.match(summary.completionMessage, /2 result rows are ready/);
+});
+
+test('normalizes legacy completed results without fabricating unavailable ranking counts', () => {
+  const summary = module.normalizePrioritizationSummary({
+    job: { status: 'completed', row_count: 1, processed_count: 1, total_count: 1, eligible_count: 0, ranked_count: 0 },
+    result: { results: [{ valid_molecule: true, priority_score: 0.673 }] },
+  });
+  assert.equal(summary.processedCount, 1);
+  assert.equal(summary.validCount, 1);
+  assert.equal(summary.rankedCount, 'Not available');
+  assert.equal(summary.resultCount, 1);
+});
+
+test('normalizes zero-result completed and failed prioritization states honestly', () => {
+  const empty = module.normalizePrioritizationSummary({
+    job: { status: 'completed', submitted_count: 0, total_count: 0 }, result: { results: [] },
+  });
+  assert.equal(empty.completionMessage, 'Calculation completed with no result rows.');
+  const failed = module.normalizePrioritizationSummary({
+    job: { status: 'failed', error_message: 'Pipeline stopped.' }, result: { results: [] },
+  });
+  assert.equal(failed.completionTitle(false), 'Calculation failed');
+  assert.equal(failed.completionMessage, 'Pipeline stopped.');
+});
+
+test('Biopharma evidence fields use unique semantic keys across repeated rendering', () => {
+  const compound = {
+    molecule_id: 'cmpd-1', valid_molecule: true, nearest_active_compound_name: 'Reference A',
+    nearest_active_similarity: 0.81, active_neighborhood_signal: 'supported',
+    nearest_active_activity_class: 'active', target_reference_source: 'local',
+  };
+  const rows = module.biopharmaEvidenceRows(compound);
+  const labels = rows.map(([label]) => label);
+  assert.equal(new Set(labels).size, labels.length);
+
+  const originalError = console.error;
+  const errors = [];
+  console.error = (...args) => errors.push(args.join(' '));
+  try {
+    const props = { compound, annotationsState: {}, onSaveReviewAnnotation: () => {} };
+    const first = renderToStaticMarkup(React.createElement(module.BiopharmaInterpretationPanel, props));
+    const second = renderToStaticMarkup(React.createElement(module.BiopharmaInterpretationPanel, props));
+    assert.equal((first.match(/Nearest active\/reference compound/g) ?? []).length, 1);
+    assert.equal((second.match(/Nearest active\/reference compound/g) ?? []).length, 1);
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(errors.filter((message) => /same key|unique.*key/i.test(message)).length, 0);
 });

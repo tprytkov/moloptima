@@ -42,3 +42,17 @@ test('package helper calls the job-scoped production endpoint', async () => {
     global.fetch = original;
   }
 });
+
+test('download links expose specific accessible names', () => {
+  const html = renderToStaticMarkup(React.createElement(module.ResultsDownloadActions, {
+    apiBaseUrl: 'http://api',
+    jobId: 'job-1',
+    requested: [
+      ['all_compounds_results.csv', 'Download All Compound Results'],
+      ['prioritized_compounds.sdf', 'Download Prioritized Structures SDF'],
+    ],
+  }));
+  assert.match(html, /<a[^>]*aria-label="Download All Compound Results"/);
+  assert.match(html, /<a[^>]*aria-label="Download Prioritized Structures SDF"/);
+  assert.match(html, /<a[^>]*aria-label="Download complete results package"/);
+});

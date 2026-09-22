@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AppBar,
@@ -13,6 +13,7 @@ import {
   Divider,
   Drawer,
   FormControlLabel,
+  IconButton,
   List,
   ListItemButton,
   ListItemIcon,
@@ -35,6 +36,7 @@ import {
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import CloudQueueOutlinedIcon from '@mui/icons-material/CloudQueueOutlined';
+import CloseIcon from '@mui/icons-material/Close';
 import DownloadOutlinedIcon from '@mui/icons-material/DownloadOutlined';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
@@ -43,7 +45,10 @@ import MedicationOutlinedIcon from '@mui/icons-material/MedicationOutlined';
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
-import AdmetResultsSection from './AdmetResultsSection.jsx';
+import AdmetResultsSection, {
+  aggregateAdmetFamilyStatus,
+  deriveAdmetFamilyStatuses,
+} from './AdmetResultsSection.jsx';
 import DockingResultsSection from './DockingResultsSection.jsx';
 import DockingSetup from './DockingSetup.jsx';
 import PrioritizationExplanationSection from './PrioritizationExplanationSection.jsx';
@@ -60,6 +65,10 @@ import { startBackendHealthPolling } from './backendHealth.js';
 
 const drawerWidth = 216;
 const apiBaseUrl = 'http://localhost:8000';
+
+export function resetPrimaryPageScroll(scrollContainer = globalThis.document?.scrollingElement) {
+  scrollContainer?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+}
 
 export const PRIMARY_NAVIGATION = [
   {
@@ -140,7 +149,7 @@ export function deriveWorkflowStatuses({ uploadState, targetContext, prioritizat
   const completed = Boolean(prioritizationState.result);
   const running = Boolean(prioritizationState.loading && !terminal);
   const failed = Boolean(terminal && !completed && prioritizationState.error);
-  const uploaded = Boolean(uploadState.upload);
+  const uploaded = validatedMoleculeCount(uploadState.upload) > 0;
   const dockingConfigured = Boolean(targetContext.docking_configuration_id);
   const stage = String(prioritizationState.job?.stage || '').toLowerCase();
   const admetPresent = Boolean(prioritizationState.result?.results?.some((row) => (
@@ -159,6 +168,11 @@ export function deriveWorkflowStatuses({ uploadState, targetContext, prioritizat
     Results: completed ? 'Complete' : running ? 'Running' : failed ? 'Needs attention' : 'Not started',
     Analysis: completed ? 'Ready' : 'Not started',
   };
+}
+
+export function validatedMoleculeCount(upload) {
+  const count = Number(upload?.valid_count);
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
 }
 
 const theme = createTheme({
@@ -218,6 +232,7 @@ const theme = createTheme({
 
 function App() {
   const [activeItem, setActiveItem] = useState('New Calculation');
+  const previousActiveItem = useRef(activeItem);
   const [uploadState, setUploadState] = useState({ ...EMPTY_UPLOAD_STATE });
   const [prioritizationState, setPrioritizationState] = useState({ ...EMPTY_PRIORITIZATION_STATE });
   const [latestRunState, setLatestRunState] = useState({
@@ -421,10 +436,10 @@ function App() {
 
   async function handleStartPrioritization() {
     const uploadId = uploadState.upload?.upload_id;
-    if (!uploadId) {
+    if (!uploadId || validatedMoleculeCount(uploadState.upload) === 0) {
       setPrioritizationState((current) => ({
         ...current,
-        error: 'Upload a molecule CSV before starting prioritization.',
+        error: 'Load at least one valid molecule before starting prioritization.',
       }));
       return;
     }
@@ -674,6 +689,13 @@ function App() {
   }
 
   const workflowStatuses = deriveWorkflowStatuses({ uploadState, targetContext, prioritizationState });
+
+  useEffect(() => {
+    if (previousActiveItem.current !== activeItem) {
+      resetPrimaryPageScroll();
+      previousActiveItem.current = activeItem;
+    }
+  }, [activeItem]);
 
   return (
     <ThemeProvider theme={theme}>
@@ -1068,7 +1090,10 @@ export function DockingWorkflowPage({
   const dockedRows = rows.filter((row) => row.docking_result);
   const [selectedKey, setSelectedKey] = useState('');
   const selected = dockedRows.find((row, index) => compoundRowKey(row, index) === selectedKey) ?? null;
-  const ready = Boolean(uploadState.upload && targetContext.docking_configuration_id);
+  const validMoleculeCount = validatedMoleculeCount(uploadState.upload);
+  const submittedMoleculeCount = Number(uploadState.upload?.submitted_count ?? uploadState.upload?.rows ?? 0);
+  const hasValidMolecules = validMoleculeCount > 0;
+  const ready = Boolean(hasValidMolecules && targetContext.docking_configuration_id);
   const successfulDocking = dockedRows.filter((row) => row.docking_result?.status === 'success').length;
   const vinaVersion = dockedRows.find((row) => row.docking_result?.vina_version)?.docking_result?.vina_version;
   const single = uploadState.upload?.analysis_mode === 'single_compound';
@@ -1082,7 +1107,9 @@ export function DockingWorkflowPage({
             <Typography variant="h2">Docking run</Typography>
             <WorkflowStatusChip status={ready ? 'Ready' : uploadState.upload ? 'Needs attention' : 'Not started'} />
             <Typography color="text.secondary">
-              {uploadState.upload ? `${uploadState.upload.rows} uploaded molecules are available.` : 'Upload molecules before docking.'}
+              {uploadState.upload
+                ? `${submittedMoleculeCount} submitted; ${validMoleculeCount} valid molecule${validMoleculeCount === 1 ? '' : 's'} available.`
+                : 'Upload molecules before docking.'}
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Run Docking starts the existing combined local calculation; ADMET and {single ? 'compound assessment' : 'prioritization'} continue in the same auditable job.
@@ -1093,7 +1120,7 @@ export function DockingWorkflowPage({
             <Button variant="contained" disabled={!ready || prioritizationState.loading} onClick={onRunDocking}>
               {prioritizationState.loading ? 'Calculation running' : 'Run Docking'}
             </Button>
-            <Button variant="outlined" onClick={() => onNavigate('ADMET')}>Continue to ADMET</Button>
+            <Button data-testid="continue-to-admet" variant="outlined" disabled={!hasValidMolecules} onClick={() => onNavigate('ADMET')}>Continue to ADMET</Button>
             {prioritizationState.error ? <Alert severity="error">{prioritizationState.error}</Alert> : null}
           </Stack>
         </Paper>
@@ -1122,28 +1149,34 @@ export function DockingWorkflowPage({
 }
 
 const ADMET_MODEL_GROUPS = [
-  ['ChemBERTa classification', '9 public classification endpoints'],
-  ['GMC-MPNN BBB', 'Raw five-seed ensemble; threshold policy provisional'],
-  ['Chemprop regression', '5 regression endpoints'],
+  ['chemberta', 'ChemBERTa classification', '9 public classification endpoints'],
+  ['gmc_mpnn_bbb', 'GMC-MPNN BBB', 'Raw five-seed ensemble; threshold policy provisional'],
+  ['chemprop_regression', 'Chemprop regression', '5 regression endpoints'],
 ];
 
 export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNavigate }) {
   const rows = prioritizationState.result?.results ?? [];
   const [selectedIndex, setSelectedIndex] = useState(0);
   const selected = rows[selectedIndex] ?? null;
-  const completed = rows.filter((row) => row.admet_model_status === 'model_available' || row.bbb_model_status === 'model_available' || row.admet_regression?.status === 'model_available').length;
-  const failures = rows.filter((row) => String(row.admet_model_status || '').includes('unavailable') || String(row.bbb_model_status || '').includes('unavailable')).length;
+  const rowStatuses = rows.map(deriveAdmetFamilyStatuses);
+  const familyResults = rowStatuses.flatMap((statuses) => Object.values(statuses));
+  const completed = familyResults.filter((family) => family.code === 'available').length;
+  const failures = familyResults.filter((family) => ['failed', 'model_unavailable'].includes(family.code)).length;
   const warnings = rows.filter((row) => row.admet_warning || row.bbb_result?.warning || row.admet_regression?.warning).length;
+  const familyStatuses = Object.fromEntries(ADMET_MODEL_GROUPS.map(([key]) => [
+    key,
+    aggregateAdmetFamilyStatus(rows, key, prioritizationState.loading),
+  ]));
   const single = prioritizationState.job?.analysis_mode === 'single_compound'
     || prioritizationState.result?.analysis_mode === 'single_compound';
   return (
     <Stack spacing={2}>
       <PageIntro title="ADMET" description="Review the existing ChemBERTa classification, GMC-MPNN BBB, and Chemprop regression outputs for the current calculation." />
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5 }}>
-        {ADMET_MODEL_GROUPS.map(([name, detail]) => (
+        {ADMET_MODEL_GROUPS.map(([key, name, detail]) => (
           <Paper key={name} elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
             <Stack spacing={0.75}><Typography sx={{ fontWeight: 700 }}>{name}</Typography><Typography variant="caption" color="text.secondary">{detail}</Typography>
-              <Chip label={rows.length ? 'Results available' : prioritizationState.loading ? 'Running' : 'Not run'} color={rows.length ? 'success' : 'default'} variant="outlined" />
+              <Chip label={familyStatuses[key].label} color={familyStatuses[key].color} variant="outlined" />
             </Stack>
           </Paper>
         ))}
@@ -1152,9 +1185,12 @@ export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNa
       {rows.length ? (
         <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
           <Stack spacing={1.5}>
-            <MetadataPanel rows={[["Molecules submitted", rows.length], ["Completed", completed], ["Failures", failures], ["Warnings", warnings]]} />
+            <MetadataPanel rows={[["Molecules submitted", rows.length], ["Available families", completed], ["Unavailable / failed families", failures], ["Warnings", warnings]]} />
             <Typography variant="h2">Molecule results</Typography>
-            <Table size="small"><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>ChemBERTa</TableCell><TableCell>GMC BBB</TableCell><TableCell>Chemprop regression</TableCell></TableRow></TableHead><TableBody>{rows.map((row, index) => <TableRow key={compoundRowKey(row, index)}><TableCell>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</TableCell><TableCell>{row.admet_model_status || 'Not available'}</TableCell><TableCell>{row.bbb_model_status || row.bbb_result?.status || 'Not available'}</TableCell><TableCell>{row.admet_regression?.status || 'Not available'}</TableCell></TableRow>)}</TableBody></Table>
+            <Table size="small"><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>ChemBERTa</TableCell><TableCell>GMC BBB</TableCell><TableCell>Chemprop regression</TableCell></TableRow></TableHead><TableBody>{rows.map((row, index) => {
+              const statuses = rowStatuses[index];
+              return <TableRow key={compoundRowKey(row, index)}><TableCell>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</TableCell><TableCell>{statuses.chemberta.label}</TableCell><TableCell>{statuses.gmc_mpnn_bbb.label}</TableCell><TableCell>{statuses.chemprop_regression.label}</TableCell></TableRow>;
+            })}</TableBody></Table>
             <TextField select label="Molecule" value={selectedIndex} onChange={(event) => setSelectedIndex(Number(event.target.value))} sx={{ maxWidth: 420 }}>
               {rows.map((row, index) => <MenuItem key={compoundRowKey(row, index)} value={index}>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</MenuItem>)}
             </TextField>
@@ -1216,7 +1252,7 @@ export function ResultsWorkflowPage({ prioritizationState, annotationsState, onS
         <CandidateExportPanel rows={filtered} />
       </> : null}
       {!rows.length ? <Alert severity="info">No result rows are available for the current calculation.</Alert> : null}
-      {selected ? <CompoundDetailPanel compound={selected} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} /> : null}
+      {selected ? <CompoundDetailPanel compound={selected} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} onClose={() => setSelectedKey('')} /> : null}
       {prioritizationState.job ? <ResultsPackageDownloads apiBaseUrl={apiBaseUrl} jobId={prioritizationState.job.job_id} analysisMode={single ? 'single_compound' : 'library'} /> : null}
     </Stack>
   );
@@ -1729,7 +1765,64 @@ function BiopharmaResultTable({ rows, selectedCompoundKey, onSelectCompound }) {
   );
 }
 
-function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReviewAnnotation }) {
+export function biopharmaEvidenceRows(compound) {
+  return [
+    ['Review status', formatReviewStatus(compound.review_status)],
+    ['Review note', compound.review_note],
+    ['Evidence summary category', formatEvidenceCategory(compound.evidence_summary_category)],
+    ['Public identity signal', formatEvidenceCategory(compound.public_identity_signal)],
+    ['Public bioactivity signal', formatEvidenceCategory(compound.public_bioactivity_signal)],
+    ['Patent-context signal', formatEvidenceCategory(compound.patent_context_signal)],
+    ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
+    ['Nearest active/reference compound', compound.nearest_active_compound_name],
+    ['Nearest active/reference similarity', compound.nearest_active_similarity],
+    ['Active-neighborhood signal', formatEvidenceCategory(compound.active_neighborhood_signal)],
+    ['Reference activity', formatTargetReferenceActivity(compound)],
+    ['Reference mechanism class', compound.nearest_active_mechanism_class],
+    ['Reference source', compound.target_reference_source],
+    ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
+    ['Recommended review focus', compound.recommended_review_focus],
+    ['Combined candidate score', compound.combined_candidate_score],
+    ['Docking priority signal', formatEvidenceCategory(compound.docking_priority_signal)],
+    ['Docking rank', compound.docking_rank_within_run],
+    ['Docking percentile', compound.docking_percentile_within_run],
+    ['Protocol-dependent docking signal', compound.combined_score_explanation],
+    ['Structural alerts', formatStructuralAlertStatus(compound)],
+    ['PAINS alert', formatBooleanLabel(compound.pains_alert)],
+    ['Brenk alert', formatBooleanLabel(compound.brenk_alert)],
+    ['Potential liability signal', compound.medchem_alert_summary],
+    ['Diversity cluster', formatDiversityCluster(compound)],
+    ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
+    ['Nearest neighbor similarity', formatNearestNeighbor(compound)],
+    ['Diversity status', formatEvidenceCategory(compound.diversity_status)],
+    ['Chemical-space X', compound.chemical_space_x],
+    ['Chemical-space Y', compound.chemical_space_y],
+    ['Chemical-space method', compound.chemical_space_method],
+    ['Chemical-space status', formatEvidenceCategory(compound.chemical_space_status)],
+    ['Exact known compound', compound.known_compound_name],
+    ['PubChem exact match', formatPubChemMatch(compound)],
+    ['PubChem lookup status', compound.pubchem_lookup_status],
+    ['PubChem cache status', compound.pubchem_cache_status],
+    ['ChEMBL match', formatChEMBLMatch(compound)],
+    ['ChEMBL lookup status', compound.chembl_lookup_status],
+    ['ChEMBL cache status', compound.chembl_cache_status],
+    ['Known public bioactivity records', compound.chembl_activity_count],
+    ['Associated public targets', compound.chembl_target_count],
+    ['ChEMBL target summary', compound.chembl_target_summary],
+    ['Patent-context evidence', formatPatentSignal(compound)],
+    ['Patent lookup status', compound.patent_lookup_status],
+    ['Patent source', compound.patent_source],
+    ['SureChEMBL returned records for this structure/query', compound.patent_record_count],
+    ['Top patent record ID', compound.patent_top_record_id],
+    ['Top patent record title', compound.patent_top_record_title],
+    ['Closest known compound', compound.closest_known_compound_name],
+    ['Closest similarity', compound.closest_known_compound_similarity],
+    ['Identity status', compound.identity_check_status],
+    ['Similarity status', compound.similarity_check_status],
+  ];
+}
+
+export function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReviewAnnotation }) {
   const interpretation = interpretBiopharmaCompound(compound);
 
   return (
@@ -1751,66 +1844,7 @@ function BiopharmaInterpretationPanel({ compound, annotationsState, onSaveReview
           />
           <StructurePreview compound={compound} />
           <MetadataPanel
-            rows={[
-              ['Review status', formatReviewStatus(compound.review_status)],
-              ['Review note', compound.review_note],
-              ['Evidence summary category', formatEvidenceCategory(compound.evidence_summary_category)],
-              ['Public identity signal', formatEvidenceCategory(compound.public_identity_signal)],
-              ['Public bioactivity signal', formatEvidenceCategory(compound.public_bioactivity_signal)],
-              ['Patent-context signal', formatEvidenceCategory(compound.patent_context_signal)],
-              ['Local similarity signal', formatEvidenceCategory(compound.local_similarity_signal)],
-              ['Nearest active/reference compound', compound.nearest_active_compound_name],
-              ['Nearest active/reference similarity', compound.nearest_active_similarity],
-              ['Active-neighborhood signal', formatEvidenceCategory(compound.active_neighborhood_signal)],
-              ['Reference activity', formatTargetReferenceActivity(compound)],
-              ['Reference mechanism class', compound.nearest_active_mechanism_class],
-              ['Reference source', compound.target_reference_source],
-              ['Biopharma context level', formatEvidenceCategory(compound.biopharma_context_level)],
-              ['Recommended review focus', compound.recommended_review_focus],
-              ['Combined candidate score', compound.combined_candidate_score],
-              ['Docking priority signal', formatEvidenceCategory(compound.docking_priority_signal)],
-              ['Docking rank', compound.docking_rank_within_run],
-              ['Docking percentile', compound.docking_percentile_within_run],
-              ['Protocol-dependent docking signal', compound.combined_score_explanation],
-              ['Nearest active/reference compound', compound.nearest_active_compound_name],
-              ['Nearest active/reference similarity', compound.nearest_active_similarity],
-              ['Active-neighborhood signal', formatEvidenceCategory(compound.active_neighborhood_signal)],
-              ['Reference activity', formatTargetReferenceActivity(compound)],
-              ['Reference mechanism class', compound.nearest_active_mechanism_class],
-              ['Reference source', compound.target_reference_source],
-              ['Structural alerts', formatStructuralAlertStatus(compound)],
-              ['PAINS alert', formatBooleanLabel(compound.pains_alert)],
-              ['Brenk alert', formatBooleanLabel(compound.brenk_alert)],
-              ['Potential liability signal', compound.medchem_alert_summary],
-              ['Diversity cluster', formatDiversityCluster(compound)],
-              ['Cluster representative', formatBooleanLabel(compound.diversity_representative)],
-              ['Nearest neighbor similarity', formatNearestNeighbor(compound)],
-              ['Diversity status', formatEvidenceCategory(compound.diversity_status)],
-              ['Chemical-space X', compound.chemical_space_x],
-              ['Chemical-space Y', compound.chemical_space_y],
-              ['Chemical-space method', compound.chemical_space_method],
-              ['Chemical-space status', formatEvidenceCategory(compound.chemical_space_status)],
-              ['Exact known compound', compound.known_compound_name],
-              ['PubChem exact match', formatPubChemMatch(compound)],
-              ['PubChem lookup status', compound.pubchem_lookup_status],
-              ['PubChem cache status', compound.pubchem_cache_status],
-              ['ChEMBL match', formatChEMBLMatch(compound)],
-              ['ChEMBL lookup status', compound.chembl_lookup_status],
-              ['ChEMBL cache status', compound.chembl_cache_status],
-              ['Known public bioactivity records', compound.chembl_activity_count],
-              ['Associated public targets', compound.chembl_target_count],
-              ['ChEMBL target summary', compound.chembl_target_summary],
-              ['Patent-context signal', formatPatentSignal(compound)],
-              ['Patent lookup status', compound.patent_lookup_status],
-              ['Patent source', compound.patent_source],
-              ['SureChEMBL returned records for this structure/query', compound.patent_record_count],
-              ['Top patent record ID', compound.patent_top_record_id],
-              ['Top patent record title', compound.patent_top_record_title],
-              ['Closest known compound', compound.closest_known_compound_name],
-              ['Closest similarity', compound.closest_known_compound_similarity],
-              ['Identity status', compound.identity_check_status],
-              ['Similarity status', compound.similarity_check_status],
-            ]}
+            rows={biopharmaEvidenceRows(compound)}
           />
         </Stack>
       </CardContent>
@@ -2865,7 +2899,7 @@ function UploadMoleculesPage({ uploadState, onUpload, onChange, onContinue }) {
   return <MoleculeInputPanel uploadState={uploadState} onImport={onUpload} onChange={onChange} onContinue={onContinue} />;
 }
 
-function CandidateExportPanel({ rows }) {
+export function CandidateExportPanel({ rows }) {
   const [sdfExportState, setSdfExportState] = useState({ loading: false, message: '', error: '' });
   const selectedRows = candidateRowsForStatuses(rows, ['selected']);
   const watchlistRows = candidateRowsForStatuses(rows, ['watchlist']);
@@ -2985,6 +3019,7 @@ export function PrioritizationPage({
   onNavigate,
 }) {
   const resultRows = prioritizationState.result?.results ?? [];
+  const summary = normalizePrioritizationSummary(prioritizationState);
   const single = uploadState.upload?.analysis_mode === 'single_compound'
     || prioritizationState.job?.analysis_mode === 'single_compound';
 
@@ -3074,7 +3109,7 @@ export function PrioritizationPage({
                 variant="contained"
                 onClick={onStartPrioritization}
                 disabled={
-                  !uploadState.upload
+                  validatedMoleculeCount(uploadState.upload) === 0
                   || prioritizationState.loading
                   || (prioritizationSettings.method === 'v2'
                     && !prioritizationSettings.validation?.scoreable)
@@ -3106,18 +3141,18 @@ export function PrioritizationPage({
                 ['Status', prioritizationState.job.status],
                 ['Stage', prioritizationState.job.stage],
                 ['Job ID', prioritizationState.job.job_id],
-                ['Submitted', prioritizationState.job.submitted_count],
-                ['Processed', `${prioritizationState.job.processed_count ?? 0} / ${prioritizationState.job.total_count ?? 0}`],
+                ['Submitted', summary.submittedCount],
+                ['Processed', `${summary.processedCount} / ${summary.totalCount}`],
                 ['Docking successes', prioritizationState.job.docking_success_count ?? 0],
                 ['Docking failures', prioritizationState.job.docking_failure_count ?? 0],
-                ['Valid molecules', prioritizationState.job.eligible_count ?? 0],
-                [single ? 'Library score' : 'Fully scored', single ? 'Not applicable' : prioritizationState.job.fully_scored_count ?? 0],
-                [single ? 'Library rank' : 'Partially scored', single ? 'Not applicable' : prioritizationState.job.partially_scored_count ?? 0],
-                ['Unscorable / invalid', prioritizationState.job.unscorable_count ?? 0],
-                ['Scientifically ranked', single ? 'Not applicable' : prioritizationState.job.ranked_count ?? 0],
-                ['Eligible for final ranking', single ? 'Not applicable' : prioritizationState.job.eligible_for_ranking_count ?? 0],
-                ['Awaiting / missing docking', prioritizationState.job.awaiting_or_missing_docking_count ?? 0],
-                ['Docking failed / unavailable', prioritizationState.job.docking_failed_or_unavailable_count ?? 0],
+                ['Valid molecules', summary.validCount],
+                [single ? 'Library score' : 'Fully scored', single ? 'Not applicable' : summary.fullyScoredCount],
+                [single ? 'Library rank' : 'Partially scored', single ? 'Not applicable' : summary.partiallyScoredCount],
+                ['Unscorable / invalid', summary.unscorableCount],
+                ['Scientifically ranked', single ? 'Not applicable' : summary.rankedCount],
+                ['Eligible for final ranking', single ? 'Not applicable' : summary.eligibleForRankingCount],
+                ['Awaiting / missing docking', summary.awaitingOrMissingDockingCount],
+                ['Docking failed / unavailable', summary.dockingFailedOrUnavailableCount],
                 ['Warnings', prioritizationState.job.warning_count],
                 ['Cancellation requested', prioritizationState.job.cancellation_requested ? 'yes' : 'no'],
                 ['Output file', prioritizationState.job.output_file],
@@ -3134,13 +3169,81 @@ export function PrioritizationPage({
       {prioritizationState.result && (
         <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} justifyContent="space-between">
-            <Box><Typography variant="h2">{single ? 'Single Compound Assessment complete' : 'Prioritization complete'}</Typography><Typography color="text.secondary">{resultRows.length} result row{resultRows.length === 1 ? ' is' : 's are'} ready for inspection.</Typography></Box>
+            <Box><Typography variant="h2">{summary.completionTitle(single)}</Typography><Typography color="text.secondary">{summary.completionMessage}</Typography></Box>
             <Button variant="contained" onClick={() => onNavigate('Results')}>Open Results</Button>
           </Stack>
         </Paper>
       )}
     </Stack>
   );
+}
+
+export function normalizePrioritizationSummary(prioritizationState) {
+  const job = prioritizationState?.job ?? {};
+  const result = prioritizationState?.result ?? null;
+  const rows = result?.results ?? [];
+  const completed = job.status === 'completed';
+  const failed = job.status === 'failed';
+  const method = result?.prioritization_method ?? job.prioritization_method ?? 'legacy_v1';
+  const currentFormat = ['v2', 'profile_v2'].includes(method);
+  const validRows = rows.filter((row) => isTrueValue(row.valid_molecule));
+  const invalidRows = rows.filter((row) => isFalseValue(row.valid_molecule));
+  const statusRows = rows.filter((row) => row.prioritization_status);
+  const explicitRankedRows = rows.filter((row) => (
+    row.scientific_rank !== null && row.scientific_rank !== undefined && row.scientific_rank !== ''
+  ) || (
+    row.v2_rank !== null && row.v2_rank !== undefined && row.v2_rank !== ''
+  ));
+  const resultCount = rows.length;
+  const submittedCount = Number(job.submitted_count ?? result?.submitted_count ?? result?.row_count ?? resultCount);
+  const totalCount = Number(job.total_count ?? submittedCount ?? resultCount);
+  const processedCount = result ? resultCount : Number(job.processed_count ?? 0);
+  const unavailable = 'Not available';
+  const rowDerivedOrUnavailable = (status, fallback) => statusRows.length
+    ? statusRows.filter((row) => row.prioritization_status === status).length
+    : fallback ?? unavailable;
+
+  let completionMessage;
+  if (failed) completionMessage = job.error_message || 'The calculation did not complete.';
+  else if (!completed) completionMessage = `Calculation ${job.status || 'is incomplete'}; ${resultCount} result row${resultCount === 1 ? ' is' : 's are'} currently available.`;
+  else if (resultCount === 0) completionMessage = 'Calculation completed with no result rows.';
+  else completionMessage = `${resultCount} result row${resultCount === 1 ? ' is' : 's are'} ready for inspection.`;
+
+  return {
+    submittedCount,
+    totalCount,
+    processedCount,
+    resultCount,
+    validCount: result ? validRows.length : Number(job.valid_count ?? job.eligible_count ?? 0),
+    invalidCount: result ? invalidRows.length : Number(job.invalid_count ?? 0),
+    fullyScoredCount: currentFormat ? rowDerivedOrUnavailable('fully_scored', job.fully_scored_count) : unavailable,
+    partiallyScoredCount: currentFormat ? rowDerivedOrUnavailable('partially_scored', job.partially_scored_count) : unavailable,
+    unscorableCount: statusRows.length
+      ? statusRows.filter((row) => row.prioritization_status === 'unscorable').length
+      : result ? invalidRows.length : Number(job.unscorable_count ?? 0),
+    rankedCount: currentFormat
+      ? (rows.length ? explicitRankedRows.length : Number(job.ranked_count ?? 0))
+      : explicitRankedRows.length || unavailable,
+    eligibleForRankingCount: currentFormat
+      ? (rows.some((row) => row.rank_eligible !== undefined)
+        ? rows.filter((row) => isTrueValue(row.rank_eligible)).length
+        : Number(job.eligible_for_ranking_count ?? 0))
+      : unavailable,
+    awaitingOrMissingDockingCount: currentFormat
+      ? rowDerivedOrUnavailable('awaiting_docking', job.awaiting_or_missing_docking_count)
+      : unavailable,
+    dockingFailedOrUnavailableCount: currentFormat
+      ? (statusRows.length
+        ? statusRows.filter((row) => ['docking_failed', 'docking_unavailable'].includes(row.prioritization_status)).length
+        : Number(job.docking_failed_or_unavailable_count ?? 0))
+      : unavailable,
+    completionMessage,
+    completionTitle: (single) => {
+      if (failed) return 'Calculation failed';
+      if (!completed) return 'Calculation incomplete';
+      return single ? 'Single Compound Assessment complete' : 'Prioritization complete';
+    },
+  };
 }
 
 function PageIntro({ title, description }) {
@@ -3293,7 +3396,7 @@ const evidenceFilterFields = [
   ['diversity_representative', 'Cluster representative'],
 ];
 
-function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onReset, exportFilename }) {
+export function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onReset, exportFilename }) {
   const updateFilter = (key, value) => {
     onChange({ ...filters, [key]: value });
   };
@@ -3323,6 +3426,7 @@ function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onReset, e
             </Button>
             <Button
               variant="contained"
+              aria-label="Export filtered results as CSV"
               startIcon={<DownloadOutlinedIcon />}
               disabled={filteredRows.length === 0}
               onClick={() => downloadRowsCsv(filteredRows, exportFilename)}
@@ -3807,7 +3911,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   );
 }
 
-function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotation }) {
+export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotation, onClose }) {
   return (
     <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
       <CardContent sx={{ p: 3, '&:last-child': { pb: 3 } }}>
@@ -3822,6 +3926,7 @@ function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotatio
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} alignItems={{ sm: 'center' }}>
               <Button
                 variant="outlined"
+                aria-label="Download compound detail as Markdown report"
                 startIcon={<DownloadOutlinedIcon />}
                 onClick={() => downloadCompoundMarkdownReport(compound)}
               >
@@ -3832,6 +3937,11 @@ function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotatio
                 color={isFalseValue(compound.valid_molecule) ? 'warning' : 'success'}
                 variant="outlined"
               />
+              {onClose ? (
+                <IconButton aria-label="Close compound detail" onClick={onClose}>
+                  <CloseIcon />
+                </IconButton>
+              ) : null}
             </Stack>
           </Stack>
           <ReviewAnnotationControls

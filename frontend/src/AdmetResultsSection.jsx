@@ -61,6 +61,75 @@ const EVIDENCE_LABELS = {
   strong: 'Strong support',
 };
 
+const AVAILABLE_STATUSES = new Set(['available', 'completed', 'model_available', 'success']);
+const UNAVAILABLE_STATUSES = new Set(['incompatible', 'model_unavailable', 'unavailable']);
+const NOT_REQUESTED_STATUSES = new Set(['not_requested']);
+const FAILED_STATUSES = new Set(['error', 'failed', 'inference_failed']);
+const RUNNING_STATUSES = new Set(['checking', 'pending', 'queued', 'running']);
+
+const STATUS_PRESENTATION = {
+  available: { code: 'available', label: 'Results available', color: 'success' },
+  partial: { code: 'partial', label: 'Partial results', color: 'warning' },
+  model_unavailable: { code: 'model_unavailable', label: 'Model unavailable', color: 'warning' },
+  not_requested: { code: 'not_requested', label: 'Not requested', color: 'default' },
+  not_run_invalid_molecule: { code: 'not_run_invalid_molecule', label: 'Not run — invalid molecule', color: 'default' },
+  failed: { code: 'failed', label: 'Failed', color: 'error' },
+  running: { code: 'running', label: 'Running', color: 'info' },
+  not_run: { code: 'not_run', label: 'Not run', color: 'default' },
+};
+
+function hasObjectValues(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
+}
+
+export function normalizeAdmetStatus(value, hasResult = false) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (AVAILABLE_STATUSES.has(normalized)) return STATUS_PRESENTATION.available;
+  if (UNAVAILABLE_STATUSES.has(normalized)) return STATUS_PRESENTATION.model_unavailable;
+  if (NOT_REQUESTED_STATUSES.has(normalized)) return STATUS_PRESENTATION.not_requested;
+  if (normalized === 'not_run_invalid_molecule') return STATUS_PRESENTATION.not_run_invalid_molecule;
+  if (FAILED_STATUSES.has(normalized)) return STATUS_PRESENTATION.failed;
+  if (RUNNING_STATUSES.has(normalized)) return STATUS_PRESENTATION.running;
+  return hasResult ? STATUS_PRESENTATION.available : STATUS_PRESENTATION.not_run;
+}
+
+export function deriveAdmetFamilyStatuses(compound) {
+  const row = compound ?? {};
+  const familyStatus = hasObjectValues(row.admet_family_status) ? row.admet_family_status : {};
+  const predictions = hasObjectValues(row.admet_predictions) ? row.admet_predictions : {};
+  const bbbResult = hasObjectValues(row.bbb_result) ? row.bbb_result : {};
+  const regression = hasObjectValues(row.admet_regression) ? row.admet_regression : {};
+  return {
+    chemberta: normalizeAdmetStatus(
+      familyStatus.chemberta ?? familyStatus.chemberta_classification ?? row.admet_model_status,
+      Object.keys(predictions).length > 0,
+    ),
+    gmc_mpnn_bbb: normalizeAdmetStatus(
+      familyStatus.gmc_mpnn_bbb ?? bbbResult.status,
+      bbbResult.ensemble_probability !== undefined || bbbResult.raw_classification !== undefined,
+    ),
+    chemprop_regression: normalizeAdmetStatus(
+      familyStatus.chemprop_regression ?? regression.status,
+      hasObjectValues(regression.endpoints),
+    ),
+  };
+}
+
+export function aggregateAdmetFamilyStatus(rows, family, loading = false) {
+  if (!rows?.length) return loading ? STATUS_PRESENTATION.running : STATUS_PRESENTATION.not_run;
+  const codes = rows.map((row) => deriveAdmetFamilyStatuses(row)[family].code);
+  if (codes.every((code) => code === 'available')) return STATUS_PRESENTATION.available;
+  if (codes.includes('available')) return STATUS_PRESENTATION.partial;
+  if (codes.includes('running')) return STATUS_PRESENTATION.running;
+  if (codes.includes('failed')) return STATUS_PRESENTATION.failed;
+  if (codes.every((code) => code === 'model_unavailable')) return STATUS_PRESENTATION.model_unavailable;
+  if (codes.every((code) => code === 'not_requested')) return STATUS_PRESENTATION.not_requested;
+  if (codes.every((code) => ['not_requested', 'not_run_invalid_molecule', 'not_run'].includes(code))) {
+    return STATUS_PRESENTATION.not_run;
+  }
+  return STATUS_PRESENTATION.model_unavailable;
+}
+
 export function formatCalibratedProbability(value) {
   if (value === null || value === undefined || value === '') {
     return 'Not available';
@@ -96,13 +165,14 @@ function firstEnsembleValue(endpoint) {
   return key ? endpoint[key] : null;
 }
 
-function RegressionEndpointCard({ endpointName, endpoint }) {
+function RegressionEndpointCard({ endpointName, endpoint, status }) {
   const value = firstEnsembleValue(endpoint);
   const uncertaintyKey = Object.keys(endpoint || {}).find((name) => name.startsWith('seed_standard_deviation_'));
   return (
     <Box data-testid={`admet-endpoint-${endpointName}`} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2, bgcolor: 'background.paper' }}>
       <Stack spacing={1}>
         <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>{ENDPOINT_LABELS[endpointName]}</Typography>
+        {status.code !== 'available' ? <Chip variant="outlined" color={status.color} label={status.label} /> : null}
         <Typography variant="h5" sx={{ fontWeight: 750 }}>{value ?? 'Not available'} {endpoint?.unit || ''}</Typography>
         <Typography variant="caption" color="text.secondary">
           Ensemble SD: {uncertaintyKey ? endpoint[uncertaintyKey] : 'Not available'} · {endpoint?.representation || 'representation unavailable'}
@@ -113,7 +183,7 @@ function RegressionEndpointCard({ endpointName, endpoint }) {
   );
 }
 
-function BBBEndpointCard({ endpoint }) {
+function BBBEndpointCard({ endpoint, status }) {
   const rawClassification = endpoint?.raw_classification || endpoint?.prediction;
   const threshold = Number(endpoint?.threshold ?? 0.5).toFixed(2);
   const thresholdStatus = endpoint?.threshold_status === 'provisional_raw' ? 'Provisional raw' : 'Not specified';
@@ -122,6 +192,7 @@ function BBBEndpointCard({ endpoint }) {
     <Box data-testid="admet-endpoint-gmc_mpnn_bbb" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2, bgcolor: 'background.paper' }}>
       <Stack spacing={1}>
         <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>BBB permeability · GMC-MPNN</Typography>
+        {status.code !== 'available' ? <Chip variant="outlined" color={status.color} label={status.label} /> : null}
         <Typography variant="caption" color="text.secondary">Raw ensemble probability</Typography>
         <Typography variant="h5" sx={{ fontWeight: 750 }}>{formatCalibratedProbability(endpoint?.ensemble_probability)}</Typography>
         <Typography variant="body2">Raw classification at {threshold}: {rawClassification || 'Not available'}</Typography>
@@ -133,7 +204,7 @@ function BBBEndpointCard({ endpoint }) {
   );
 }
 
-function ADMETEndpointCard({ endpointName, endpoint }) {
+function ADMETEndpointCard({ endpointName, endpoint, status }) {
   const displayName = endpoint?.display_name || ENDPOINT_LABELS[endpointName];
   const badgeLabel = evidenceLabel(endpointName, endpoint?.evidence_status);
   const warning = endpoint?.warning;
@@ -162,8 +233,8 @@ function ADMETEndpointCard({ endpointName, endpoint }) {
           <Chip
             size="small"
             variant="outlined"
-            color={endpointName === 'hia_hou' ? 'warning' : 'default'}
-            label={badgeLabel}
+            color={status.code === 'available' && endpointName === 'hia_hou' ? 'warning' : status.color}
+            label={status.code === 'available' ? badgeLabel : status.label}
           />
         </Stack>
         <Box>
@@ -190,17 +261,7 @@ export default function AdmetResultsSection({ compound }) {
   const status = compound?.admet_model_status;
   const predictions = compound?.admet_predictions;
   const hasPredictions = predictions && typeof predictions === 'object' && !Array.isArray(predictions);
-
-  if (status === 'model_unavailable' && !compound?.bbb_result && !compound?.admet_regression) {
-    return (
-      <Box aria-label="ADMET classification">
-        <Typography variant="h2" sx={{ mb: 1.25 }}>ADMET Results</Typography>
-        <Alert severity="warning">
-          ADMET model unavailable. {compound?.admet_warning || 'Predictions are not available for this molecule.'}
-        </Alert>
-      </Box>
-    );
-  }
+  const familyStatuses = deriveAdmetFamilyStatuses(compound);
 
   if (status === 'not_run_invalid_molecule') {
     return (
@@ -213,7 +274,7 @@ export default function AdmetResultsSection({ compound }) {
     );
   }
 
-  if (!hasPredictions) {
+  if (!hasPredictions && Object.values(familyStatuses).every((family) => family.code === 'not_run')) {
     return (
       <Box aria-label="ADMET classification">
         <Typography variant="h2" sx={{ mb: 1.25 }}>ADMET Results</Typography>
@@ -246,13 +307,13 @@ export default function AdmetResultsSection({ compound }) {
             >
               {group.endpoints.map((endpointKey) => {
                 if (endpointKey.startsWith('bbb:')) {
-                  return <BBBEndpointCard key={endpointKey} endpoint={compound?.bbb_result} />;
+                  return <BBBEndpointCard key={endpointKey} endpoint={compound?.bbb_result} status={familyStatuses.gmc_mpnn_bbb} />;
                 }
                 if (endpointKey.startsWith('regression:')) {
                   const endpointName = endpointKey.split(':')[1];
-                  return <RegressionEndpointCard key={endpointKey} endpointName={endpointName} endpoint={compound?.admet_regression?.endpoints?.[endpointName]} />;
+                  return <RegressionEndpointCard key={endpointKey} endpointName={endpointName} endpoint={compound?.admet_regression?.endpoints?.[endpointName]} status={familyStatuses.chemprop_regression} />;
                 }
-                return <ADMETEndpointCard key={endpointKey} endpointName={endpointKey} endpoint={predictions[endpointKey]} />;
+                return <ADMETEndpointCard key={endpointKey} endpointName={endpointKey} endpoint={predictions?.[endpointKey]} status={familyStatuses.chemberta} />;
               })}
             </Box>
           </Box>

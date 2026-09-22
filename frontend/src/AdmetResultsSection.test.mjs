@@ -7,6 +7,8 @@ import { createServer } from 'vite';
 let vite;
 let AdmetResultsSection;
 let ADMET_GROUPS;
+let deriveAdmetFamilyStatuses;
+let aggregateAdmetFamilyStatus;
 
 before(async () => {
   vite = await createServer({
@@ -17,6 +19,8 @@ before(async () => {
   const module = await vite.ssrLoadModule('/src/AdmetResultsSection.jsx');
   AdmetResultsSection = module.default;
   ADMET_GROUPS = module.ADMET_GROUPS;
+  deriveAdmetFamilyStatuses = module.deriveAdmetFamilyStatuses;
+  aggregateAdmetFamilyStatus = module.aggregateAdmetFamilyStatus;
 });
 
 after(async () => {
@@ -117,16 +121,47 @@ test('makes GMC BBB ensemble details and HIA limited support visible', () => {
   assert.match(html, /Limited support for HIA\./);
 });
 
-test('renders model unavailable without attempting endpoint cards', () => {
+test('renders model unavailable consistently on endpoint cards', () => {
   const html = render({
     admet_model_status: 'model_unavailable',
     admet_warning: 'Frozen local bundle is unavailable.',
     admet_predictions: {},
   });
 
-  assert.match(html, /ADMET model unavailable/);
+  assert.match(html, /Model unavailable/);
   assert.match(html, /Frozen local bundle is unavailable\./);
-  assert.doesNotMatch(html, /admet-endpoint-hia_hou/);
+  assert.match(html, /admet-endpoint-hia_hou/);
+});
+
+test('derives available Chemprop results from the authoritative family result', () => {
+  const statuses = deriveAdmetFamilyStatuses({
+    admet_model_status: 'model_unavailable',
+    admet_regression: { status: 'model_available', endpoints: { caco2_wang: { ensemble_mean: 1.2 } } },
+  });
+  assert.equal(statuses.chemberta.code, 'model_unavailable');
+  assert.equal(statuses.chemprop_regression.code, 'available');
+});
+
+test('does not reinterpret a legacy flat BBB status as a GMC-MPNN result', () => {
+  const statuses = deriveAdmetFamilyStatuses({
+    bbb_model_status: 'model_available', bbb_probability: 0.8, bbb_prediction: 'high',
+  });
+  assert.equal(statuses.gmc_mpnn_bbb.code, 'not_run');
+  assert.equal(statuses.gmc_mpnn_bbb.label, 'Not run');
+});
+
+test('preserves mixed availability across ADMET families', () => {
+  const row = completeCompound();
+  row.bbb_result = { status: 'model_unavailable' };
+  row.admet_regression = { status: 'not_requested', endpoints: {} };
+  const statuses = deriveAdmetFamilyStatuses(row);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(statuses).map(([key, value]) => [key, value.code])),
+    { chemberta: 'available', gmc_mpnn_bbb: 'model_unavailable', chemprop_regression: 'not_requested' },
+  );
+  assert.equal(aggregateAdmetFamilyStatus([row], 'chemberta').label, 'Results available');
+  assert.equal(aggregateAdmetFamilyStatus([row], 'gmc_mpnn_bbb').label, 'Model unavailable');
+  assert.equal(aggregateAdmetFamilyStatus([row], 'chemprop_regression').label, 'Not requested');
 });
 
 test('renders missing ADMET data without page failure', () => {

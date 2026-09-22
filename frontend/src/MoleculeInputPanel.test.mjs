@@ -32,6 +32,22 @@ test('renders every supported compact input method and hard SDF/PDB warnings', (
   assert.match(html, /one molecule per line/i);
 });
 
+test('renders all six upload actions as named keyboard-operable buttons', () => {
+  const html = render();
+  for (const name of [
+    'Upload CSV / TSV',
+    'Upload SDF',
+    'Upload Ligand PDB',
+    'Select Structure Files',
+    'Select Folder · SDF library',
+    'Select Folder · PDB library',
+  ]) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(html, new RegExp(`<button[^>]*aria-label="${escaped}"[^>]*>[\\s\\S]*?${escaped}[\\s\\S]*?<\\/button>`));
+  }
+  assert.equal((html.match(/<input[^>]*type="file"/g) ?? []).length, 6);
+});
+
 test('single-compound summary reports counts, preview provenance, and mode', () => {
   const html = render({
     filename: 'ethanol.sdf', submitted_count: 1, valid_count: 1, invalid_count: 0,

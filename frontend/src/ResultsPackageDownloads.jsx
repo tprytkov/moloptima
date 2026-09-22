@@ -25,6 +25,34 @@ export function resultDownloadDefinitions(analysisMode) {
   ];
 }
 
+export function ResultsDownloadActions({ apiBaseUrl, jobId, requested }) {
+  return (
+    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+      {requested.map(([path, label]) => (
+        <Button
+          key={path}
+          component="a"
+          href={`${apiBaseUrl}/api/results/${encodeURIComponent(jobId)}/artifacts/${path}`}
+          variant="outlined"
+          startIcon={<DownloadOutlinedIcon />}
+          aria-label={label}
+        >
+          {label}
+        </Button>
+      ))}
+      <Button
+        component="a"
+        href={`${apiBaseUrl}/api/results/${encodeURIComponent(jobId)}/package.zip`}
+        variant="contained"
+        startIcon={<DownloadOutlinedIcon />}
+        aria-label="Download complete results package"
+      >
+        Download Complete Results Package
+      </Button>
+    </Stack>
+  );
+}
+
 export default function ResultsPackageDownloads({ apiBaseUrl, jobId, analysisMode }) {
   const [state, setState] = useState({ loading: Boolean(jobId), data: null, error: '' });
   useEffect(() => {
@@ -62,16 +90,11 @@ export default function ResultsPackageDownloads({ apiBaseUrl, jobId, analysisMod
           <Chip size="small" label={`Pareto: ${state.data?.pareto_status === 'available' ? 'available' : 'not run'}`} />
           <Chip size="small" label={`Sensitivity: ${state.data?.sensitivity_status === 'available' ? 'available' : 'not run'}`} />
         </Stack> : null}
-        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-          {requested.filter(([path]) => artifactPaths.has(path)).map(([path, label]) => (
-            <Button key={path} component="a" href={`${apiBaseUrl}/api/results/${encodeURIComponent(jobId)}/artifacts/${path}`} variant="outlined" startIcon={<DownloadOutlinedIcon />}>
-              {label}
-            </Button>
-          ))}
-          <Button component="a" href={`${apiBaseUrl}/api/results/${encodeURIComponent(jobId)}/package.zip`} variant="contained" startIcon={<DownloadOutlinedIcon />}>
-            Download Complete Results Package
-          </Button>
-        </Stack>
+        <ResultsDownloadActions
+          apiBaseUrl={apiBaseUrl}
+          jobId={jobId}
+          requested={requested.filter(([path]) => artifactPaths.has(path))}
+        />
       </Stack>
     </Paper>
   );

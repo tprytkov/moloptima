@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   Alert, Box, Button, Chip, CircularProgress, Paper, Stack, Table, TableBody,
   TableCell, TableHead, TableRow, TextField, Typography,
@@ -22,11 +22,24 @@ export function topLevelFolderFiles(fileList) {
 }
 
 function FileButton({ label, accept, multiple = false, folder = false, onFiles }) {
+  const inputRef = useRef(null);
   return (
-    <Button variant="outlined" component="label" startIcon={folder ? <FolderOpenOutlinedIcon /> : <UploadFileOutlinedIcon />}>
+    <>
+      <Button
+        variant="outlined"
+        type="button"
+        aria-label={label}
+        startIcon={folder ? <FolderOpenOutlinedIcon /> : <UploadFileOutlinedIcon />}
+        onClick={() => inputRef.current?.click()}
+      >
       {label}
+      </Button>
       <input
-        hidden type="file" accept={accept} multiple={multiple || folder}
+        ref={inputRef}
+        hidden
+        type="file"
+        accept={accept}
+        multiple={multiple || folder}
         webkitdirectory={folder ? '' : undefined}
         onChange={(event) => {
           const files = folder ? topLevelFolderFiles(event.target.files) : Array.from(event.target.files ?? []);
@@ -34,7 +47,7 @@ function FileButton({ label, accept, multiple = false, folder = false, onFiles }
           event.target.value = '';
         }}
       />
-    </Button>
+    </>
   );
 }
 
