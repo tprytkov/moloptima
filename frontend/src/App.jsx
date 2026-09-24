@@ -45,6 +45,7 @@ import MedicationOutlinedIcon from '@mui/icons-material/MedicationOutlined';
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
+import moloptimaLogo from './assets/moloptima-logo.png';
 import AdmetResultsSection, {
   aggregateAdmetFamilyStatus,
   deriveAdmetFamilyStatuses,
@@ -857,25 +858,11 @@ function Sidebar({ activeItem, onSelect, onNewCalculation }) {
     >
       <Toolbar sx={{ alignItems: 'center', gap: 1.25, px: 2 }}>
         <Box
-          aria-hidden="true"
-          sx={{
-            width: 30,
-            height: 30,
-            borderRadius: 1.5,
-            bgcolor: 'primary.main',
-            display: 'grid',
-            placeItems: 'center',
-            color: '#ffffff',
-            fontWeight: 800,
-          }}
-        >
-          M
-        </Box>
-        <Box>
-          <Typography variant="subtitle1" sx={{ lineHeight: 1.05, fontWeight: 800, letterSpacing: '0.03em' }}>
-            MOLOPTIMA
-          </Typography>
-        </Box>
+          component="img"
+          src={moloptimaLogo}
+          alt="MolOptima"
+          sx={{ width: '100%', maxWidth: 180, height: 'auto', display: 'block' }}
+        />
       </Toolbar>
       <Divider />
       <Box sx={{ px: 1, py: 1.25 }}>

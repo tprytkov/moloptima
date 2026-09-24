@@ -25,6 +25,13 @@ test('primary navigation follows the scientific workflow and hides history tools
   assert.equal(labels.includes('Run Comparison'), false);
 });
 
+test('sidebar uses the approved MolOptima logo without a duplicate wordmark', async () => {
+  const source = await readFile(new URL('./App.jsx', import.meta.url), 'utf8');
+  assert.match(source, /moloptima-logo\.png/);
+  assert.match(source, /alt="MolOptima"/);
+  assert.doesNotMatch(source, />MOLOPTIMA<\/Typography>/);
+});
+
 test('primary-page scroll reset targets the provided scrolling element', () => {
   let options = null;
   module.resetPrimaryPageScroll({ scrollTo: (value) => { options = value; } });
