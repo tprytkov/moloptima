@@ -34,8 +34,57 @@ test('renders the professional receptor upload and explicit box workflow', () =>
   assert.match(html, /Center X/);
   assert.match(html, /Size X/);
   assert.match(html, /updates immediately/);
+  assert.match(html, /Hide search box/);
+  assert.match(html, /Reset view/);
+  assert.match(html, /Focus search box/);
+  assert.match(html, /Incomplete search space/);
   assert.match(html, /Confirm Docking Setup/);
   assert.match(html, /data-testid="receptor-viewer"/);
+});
+
+test('valid search-space values produce a rounded accessible summary without mutating values', () => {
+  const box = {
+    centerX: '-1.25', centerY: '2.5', centerZ: '0',
+    sizeX: '20.125', sizeY: '21.5', sizeZ: '22.75',
+  };
+  const snapshot = structuredClone(box);
+  assert.deepEqual(module.searchSpacePresentation(box), {
+    status: 'valid',
+    center: 'Center: (-1.25, 2.50, 0.00) Å',
+    size: 'Size: 20.13 × 21.50 × 22.75 Å',
+  });
+  assert.deepEqual(box, snapshot);
+});
+
+test('search-space presentation distinguishes incomplete, invalid, and invalid-size states', () => {
+  const valid = {
+    centerX: '-1', centerY: '0', centerZ: '2', sizeX: '20', sizeY: '21', sizeZ: '22',
+  };
+  assert.equal(module.searchSpacePresentation({ ...valid, centerX: '' }).status, 'incomplete');
+  assert.equal(module.searchSpacePresentation({ ...valid, centerX: 'Infinity' }).status, 'invalid');
+  assert.equal(module.searchSpacePresentation({ ...valid, sizeX: '0' }).status, 'invalid-size');
+  assert.equal(module.searchSpacePresentation({ ...valid, sizeZ: '-1' }).status, 'invalid-size');
+});
+
+test('numeric edits immediately change the derived box summary', () => {
+  const original = {
+    centerX: '-1', centerY: '0', centerZ: '2', sizeX: '20', sizeY: '21', sizeZ: '22',
+  };
+  const moved = module.searchSpacePresentation({ ...original, centerX: '-8.125' });
+  const resized = module.searchSpacePresentation({ ...original, sizeZ: '33.75' });
+  assert.equal(moved.center, 'Center: (-8.13, 0.00, 2.00) Å');
+  assert.equal(resized.size, 'Size: 20.00 × 21.00 × 33.75 Å');
+});
+
+test('ligand selection resolution switches identity and clears without stale metadata', () => {
+  const ligands = [
+    { ligand_id: 'I33:A:603:_', residue_name: 'I33' },
+    { ligand_id: 'I34:B:602:_', residue_name: 'I34' },
+  ];
+  assert.equal(module.selectedLigandForId(ligands, 'I33:A:603:_').residue_name, 'I33');
+  assert.equal(module.selectedLigandForId(ligands, 'I34:B:602:_').residue_name, 'I34');
+  assert.equal(module.selectedLigandForId(ligands, ''), null);
+  assert.equal(module.selectedLigandForId(ligands, 'missing'), null);
 });
 
 test('preparation choices fail closed until chains, hetero groups, and altlocs are explicit', () => {
@@ -48,6 +97,44 @@ test('preparation choices fail closed until chains, hetero groups, and altlocs a
   assert.equal(module.preparationSelectionReady(
     inventory, ['A'], { 'LIG:A:401:_': 'exclude' }, { 'A:12': 'B' },
   ), true);
+});
+
+const HETERO_GROUPS = [
+  { group_id: 'LIG:A:401:_', residue_name: 'LIG' },
+  { group_id: 'ZN:A:500:_', residue_name: 'ZN' },
+];
+
+test('new heterogroup inventories default every receptor action to Exclude', () => {
+  assert.deepEqual(module.heteroChoicesForInventory(HETERO_GROUPS), {
+    'LIG:A:401:_': 'exclude',
+    'ZN:A:500:_': 'exclude',
+  });
+  assert.equal(Object.values(module.heteroChoicesForInventory(HETERO_GROUPS)).includes(''), false);
+});
+
+test('individual Keep overrides preserve other heterogroup actions', () => {
+  const initial = module.createReceptorScopedState({
+    heteroChoices: module.heteroChoicesForInventory(HETERO_GROUPS),
+  });
+  const changed = module.updateHeteroChoice(initial, 'LIG:A:401:_', 'keep');
+  assert.deepEqual(changed.heteroChoices, {
+    'LIG:A:401:_': 'keep',
+    'ZN:A:500:_': 'exclude',
+  });
+  assert.equal(initial.heteroChoices['LIG:A:401:_'], 'exclude');
+});
+
+test('Exclude all resets receptor actions without changing Use for pocket selection', () => {
+  const current = module.createReceptorScopedState({
+    heteroChoices: { 'LIG:A:401:_': 'keep', 'ZN:A:500:_': 'keep' },
+    pocketGroupId: 'LIG:A:401:_',
+  });
+  const excluded = module.excludeAllHeteroGroups(current, HETERO_GROUPS);
+  assert.deepEqual(excluded.heteroChoices, {
+    'LIG:A:401:_': 'exclude',
+    'ZN:A:500:_': 'exclude',
+  });
+  assert.equal(excluded.pocketGroupId, 'LIG:A:401:_');
 });
 
 test('preparation payload contains semantic choices and explicit bound-ligand exclusion', () => {
@@ -162,6 +249,16 @@ function lifecycleReceptor(id, overrides = {}) {
   };
 }
 
+function receptorWithHeteroGroups(id, groups, overrides = {}) {
+  return lifecycleReceptor(id, {
+    structure_inventory: {
+      protein: { chains: [{ chain: id.toUpperCase() }] },
+      hetero_groups: groups,
+    },
+    ...overrides,
+  });
+}
+
 function populatedReceptorState() {
   return module.createReceptorScopedState({
     method: 'selected_region',
@@ -214,6 +311,44 @@ test('same receptor preparation preserves one authoritative box and clears unmap
   assert.deepEqual(next.altlocChoices, current.altlocChoices);
   assert.equal(next.pocketGroupId, current.pocketGroupId);
   assert.equal(next.confirmed, null);
+});
+
+test('normal same-receptor refresh preserves explicit heterogroup choices', () => {
+  const receptor = receptorWithHeteroGroups('a', HETERO_GROUPS);
+  const current = populatedReceptorState();
+  current.heteroChoices = { 'LIG:A:401:_': 'keep', 'ZN:A:500:_': 'exclude' };
+  const next = module.transitionReceptorScopedState(current, receptor, { ...receptor });
+  assert.deepEqual(next.heteroChoices, current.heteroChoices);
+});
+
+test('different receptor receives fresh Exclude defaults without receptor A state', () => {
+  const receptorA = receptorWithHeteroGroups('a', HETERO_GROUPS);
+  const receptorBGroups = [{ group_id: 'HEM:B:700:_', residue_name: 'HEM' }];
+  const receptorB = receptorWithHeteroGroups('b', receptorBGroups);
+  const current = populatedReceptorState();
+  current.heteroChoices = { 'LIG:A:401:_': 'keep', 'ZN:A:500:_': 'keep' };
+  const next = module.transitionReceptorScopedState(current, receptorA, receptorB);
+  assert.deepEqual(next.heteroChoices, { 'HEM:B:700:_': 'exclude' });
+});
+
+test('same receptor artifact refresh preserves valid choices and defaults newly detected groups', () => {
+  const source = receptorWithHeteroGroups('a', HETERO_GROUPS);
+  const refreshedGroups = [
+    HETERO_GROUPS[0],
+    { group_id: 'MG:A:600:_', residue_name: 'MG' },
+  ];
+  const prepared = receptorWithHeteroGroups('a', refreshedGroups, {
+    docking_ready: true,
+    preparation_id: 'preparation-1',
+    docking_receptor_sha256: 'prepared-hash',
+  });
+  const current = populatedReceptorState();
+  current.heteroChoices = { 'LIG:A:401:_': 'keep', 'ZN:A:500:_': 'keep' };
+  const next = module.transitionReceptorScopedState(current, source, prepared);
+  assert.deepEqual(next.heteroChoices, {
+    'LIG:A:401:_': 'keep',
+    'MG:A:600:_': 'exclude',
+  });
 });
 
 test('same receptor with a new preparation or docking hash is an artifact change', () => {

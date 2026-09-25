@@ -50,12 +50,43 @@ export function createReceptorScopedState(overrides = {}) {
   };
 }
 
+export function heteroChoicesForInventory(groups = [], existingChoices = {}) {
+  return Object.fromEntries(groups.map((group) => [
+    group.group_id,
+    ['keep', 'exclude'].includes(existingChoices[group.group_id])
+      ? existingChoices[group.group_id]
+      : 'exclude',
+  ]));
+}
+
+export function updateHeteroChoice(current, groupId, action) {
+  if (!['keep', 'exclude'].includes(action)) return current;
+  return {
+    ...current,
+    heteroChoices: { ...current.heteroChoices, [groupId]: action },
+  };
+}
+
+export function excludeAllHeteroGroups(current, groups = []) {
+  return {
+    ...current,
+    heteroChoices: heteroChoicesForInventory(groups),
+  };
+}
+
 export function transitionReceptorScopedState(current, previousReceptor, nextReceptor) {
   const transition = classifyReceptorTransition(previousReceptor, nextReceptor);
+  const nextGroups = nextReceptor?.structure_inventory?.hetero_groups;
   if (transition.receptorChanged) {
     const chains = nextReceptor?.structure_inventory?.protein?.chains ?? [];
-    return createReceptorScopedState({ selectedChains: chains.map((item) => item.chain) });
+    return createReceptorScopedState({
+      selectedChains: chains.map((item) => item.chain),
+      heteroChoices: heteroChoicesForInventory(nextGroups ?? []),
+    });
   }
+  const heteroChoices = Array.isArray(nextGroups)
+    ? heteroChoicesForInventory(nextGroups, current.heteroChoices)
+    : current.heteroChoices;
   if (transition.artifactChanged) {
     return {
       ...current,
@@ -63,10 +94,11 @@ export function transitionReceptorScopedState(current, previousReceptor, nextRec
       selectedAtom: null,
       selectedResidues: [],
       selectedLigandId: '',
+      heteroChoices,
       confirmed: null,
     };
   }
-  return { ...current, confirmed: null };
+  return { ...current, heteroChoices, confirmed: null };
 }
 
 export function createLatestRequestGuard(AbortControllerClass = globalThis.AbortController) {
@@ -225,6 +257,32 @@ export function dockingReadiness(receptor, box) {
   };
 }
 
+export function searchSpacePresentation(box) {
+  const centerInput = [box.centerX, box.centerY, box.centerZ];
+  const sizeInput = [box.sizeX, box.sizeY, box.sizeZ];
+  const inputs = [...centerInput, ...sizeInput];
+  if (inputs.some((value) => value === '' || value === null || value === undefined)) {
+    return {
+      status: 'incomplete',
+      message: 'Incomplete search space. Enter all three center coordinates and all three box dimensions.',
+    };
+  }
+  const center = centerInput.map(Number);
+  const size = sizeInput.map(Number);
+  if (![...center, ...size].every(Number.isFinite)) {
+    return { status: 'invalid', message: 'Invalid search space. Enter finite numeric values.' };
+  }
+  if (size.some((value) => value <= 0)) {
+    return { status: 'invalid-size', message: 'Invalid search-box size. All three dimensions must be greater than 0 Å.' };
+  }
+  const display = (value) => (Object.is(value, -0) ? 0 : value).toFixed(2);
+  return {
+    status: 'valid',
+    center: `Center: (${center.map(display).join(', ')}) Å`,
+    size: `Size: ${size.map(display).join(' × ')} Å`,
+  };
+}
+
 export function configurationPayload(receptorId, method, selectedLigandId, box, advanced) {
   const energyRange = numericOrNull(advanced.energyRange);
   const centerMethod = ['selected_atom', 'selected_region'].includes(method) ? 'atom_or_residue' : method;
@@ -239,6 +297,11 @@ export function configurationPayload(receptorId, method, selectedLigandId, box, 
   };
 }
 
+export function selectedLigandForId(boundLigands, ligandId) {
+  if (!ligandId) return null;
+  return boundLigands.find((ligand) => ligand.ligand_id === ligandId) ?? null;
+}
+
 export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [receptor, setReceptor] = useState(null);
@@ -249,6 +312,7 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
   const [error, setError] = useState('');
   const [preparationRuntime, setPreparationRuntime] = useState(null);
   const [preparing, setPreparing] = useState(false);
+  const [showBox, setShowBox] = useState(true);
   const [receptorState, setReceptorState] = useState(() => createReceptorScopedState());
   const {
     method, selectedAtom, selectedResidues, selectedLigandId, box, confirmed,
@@ -265,7 +329,6 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
   const setBox = (value) => setReceptorField('box', value);
   const setConfirmed = (value) => setReceptorField('confirmed', value);
   const setSelectedChains = (value) => setReceptorField('selectedChains', value);
-  const setHeteroChoices = (value) => setReceptorField('heteroChoices', value);
   const setAltlocChoices = (value) => setReceptorField('altlocChoices', value);
   const setPocketGroupId = (value) => setReceptorField('pocketGroupId', value);
   const viewerRef = useRef(null);
@@ -312,13 +375,14 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
 
   const boundLigands = receptor?.bound_ligands ?? [];
   const inventory = receptor?.structure_inventory ?? null;
-  const selectedLigand = boundLigands.find((ligand) => ligand.ligand_id === selectedLigandId);
+  const selectedLigand = selectedLigandForId(boundLigands, selectedLigandId);
   const selectedRegionAtoms = useMemo(() => {
     const viewer = viewerRef.current;
     if (!viewer) return [];
     return selectedResidues.flatMap((residue) => viewer.selectedAtoms({ chain: residue.chain, resi: residue.residueNumber, resn: residue.residueName }));
   }, [selectedResidues]);
   const readiness = dockingReadiness(receptor, box);
+  const searchSpace = searchSpacePresentation(box);
   const ready = Object.values(readiness).every(Boolean);
   const preparationReady = preparationSelectionReady(inventory, selectedChains, heteroChoices, altlocChoices);
 
@@ -363,6 +427,10 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
     setCenter({ x: group.centroid.center_x, y: group.centroid.center_y, z: group.centroid.center_z });
     const ligand = boundLigands.find((item) => item.ligand_id === group.group_id);
     setSelectedLigandId(ligand?.ligand_id ?? '');
+  }
+
+  function setHeteroAction(groupId, action) {
+    setReceptorState((current) => updateHeteroChoice(current, groupId, action));
   }
 
   async function handlePrepare() {
@@ -430,11 +498,21 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
                 {(inventory.protein?.chains ?? []).map((item) => <FormControlLabel key={item.chain || '_blank'} control={<Checkbox checked={selectedChains.includes(item.chain)} onChange={() => toggleChain(item.chain)} />} label={`${item.chain || '(blank)'} · ${item.residue_count} residues`} />)}
               </Stack></Box>
               <Box><Typography variant="subtitle2">Waters</Typography><FormControlLabel control={<Radio checked readOnly />} label={`Remove all waters (${inventory.waters?.count ?? 0} detected)`} /><Typography variant="caption" color="text.secondary" display="block">Selected-water retention is not supported safely in Stage 1; removal is explicit and recorded, not presented as universally optimal.</Typography></Box>
-              <Box><Typography variant="subtitle2" sx={{ mb: 0.5 }}>Hetero groups</Typography>
+              <Box><Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
+                <Typography variant="subtitle2">Hetero groups</Typography>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={!(inventory.hetero_groups ?? []).length}
+                  onClick={() => setReceptorState((current) => excludeAllHeteroGroups(current, inventory.hetero_groups))}
+                >
+                  Exclude all
+                </Button>
+              </Stack>
                 {(inventory.hetero_groups ?? []).length ? <Table size="small" aria-label="Receptor hetero groups"><TableHead><TableRow><TableCell>Receptor action</TableCell><TableCell>Use for pocket</TableCell><TableCell>Type</TableCell><TableCell>Residue</TableCell><TableCell>Chain</TableCell><TableCell>Number</TableCell><TableCell align="right">Atoms</TableCell></TableRow></TableHead><TableBody>
-                  {inventory.hetero_groups.map((group) => <TableRow key={group.group_id}><TableCell><TextField select size="small" aria-label={`Receptor action ${group.group_id}`} value={heteroChoices[group.group_id] ?? ''} onChange={(event) => setHeteroChoices((current) => ({ ...current, [group.group_id]: event.target.value }))} sx={{ minWidth: 110 }}><MenuItem value=""><em>Choose</em></MenuItem><MenuItem value="keep">Keep</MenuItem><MenuItem value="exclude">Exclude</MenuItem></TextField></TableCell><TableCell><Checkbox aria-label={`Use ${group.group_id} for pocket definition`} checked={pocketGroupId === group.group_id} onChange={(event) => useHeteroForPocket(group, event.target.checked)} /></TableCell><TableCell>{group.type.replace('_', ' ')}</TableCell><TableCell>{group.residue_name}</TableCell><TableCell>{group.chain || '–'}</TableCell><TableCell>{group.residue_number}{group.insertion_code}</TableCell><TableCell align="right">{group.atom_count}</TableCell></TableRow>)}
+                  {inventory.hetero_groups.map((group) => <TableRow key={group.group_id}><TableCell><TextField select size="small" aria-label={`Receptor action ${group.group_id}`} value={heteroChoices[group.group_id] ?? 'exclude'} onChange={(event) => setHeteroAction(group.group_id, event.target.value)} sx={{ minWidth: 110 }}><MenuItem value="keep">Keep</MenuItem><MenuItem value="exclude">Exclude</MenuItem></TextField></TableCell><TableCell><Checkbox aria-label={`Use ${group.group_id} for pocket definition`} checked={pocketGroupId === group.group_id} onChange={(event) => useHeteroForPocket(group, event.target.checked)} /></TableCell><TableCell>{group.type.replace('_', ' ')}</TableCell><TableCell>{group.residue_name}</TableCell><TableCell>{group.chain || '–'}</TableCell><TableCell>{group.residue_number}{group.insertion_code}</TableCell><TableCell align="right">{group.atom_count}</TableCell></TableRow>)}
                 </TableBody></Table> : <Typography variant="caption" color="text.secondary">No non-water hetero groups detected.</Typography>}
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>Every group requires an explicit Keep or Exclude choice. Unsupported retained cofactors, ions, or hetero residues fail preparation; they are never silently dropped.</Typography>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>Heterogroups are excluded from the prepared docking receptor by default. Keep only ions, cofactors, ligands, or other groups required for your docking model. Unsupported retained groups fail preparation; they are never silently dropped.</Typography>
               </Box>
               {(inventory.alternate_locations ?? []).length ? <Box><Typography variant="subtitle2">Alternate locations</Typography><Stack spacing={0.75}>{inventory.alternate_locations.map((item) => <TextField key={item.residue_key} select size="small" label={`Conformer for ${item.residue_key}`} value={altlocChoices[item.residue_key] ?? ''} onChange={(event) => setAltlocChoices((current) => ({ ...current, [item.residue_key]: event.target.value }))}><MenuItem value=""><em>Choose explicitly</em></MenuItem>{item.choices.map((choice) => <MenuItem key={choice} value={choice}>{choice}</MenuItem>)}</TextField>)}</Stack></Box> : null}
               <Box sx={{ bgcolor: '#f7f9fb', p: 1.25, borderRadius: 1 }}><Typography variant="subtitle2">Preparation Summary</Typography>
@@ -454,11 +532,33 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
           </Stack>
         </Box>
 
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+          <Button
+            variant="outlined"
+            aria-pressed={showBox}
+            onClick={() => setShowBox((current) => !current)}
+          >
+            {showBox ? 'Hide search box' : 'Show search box'}
+          </Button>
+          <Button variant="outlined" disabled={!structure} onClick={() => viewerRef.current?.resetView()}>
+            Reset view
+          </Button>
+          <Button
+            variant="outlined"
+            disabled={!structure || searchSpace.status !== 'valid'}
+            onClick={() => viewerRef.current?.focusBox()}
+          >
+            Focus search box
+          </Button>
+        </Stack>
+
         <ReceptorViewer
           ref={viewerRef}
           structure={structure}
           box={box}
+          showBox={showBox}
           selectedResidues={selectedResidues}
+          selectedLigand={selectedLigand}
           onAtomSelect={(atom) => setSelectedAtom(atomDetails(atom))}
           onError={(viewerError) => setError(`Interactive receptor viewer unavailable: ${viewerError.message ?? viewerError}`)}
         />
@@ -482,7 +582,9 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
         </RadioGroup></FormControl>
 
         {boundLigands.length ? <TextField select label="Detected bound ligand" value={selectedLigandId} onChange={(event) => {
-          const ligand = boundLigands.find((item) => item.ligand_id === event.target.value); if (ligand) { setMethod('bound_ligand'); selectLigand(ligand); }
+          const ligand = selectedLigandForId(boundLigands, event.target.value);
+          if (!ligand) { setSelectedLigandId(''); return; }
+          setMethod('bound_ligand'); selectLigand(ligand);
         }}><MenuItem value=""><em>Select a ligand</em></MenuItem>{boundLigands.map((ligand) => <MenuItem key={ligand.ligand_id} value={ligand.ligand_id}>{ligand.residue_name} {ligand.chain || '–'} {ligand.residue_number} ({ligand.atom_count} atoms)</MenuItem>)}</TextField>
           : <Alert severity="info">No plausible non-water bound ligand was identified. Bound-ligand mode is unavailable.</Alert>}
 
@@ -497,6 +599,16 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
         <NumericGrid title="Center (Å)" values={box} setValues={setBox} fields={[["centerX", "Center X"], ["centerY", "Center Y"], ["centerZ", "Center Z"]]} />
         <NumericGrid title="Box size (Å)" values={box} setValues={setBox} fields={[["sizeX", "Size X"], ["sizeY", "Size Y"], ["sizeZ", "Size Z"]]} />
         <Typography variant="caption" color="text.secondary">The translucent box updates immediately when center or dimensions change.</Typography>
+        <Box aria-live="polite" sx={{ p: 1.25, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+          {searchSpace.status === 'valid' ? <Stack spacing={0.25}>
+            <Typography variant="subtitle2">Search box</Typography>
+            <Typography variant="body2">{searchSpace.center}</Typography>
+            <Typography variant="body2">{searchSpace.size}</Typography>
+            {!showBox ? <Typography variant="caption" color="text.secondary">The search box is hidden in the 3D viewer.</Typography> : null}
+          </Stack> : <Alert severity={searchSpace.status === 'incomplete' ? 'info' : 'warning'}>
+            {searchSpace.message} The numeric inputs remain editable.
+          </Alert>}
+        </Box>
 
         <Box component="details"><Typography component="summary" variant="subtitle2" sx={{ cursor: 'pointer' }}>Advanced Vina settings</Typography><Box sx={{ mt: 1 }}>
           <NumericGrid values={advanced} setValues={setAdvanced} fields={[["exhaustiveness", "Exhaustiveness"], ["workerCount", "Workers"], ["numModes", "Number of modes"], ["energyRange", "Energy range (kcal/mol)"], ["seed", "Random seed"]]} />
