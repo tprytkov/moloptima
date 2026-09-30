@@ -56,6 +56,11 @@ import PrioritizationExplanationSection from './PrioritizationExplanationSection
 import PrioritizationAnalysisPanel from './PrioritizationAnalysisPanel.jsx';
 import PrioritizationSettings from './PrioritizationSettings.jsx';
 import MoleculeInputPanel from './MoleculeInputPanel.jsx';
+import {
+  applyMoleculeSelectionUpdate,
+  filesForMoleculeValidation,
+  pendingSelectionLimitError,
+} from './moleculeSelection.js';
 import ResultsPackageDownloads from './ResultsPackageDownloads.jsx';
 import {
   TERMINAL_JOB_STATUSES,
@@ -188,7 +193,7 @@ export const PRIMARY_NAVIGATION = [
 
 const EMPTY_UPLOAD_STATE = Object.freeze({
   smilesText: '', selectedFiles: [], selectedStructureColumn: '', upload: null,
-  loading: false, error: '',
+  loading: false, error: '', fileInputResetKey: 0,
 });
 const EMPTY_PRIORITIZATION_STATE = Object.freeze({
   job: null, result: null, loading: false, error: '',
@@ -445,8 +450,18 @@ function App() {
   }, []);
 
   async function handleUpload() {
-    if (!uploadState.smilesText?.trim() && !uploadState.selectedFiles?.length) {
+    const uploadableFiles = filesForMoleculeValidation(uploadState.selectedFiles);
+    const selectionError = pendingSelectionLimitError(uploadState.selectedFiles, uploadState.smilesText);
+    if (health.status !== 'online') {
+      setUploadState((current) => ({ ...current, error: 'Validation requires the MolOptima backend. Your selected files are preserved.' }));
+      return;
+    }
+    if (!uploadState.smilesText?.trim() && !uploadableFiles.length) {
       setUploadState((current) => ({ ...current, error: 'Enter SMILES or select molecule files before validating.' }));
+      return;
+    }
+    if (selectionError) {
+      setUploadState((current) => ({ ...current, error: selectionError }));
       return;
     }
 
@@ -456,7 +471,7 @@ function App() {
     const formData = new FormData();
     formData.append('smiles_text', uploadState.smilesText ?? '');
     formData.append('selected_structure_column', uploadState.selectedStructureColumn ?? '');
-    (uploadState.selectedFiles ?? []).forEach((file) => formData.append('files', file));
+    uploadableFiles.forEach((file) => formData.append('files', file));
 
     try {
       const payload = await apiRequest('/api/molecules/import', {
@@ -472,7 +487,6 @@ function App() {
     } catch (error) {
       setUploadState((current) => ({
         ...current,
-        upload: null,
         loading: false,
         error: readableError(error),
       }));
@@ -480,16 +494,7 @@ function App() {
   }
 
   function handleMoleculeInputChange(update) {
-    if (update.addFiles) {
-      setUploadState((current) => ({
-        ...current,
-        selectedFiles: [...(current.selectedFiles ?? []), ...update.addFiles],
-        upload: null,
-        error: '',
-      }));
-      return;
-    }
-    setUploadState((current) => ({ ...current, ...update }));
+    setUploadState((current) => applyMoleculeSelectionUpdate(current, update));
   }
 
   function handleNewCalculation() {
@@ -966,6 +971,7 @@ function ActivePage({
   if (activeItem === 'Molecules' || activeItem === 'Upload Molecules') {
     return (
       <UploadMoleculesPage
+        backendHealth={health}
         uploadState={uploadState}
         onUpload={onUpload}
         onChange={onMoleculeInputChange}
@@ -2962,8 +2968,8 @@ function formatCounts(counts) {
     .join(', ');
 }
 
-function UploadMoleculesPage({ uploadState, onUpload, onChange, onContinue }) {
-  return <MoleculeInputPanel uploadState={uploadState} onImport={onUpload} onChange={onChange} onContinue={onContinue} />;
+function UploadMoleculesPage({ uploadState, backendHealth, onUpload, onChange, onContinue }) {
+  return <MoleculeInputPanel uploadState={uploadState} backendHealth={backendHealth} onImport={onUpload} onChange={onChange} onContinue={onContinue} />;
 }
 
 export function CandidateExportPanel({ rows }) {

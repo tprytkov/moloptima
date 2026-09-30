@@ -5,6 +5,12 @@ import {
 } from '@mui/material';
 import FolderOpenOutlinedIcon from '@mui/icons-material/FolderOpenOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
+import {
+  FILE_PREVIEW_LIMIT,
+  LARGE_SELECTION_THRESHOLD,
+  classifyPendingMoleculeFiles,
+  pendingSelectionLimitError,
+} from './moleculeSelection.js';
 
 const PDB_WARNING = 'SDF is preferred for small-molecule structure files because it preserves bond orders and formal charges more reliably than PDB.';
 
@@ -21,7 +27,7 @@ export function topLevelFolderFiles(fileList) {
   });
 }
 
-function FileButton({ label, accept, multiple = false, folder = false, onFiles }) {
+function FileButton({ label, accept, multiple = false, folder = false, onFiles, resetKey = 0 }) {
   const inputRef = useRef(null);
   return (
     <>
@@ -35,6 +41,7 @@ function FileButton({ label, accept, multiple = false, folder = false, onFiles }
       {label}
       </Button>
       <input
+        key={resetKey}
         ref={inputRef}
         hidden
         type="file"
@@ -51,11 +58,20 @@ function FileButton({ label, accept, multiple = false, folder = false, onFiles }
   );
 }
 
-export default function MoleculeInputPanel({ uploadState, onChange, onImport, onContinue }) {
+export default function MoleculeInputPanel({ uploadState, backendHealth, onChange, onImport, onContinue }) {
   const upload = uploadState.upload;
   const preview = upload?.preview ?? [];
   const valid = upload?.valid_count ?? 0;
-  const canSubmit = Boolean(uploadState.smilesText?.trim() || uploadState.selectedFiles?.length);
+  const selectedFiles = uploadState.selectedFiles ?? [];
+  const selection = classifyPendingMoleculeFiles(selectedFiles);
+  const blockingSelectionError = pendingSelectionLimitError(selectedFiles, uploadState.smilesText);
+  const hasSupportedPendingInput = Boolean(uploadState.smilesText?.trim() || selection.supported.length);
+  const backendOnline = backendHealth?.status === 'online';
+  const canSubmit = backendOnline && hasSupportedPendingInput && !blockingSelectionError;
+  const visibleFiles = selection.total > LARGE_SELECTION_THRESHOLD
+    ? selectedFiles.slice(0, FILE_PREVIEW_LIMIT)
+    : selectedFiles;
+  const hiddenFileCount = selection.total - visibleFiles.length;
   return (
     <Stack spacing={3}>
       <Box>
@@ -75,35 +91,51 @@ export default function MoleculeInputPanel({ uploadState, onChange, onImport, on
             label="Enter / Paste SMILES" multiline minRows={5}
             placeholder={'CCO\ncmpd_002    CCN\nc1ccccc1'}
             value={uploadState.smilesText ?? ''}
-            onChange={(event) => onChange({ smilesText: event.target.value, upload: null, error: '' })}
+            onChange={(event) => onChange({ smilesText: event.target.value, error: '' })}
             helperText="One molecule per line: SMILES only, or molecule_id followed by SMILES. Blank lines are ignored."
           />
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} useFlexGap flexWrap="wrap">
-            <FileButton label="Upload CSV / TSV" accept=".csv,.tsv,text/csv,text/tab-separated-values" multiple onFiles={(files) => onChange({ addFiles: files })} />
-            <FileButton label="Upload SDF" accept=".sdf,chemical/x-mdl-sdfile" multiple onFiles={(files) => onChange({ addFiles: files })} />
-            <FileButton label="Upload Ligand PDB" accept=".pdb,chemical/x-pdb" multiple onFiles={(files) => onChange({ addFiles: files })} />
-            <FileButton label="Select Structure Files" accept=".sdf,.pdb" multiple onFiles={(files) => onChange({ addFiles: files })} />
-            <FileButton label="Select Folder · SDF library" accept=".sdf" folder onFiles={(files) => onChange({ addFiles: files })} />
-            <FileButton label="Select Folder · PDB library" accept=".pdb" folder onFiles={(files) => onChange({ addFiles: files })} />
+            <FileButton resetKey={uploadState.fileInputResetKey} label="Upload CSV / TSV" accept=".csv,.tsv,text/csv,text/tab-separated-values" multiple onFiles={(files) => onChange({ addFiles: files })} />
+            <FileButton resetKey={uploadState.fileInputResetKey} label="Upload SDF" accept=".sdf,chemical/x-mdl-sdfile" multiple onFiles={(files) => onChange({ addFiles: files })} />
+            <FileButton resetKey={uploadState.fileInputResetKey} label="Upload Ligand PDB" accept=".pdb,chemical/x-pdb" multiple onFiles={(files) => onChange({ addFiles: files })} />
+            <FileButton resetKey={uploadState.fileInputResetKey} label="Select Structure Files" accept=".sdf,.pdb" multiple onFiles={(files) => onChange({ addFiles: files })} />
+            <FileButton resetKey={uploadState.fileInputResetKey} label="Select Folder · SDF library" accept=".sdf" folder onFiles={(files) => onChange({ addFiles: files })} />
+            <FileButton resetKey={uploadState.fileInputResetKey} label="Select Folder · PDB library" accept=".pdb" folder onFiles={(files) => onChange({ addFiles: files })} />
           </Stack>
           <Alert severity="info">{PDB_WARNING}</Alert>
           <TextField
             label="Explicit CSV/TSV structure column (when ambiguous)"
             placeholder="smiles or canonical_smiles"
             value={uploadState.selectedStructureColumn ?? ''}
-            onChange={(event) => onChange({ selectedStructureColumn: event.target.value, upload: null })}
+            onChange={(event) => onChange({ selectedStructureColumn: event.target.value, error: '' })}
             helperText="Leave blank when the file has exactly one supported structure column. MolOptima will not guess between multiple plausible columns."
           />
           <Box>
-            <Typography variant="subtitle2">Pending collection</Typography>
-            <Typography color="text.secondary">
-              {uploadState.selectedFiles?.length ?? 0} file(s) selected
-              {uploadState.smilesText?.trim() ? ' · entered SMILES included' : ''}
-            </Typography>
-            {(uploadState.selectedFiles ?? []).length ? <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ mt: 1 }}>
-              {uploadState.selectedFiles.map((file, index) => <Chip key={`${file.name}-${file.size}-${index}`} label={file.name} variant="outlined" />)}
+            <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} gap={1}>
+              <Box>
+                <Typography variant="subtitle2">Pending collection</Typography>
+                <Typography color="text.secondary">
+                  Selected files: {selection.total} · Supported: {selection.supported.length} · Unsupported: {selection.unsupported.length}
+                  {uploadState.smilesText?.trim() ? ' · entered SMILES included' : ''}
+                </Typography>
+              </Box>
+              <Button
+                variant="text"
+                type="button"
+                disabled={!selection.total}
+                onClick={() => onChange({ clearSelectedFiles: true })}
+              >
+                Clear selected files
+              </Button>
+            </Stack>
+            {selection.total ? <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ mt: 1 }}>
+              {visibleFiles.map((file) => <Chip key={file.webkitRelativePath || `${file.name}-${file.size}-${file.lastModified}`} label={file.webkitRelativePath || file.name} variant="outlined" />)}
+              {hiddenFileCount > 0 ? <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>+ {hiddenFileCount} more</Typography> : null}
             </Stack> : null}
           </Box>
+          {selection.unsupported.length ? <Alert severity="warning">{selection.unsupported.length} unsupported file{selection.unsupported.length === 1 ? '' : 's'} will be ignored. Supported formats: CSV, TSV, SDF, and ligand PDB.</Alert> : null}
+          {backendHealth?.status === 'offline' && hasSupportedPendingInput ? <Alert severity="warning">Validation requires the MolOptima backend. Your selected files are preserved.</Alert> : null}
+          {blockingSelectionError ? <Alert severity="error">{blockingSelectionError}</Alert> : null}
           {uploadState.error ? <Alert severity="error">{uploadState.error}</Alert> : null}
           <Box>
             <Button variant="contained" disabled={!canSubmit || uploadState.loading} onClick={onImport} startIcon={uploadState.loading ? <CircularProgress size={18} color="inherit" /> : null}>
