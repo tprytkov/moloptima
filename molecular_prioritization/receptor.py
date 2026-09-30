@@ -23,6 +23,19 @@ STANDARD_PROTEIN_RESIDUES = frozenset({
     "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
     "ASX", "GLX", "SEC", "PYL", "MSE",
 })
+PDB_ELEMENT_SYMBOLS = frozenset({
+    "H", "HE", "LI", "BE", "B", "C", "N", "O", "F", "NE", "NA", "MG",
+    "AL", "SI", "P", "S", "CL", "AR", "K", "CA", "SC", "TI", "V", "CR",
+    "MN", "FE", "CO", "NI", "CU", "ZN", "GA", "GE", "AS", "SE", "BR",
+    "KR", "RB", "SR", "Y", "ZR", "NB", "MO", "TC", "RU", "RH", "PD",
+    "AG", "CD", "IN", "SN", "SB", "TE", "I", "XE", "CS", "BA", "LA",
+    "CE", "PR", "ND", "PM", "SM", "EU", "GD", "TB", "DY", "HO", "ER",
+    "TM", "YB", "LU", "HF", "TA", "W", "RE", "OS", "IR", "PT", "AU",
+    "HG", "TL", "PB", "BI", "PO", "AT", "RN", "FR", "RA", "AC", "TH",
+    "PA", "U", "NP", "PU", "AM", "CM", "BK", "CF", "ES", "FM", "MD",
+    "NO", "LR", "RF", "DB", "SG", "BH", "HS", "MT", "DS", "RG", "CN",
+    "NH", "FL", "MC", "LV", "TS", "OG", "D",
+})
 
 
 class ReceptorValidationError(ValueError):
@@ -211,7 +224,7 @@ def parse_receptor_atoms(text: str) -> list[ReceptorAtom]:
             raise ReceptorValidationError(f"{prefix} is missing atom or residue identity.")
         element = (line[76:78].strip() if len(line) >= 78 else "").upper()
         if not element:
-            element = re.sub(r"[^A-Za-z]", "", atom_name)[:2].upper()
+            element = infer_pdb_element(line[12:16]) or ""
         occupancy = None
         if len(line) >= 60 and line[54:60].strip():
             try:
@@ -228,6 +241,27 @@ def parse_receptor_atoms(text: str) -> list[ReceptorAtom]:
             altloc=line[16:17].strip(), occupancy=occupancy, source_line=line,
         ))
     return atoms
+
+
+def infer_pdb_element(atom_name_field: str) -> str | None:
+    """Infer an element only when standard PDB atom-name alignment is decisive."""
+
+    field = atom_name_field[:4].ljust(4)
+    stripped = field.strip()
+    if not stripped:
+        return None
+    if field[0].isspace() or field[0].isdigit():
+        match = re.search(r"[A-Za-z]", field)
+        candidate = match.group(0).upper() if match else ""
+    elif len(stripped) == 4 and stripped[0].upper() in {"H", "D"}:
+        # Four-character protein hydrogen names such as HH11 and HE21 use
+        # the first character as the element, despite HE/HG being elements.
+        candidate = stripped[0].upper()
+    else:
+        letters = re.sub(r"[^A-Za-z]", "", stripped).upper()
+        two_letter = letters[:2]
+        candidate = two_letter if two_letter in PDB_ELEMENT_SYMBOLS else letters[:1]
+    return candidate if candidate in PDB_ELEMENT_SYMBOLS else None
 
 
 def residue_key(atom: ReceptorAtom) -> str:

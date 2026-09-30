@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from molecular_prioritization.receptor import (
+    PDB_ELEMENT_SYMBOLS,
+    ReceptorAtom,
     ReceptorValidationError,
     audit_prepared_receptor_hydrogens,
     hetero_group_id,
@@ -152,8 +154,18 @@ def prepare_receptor(
     hashes_artifact = output_dir / "SHA256SUMS"
     try:
         original_artifact.write_bytes(original_bytes)
+        selected_lines: list[str] = []
+        filled_element_columns = 0
+        preserved_element_columns = 0
+        for atom in selected_atoms:
+            line, element_was_filled = _preparation_input_atom_line(atom)
+            selected_lines.append(line)
+            if element_was_filled:
+                filled_element_columns += 1
+            else:
+                preserved_element_columns += 1
         selected_artifact.write_text(
-            "\n".join(atom.source_line for atom in selected_atoms) + "\nTER\nEND\n",
+            "\n".join(selected_lines) + "\nTER\nEND\n",
             encoding="utf-8",
         )
         executable = str(python_executable or sys.executable)
@@ -214,6 +226,20 @@ def prepare_receptor(
             "receptor_id": receptor_id,
             "original_filename": Path(original_filename).name,
             "original_pdb_sha256": _sha256(original_artifact),
+            "preparation_input": {
+                "filename": selected_artifact.name,
+                "sha256": _sha256(selected_artifact),
+                "atom_count": len(selected_atoms),
+                "normalization": {
+                    "operation": "fill_missing_pdb_element_columns",
+                    "missing_element_columns_filled": filled_element_columns,
+                    "preexisting_element_columns_preserved": preserved_element_columns,
+                    "description": (
+                        "Formatting-only normalization filled blank PDB element columns 77-78 "
+                        "from confidently inferred atom elements; no chemical repair was performed."
+                    ),
+                },
+            },
             "selected_chains": selected,
             "water_policy": "remove_all",
             "removed_waters": inventory["waters"]["residues"],
@@ -273,6 +299,30 @@ def prepare_receptor(
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _preparation_input_atom_line(atom: ReceptorAtom) -> tuple[str, bool]:
+    """Return one Meeko input record, filling only a blank PDB element field."""
+
+    line = atom.source_line
+    existing = line[76:78].strip().upper() if len(line) >= 78 else ""
+    identity = (
+        f"{atom.record} serial {atom.serial}, atom '{atom.atom_name}', "
+        f"residue {atom.residue_name} {atom.chain or '_'}:{atom.residue_number or '_'}"
+    )
+    if existing:
+        if existing not in PDB_ELEMENT_SYMBOLS:
+            raise ReceptorPreparationError(
+                f"Preparation input has an invalid PDB element '{existing}' in columns 77-78 for {identity}."
+            )
+        return line, False
+    if not atom.element or atom.element not in PDB_ELEMENT_SYMBOLS:
+        raise ReceptorPreparationError(
+            "Preparation input has blank PDB element columns 77-78 and the element cannot be "
+            f"inferred confidently for {identity}. Correct this atom's element field before preparation."
+        )
+    padded = line.ljust(78)
+    return f"{padded[:76]}{atom.element:>2}{padded[78:]}", True
 
 
 def _pdbqt_atom_count(path: Path) -> int:

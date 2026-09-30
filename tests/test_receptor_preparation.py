@@ -22,6 +22,9 @@ from molecular_prioritization.receptor_preparation import ReceptorPreparationErr
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "receptor_preparation" / "small_peptide.pdb"
+MISSING_ELEMENTS_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "receptor_preparation" / "missing_element_columns.pdb"
+)
 VALID_PDBQT = "ATOM      1  C   ALA A   1       1.000   2.000   3.000  1.00  0.00     0.000 C\n"
 INVENTORY_PDB = """\
 ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00 20.00           N  
@@ -106,6 +109,91 @@ def test_provenance_hashes_match_artifacts_and_original_is_preserved(tmp_path, m
     for line in (artifact_dir / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
         digest, filename = line.split("  ", 1)
         assert digest == hashlib.sha256((artifact_dir / filename).read_bytes()).hexdigest()
+
+
+def test_missing_element_columns_are_filled_only_in_derived_preparation_input(tmp_path, monkeypatch):
+    source_bytes = MISSING_ELEMENTS_FIXTURE.read_bytes()
+    source = tmp_path / "missing-elements.pdb"
+    source.write_bytes(source_bytes)
+    monkeypatch.setattr(receptor_preparation.subprocess, "run", _fake_meeko)
+    result = prepare_receptor(
+        source,
+        tmp_path / "run" / "receptor",
+        original_filename=source.name,
+        receptor_id="a" * 32,
+        selected_chains=["A"],
+        water_policy="remove_all",
+        hetero_choices={},
+        altloc_choices={},
+    )
+    selected_path = result["artifact_directory"] / "selected_receptor_input.pdb"
+    source_atoms = parse_receptor_atoms(source.read_text(encoding="utf-8"))
+    selected_atoms = parse_receptor_atoms(selected_path.read_text(encoding="utf-8"))
+
+    assert [atom.element for atom in source_atoms] == ["N", "C", "C", "O"]
+    assert [atom.element for atom in selected_atoms] == ["N", "C", "C", "O"]
+    selected_atom_lines = [
+        line for line in selected_path.read_text(encoding="utf-8").splitlines()
+        if line.startswith(("ATOM  ", "HETATM"))
+    ]
+    assert [line[76:78] for line in selected_atom_lines] == [" N", " C", " C", " O"]
+    assert source.read_bytes() == source_bytes
+    assert (result["artifact_directory"] / "original_receptor.pdb").read_bytes() == source_bytes
+    assert len(source_atoms) == len(selected_atoms) == 4
+    assert [atom.atom_name for atom in selected_atoms] == [atom.atom_name for atom in source_atoms]
+    assert [atom.residue_name for atom in selected_atoms] == [atom.residue_name for atom in source_atoms]
+    assert [atom.chain for atom in selected_atoms] == [atom.chain for atom in source_atoms]
+    assert [atom.residue_number for atom in selected_atoms] == [atom.residue_number for atom in source_atoms]
+    assert [(atom.x, atom.y, atom.z) for atom in selected_atoms] == [
+        (atom.x, atom.y, atom.z) for atom in source_atoms
+    ]
+    normalization = result["provenance"]["preparation_input"]["normalization"]
+    assert normalization["operation"] == "fill_missing_pdb_element_columns"
+    assert normalization["missing_element_columns_filled"] == 4
+    assert normalization["preexisting_element_columns_preserved"] == 0
+    assert "no chemical repair" in normalization["description"]
+
+
+def test_existing_valid_element_columns_are_preserved_byte_for_byte(tmp_path, monkeypatch):
+    source, result = _prepare(tmp_path, monkeypatch)
+    source_atom_lines = [
+        line for line in source.read_text(encoding="utf-8").splitlines()
+        if line.startswith(("ATOM  ", "HETATM"))
+    ]
+    selected_atom_lines = [
+        line
+        for line in (result["artifact_directory"] / "selected_receptor_input.pdb")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.startswith(("ATOM  ", "HETATM"))
+    ]
+    assert selected_atom_lines == source_atom_lines
+    normalization = result["provenance"]["preparation_input"]["normalization"]
+    assert normalization["missing_element_columns_filled"] == 0
+    assert normalization["preexisting_element_columns_preserved"] == len(source_atom_lines)
+
+
+def test_uninferable_blank_element_fails_with_actionable_atom_identity(tmp_path, monkeypatch):
+    ambiguous = "ATOM      1  Q1  ALA A   1       0.000   0.000   0.000  1.00 20.00\nEND\n"
+    source = tmp_path / "ambiguous.pdb"
+    source.write_text(ambiguous, encoding="utf-8")
+    monkeypatch.setattr(receptor_preparation.subprocess, "run", _fake_meeko)
+
+    with pytest.raises(
+        ReceptorPreparationError,
+        match=r"blank PDB element columns 77-78.*ATOM serial 1, atom 'Q1'.*ALA A:1",
+    ):
+        prepare_receptor(
+            source,
+            tmp_path / "ambiguous" / "receptor",
+            original_filename="ambiguous.pdb",
+            receptor_id="a" * 32,
+            selected_chains=["A"],
+            water_policy="remove_all",
+            hetero_choices={},
+            altloc_choices={},
+        )
+    assert source.read_text(encoding="utf-8") == ambiguous
 
 
 def test_real_meeko_output_retains_only_polar_donor_hydrogens(tmp_path):
