@@ -41,13 +41,13 @@ function row(index, overrides = {}) {
   };
 }
 
-function render(rows, initialFilters = null) {
+function render(rows, initialFilters = null, comparisonProps = {}) {
   const filters = initialFilters || createEmptyAdmetFilters();
   const normalized = normalizeAdmetAnalysis(rows).molecules;
   const molecules = filterAdmetMolecules(normalized, filters);
   const viewState = { query: '', filters, sortKey: 'compound', sortDirection: 'asc', page: 0, pageSize: 50 };
   return renderToStaticMarkup(React.createElement(AdmetPropertyTable, {
-    molecules, totalCount: normalized.length, viewState, dispatch: () => {},
+    molecules, totalCount: normalized.length, viewState, dispatch: () => {}, ...comparisonProps,
   }));
 }
 
@@ -142,4 +142,20 @@ test('zero filter results render a useful state and clear action rather than an 
   assert.match(html, /No compounds match the current filters/);
   assert.match(html, />Clear filters</);
   assert.doesNotMatch(html, /error occurred|application error/i);
+});
+
+test('table rows expose keyboard-accessible comparison controls and selected membership', () => {
+  const html = render([row(1), row(2)], null, {
+    selectedComparisonIds: ['compound-0001'], onAddToComparison: () => {}, onRemoveFromComparison: () => {},
+  });
+  assert.match(html, /aria-label="Remove compound-0001 from comparison"/);
+  assert.match(html, /aria-label="Add compound-0002 to comparison"/);
+  assert.match(html, /Mui-selected/);
+});
+
+test('table disables additional comparison controls at the five-compound limit', () => {
+  const selectedComparisonIds = Array.from({ length: 5 }, (_, index) => `compound-${String(index + 1).padStart(4, '0')}`);
+  const html = render([row(1), row(6)], null, { selectedComparisonIds });
+  assert.match(html, /Comparison limit reached/);
+  assert.match(html.match(/<button[^>]*aria-label="Add compound-0006 to comparison"[^>]*>/)?.[0] || '', /disabled/);
 });

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   Alert,
   Box,
+  Button,
   FormControl,
   InputLabel,
   MenuItem,
@@ -20,6 +21,7 @@ import {
   prepareAdmetScatterPoints,
   projectAdmetScatterPoints,
 } from './admetPlotData.js';
+import { MAX_ADMET_COMPARISON_MOLECULES } from './admetComparison.js';
 
 export const DEFAULT_ADMET_PLOT_STATE = Object.freeze({
   plotType: 'distribution',
@@ -112,7 +114,7 @@ function selectedPointLabel(point, xKey, yKey) {
   return `${name} · ${ADMET_ENDPOINT_BY_KEY.get(xKey).label}: ${point.x} · ${ADMET_ENDPOINT_BY_KEY.get(yKey).label}: ${point.y}${source}`;
 }
 
-function ScatterPlot({ molecules, xKey, yKey }) {
+function ScatterPlot({ molecules, xKey, yKey, selectedComparisonIds, onAddToComparison }) {
   const canvasRef = useRef(null);
   const [hovered, setHovered] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -172,6 +174,9 @@ function ScatterPlot({ molecules, xKey, yKey }) {
   }
 
   const identified = hovered || selected;
+  const identifiedId = identified?.moleculeId || '';
+  const alreadyCompared = selectedComparisonIds.includes(identifiedId);
+  const comparisonAtLimit = selectedComparisonIds.length >= MAX_ADMET_COMPARISON_MOLECULES;
   return (
     <Stack spacing={1.25} data-testid="admet-scatter-view">
       <PlotCounts {...scatter} unavailableLabel="unavailable for one or both selected properties" />
@@ -199,6 +204,17 @@ function ScatterPlot({ molecules, xKey, yKey }) {
           <Paper variant="outlined" sx={{ p: 1.25, minHeight: 48 }} aria-live="polite">
             <Typography variant="caption" color="text.secondary">{identified ? (hovered ? 'Point under pointer' : 'Selected compound') : 'Hover, click, or focus the canvas and use arrow keys to identify a compound.'}</Typography>
             {identified ? <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>{selectedPointLabel(identified, xKey, yKey)}</Typography> : null}
+            {identified ? (
+              <Button
+                size="small"
+                sx={{ mt: 0.75 }}
+                disabled={alreadyCompared || comparisonAtLimit}
+                onClick={() => onAddToComparison(identifiedId)}
+                aria-label={`Add ${identified.displayName || identifiedId} to comparison`}
+              >
+                {alreadyCompared ? 'Already in comparison' : comparisonAtLimit ? 'Comparison limit reached' : 'Add to comparison'}
+              </Button>
+            ) : null}
           </Paper>
         </>
       ) : null}
@@ -206,7 +222,12 @@ function ScatterPlot({ molecules, xKey, yKey }) {
   );
 }
 
-export default function AdmetPlots({ molecules = [], initialState = DEFAULT_ADMET_PLOT_STATE }) {
+export default function AdmetPlots({
+  molecules = [],
+  initialState = DEFAULT_ADMET_PLOT_STATE,
+  selectedComparisonIds = [],
+  onAddToComparison = () => {},
+}) {
   const [state, dispatch] = useReducer(admetPlotStateReducer, { ...DEFAULT_ADMET_PLOT_STATE, ...initialState });
   return (
     <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
@@ -230,7 +251,7 @@ export default function AdmetPlots({ molecules = [], initialState = DEFAULT_ADME
               <EndpointSelect id="admet-scatter-x" label="X axis" value={state.xKey} exclude={state.yKey} onChange={(endpointKey) => dispatch({ type: 'set-x-key', endpointKey })} />
               <EndpointSelect id="admet-scatter-y" label="Y axis" value={state.yKey} exclude={state.xKey} onChange={(endpointKey) => dispatch({ type: 'set-y-key', endpointKey })} />
             </Stack>
-            <ScatterPlot molecules={molecules} xKey={state.xKey} yKey={state.yKey} />
+            <ScatterPlot molecules={molecules} xKey={state.xKey} yKey={state.yKey} selectedComparisonIds={selectedComparisonIds} onAddToComparison={onAddToComparison} />
           </>
         )}
       </Stack>

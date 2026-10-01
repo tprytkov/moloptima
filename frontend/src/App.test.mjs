@@ -28,7 +28,7 @@ test('primary navigation follows the scientific workflow and hides history tools
   assert.equal(labels.includes('Run Comparison'), false);
 });
 
-test('ADMET workspace keeps Overview and Property Table and adds Plots', () => {
+test('ADMET workspace keeps Overview, Property Table, and Plots and adds Compare', () => {
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
     prioritizationState: { result: { results: [] }, job: null, loading: false },
     sourceStatusState: { error: '' },
@@ -37,8 +37,35 @@ test('ADMET workspace keeps Overview and Property Table and adds Plots', () => {
   assert.match(html, />Overview</);
   assert.match(html, />Property Table</);
   assert.match(html, />Plots</);
+  assert.match(html, />Compare</);
   assert.match(html, /No ADMET predictions are available for the current calculation/);
   assert.match(html, /aria-label="ADMET workspace views"/);
+});
+
+test('ADMET Compare resolves workspace-owned selections from the normalized source set', () => {
+  const rows = [admetRow(1), admetRow(2), admetRow(3)];
+  const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    prioritizationState: { result: { results: rows }, job: null, loading: false },
+    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 3,
+    initialComparisonIds: ['compound-1', 'compound-2'],
+  }));
+  assert.match(html, /ADMET compound comparison/);
+  assert.match(html, /compound-1/);
+  assert.match(html, /compound-2/);
+  assert.match(html, /2 of 5 compounds selected/);
+});
+
+test('ADMET Compare retains a selected compound hidden by shared search and filters', () => {
+  const filters = setNumericAdmetFilter(createEmptyAdmetFilters(), 'lipophilicity_astrazeneca', 'max', '1.5');
+  const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    prioritizationState: { result: { results: [admetRow(1, 1), admetRow(2, 4)] }, job: null, loading: false },
+    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 3,
+    initialComparisonIds: ['compound-1', 'compound-2'],
+    initialAdmetViewState: { query: 'compound', filters, sortKey: 'compound', sortDirection: 'asc', page: 0, pageSize: 50 },
+  }));
+  assert.match(html, /1 of 2 compounds/);
+  assert.match(html, /Outside current filters/);
+  assert.match(html, /compound-2/);
 });
 
 function admetRow(index, lipophilicity = index, solubility = -index) {

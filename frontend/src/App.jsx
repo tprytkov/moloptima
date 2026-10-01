@@ -52,8 +52,10 @@ import AdmetResultsSection, {
 } from './AdmetResultsSection.jsx';
 import AdmetPropertyTable, { AdmetFilterPanel } from './AdmetPropertyTable.jsx';
 import AdmetPlots from './AdmetPlots.jsx';
+import AdmetComparison from './AdmetComparison.jsx';
 import { normalizeAdmetAnalysis, searchAdmetMolecules } from './admetAnalysisData.js';
 import { admetTableStateReducer, createEmptyAdmetFilters, filterAdmetMolecules } from './admetFilters.js';
+import { addAdmetComparisonId, clearAdmetComparison, removeAdmetComparisonId } from './admetComparison.js';
 import DockingResultsSection, { dockingStatusLabel } from './DockingResultsSection.jsx';
 import DockingSetup from './DockingSetup.jsx';
 import PrioritizationExplanationSection from './PrioritizationExplanationSection.jsx';
@@ -1300,10 +1302,18 @@ const ADMET_MODEL_GROUPS = [
   ['chemprop_regression', 'Chemprop regression', '5 regression endpoints'],
 ];
 
-export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNavigate, initialWorkspaceTab = 0, initialAdmetViewState = null }) {
+export function AdmetWorkflowPage({
+  prioritizationState,
+  sourceStatusState,
+  onNavigate,
+  initialWorkspaceTab = 0,
+  initialAdmetViewState = null,
+  initialComparisonIds = [],
+}) {
   const rows = prioritizationState.result?.results ?? [];
   const overviewRows = rows.slice(0, 50);
   const [workspaceTab, setWorkspaceTab] = useState(initialWorkspaceTab);
+  const [comparisonIds, setComparisonIds] = useState(initialComparisonIds);
   const normalizedAdmet = useMemo(() => normalizeAdmetAnalysis(rows), [rows]);
   const [admetViewState, admetDispatch] = useReducer(admetTableStateReducer, undefined, () => initialAdmetViewState || ({
     query: '', filters: createEmptyAdmetFilters(), sortKey: 'compound', sortDirection: 'asc', page: 0, pageSize: 50,
@@ -1338,6 +1348,7 @@ export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNa
           <Tab label="Overview" id="admet-tab-overview" aria-controls="admet-panel-overview" />
           <Tab label="Property Table" id="admet-tab-property-table" aria-controls="admet-panel-property-table" />
           <Tab label="Plots" id="admet-tab-plots" aria-controls="admet-panel-plots" />
+          <Tab label="Compare" id="admet-tab-compare" aria-controls="admet-panel-compare" />
         </Tabs>
       </Paper>
       {sourceStatusState.error ? <Alert severity="warning">{sourceStatusState.error}</Alert> : null}
@@ -1390,8 +1401,9 @@ export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNa
         </Paper>
         ) : <Alert severity="info">No ADMET predictions are available for the current calculation.</Alert>}
       </Stack></Box> : null}
-      {workspaceTab === 1 ? <Box id="admet-panel-property-table" role="tabpanel" aria-labelledby="admet-tab-property-table"><AdmetPropertyTable molecules={filteredAdmetMolecules} totalCount={normalizedAdmet.molecules.length} viewState={admetViewState} dispatch={admetDispatch} /></Box> : null}
-      {workspaceTab === 2 ? <Box id="admet-panel-plots" role="tabpanel" aria-labelledby="admet-tab-plots"><AdmetPlots molecules={filteredAdmetMolecules} /></Box> : null}
+      {workspaceTab === 1 ? <Box id="admet-panel-property-table" role="tabpanel" aria-labelledby="admet-tab-property-table"><AdmetPropertyTable molecules={filteredAdmetMolecules} totalCount={normalizedAdmet.molecules.length} viewState={admetViewState} dispatch={admetDispatch} selectedComparisonIds={comparisonIds} onAddToComparison={(id) => setComparisonIds((current) => addAdmetComparisonId(current, id))} onRemoveFromComparison={(id) => setComparisonIds((current) => removeAdmetComparisonId(current, id))} /></Box> : null}
+      {workspaceTab === 2 ? <Box id="admet-panel-plots" role="tabpanel" aria-labelledby="admet-tab-plots"><AdmetPlots molecules={filteredAdmetMolecules} selectedComparisonIds={comparisonIds} onAddToComparison={(id) => setComparisonIds((current) => addAdmetComparisonId(current, id))} /></Box> : null}
+      {workspaceTab === 3 ? <Box id="admet-panel-compare" role="tabpanel" aria-labelledby="admet-tab-compare"><AdmetComparison molecules={normalizedAdmet.molecules} filteredMolecules={filteredAdmetMolecules} selectedIds={comparisonIds} onAdd={(id) => setComparisonIds((current) => addAdmetComparisonId(current, id))} onRemove={(id) => setComparisonIds((current) => removeAdmetComparisonId(current, id))} onClear={() => setComparisonIds(clearAdmetComparison())} /></Box> : null}
       <Box><Button variant="contained" onClick={() => onNavigate('Prioritization')}>Continue to {single ? 'Compound Assessment' : 'Prioritization'}</Button></Box>
     </Stack>
   );

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -97,4 +98,11 @@ test('canvas accessibility uses one focus target with keyboard identification in
   assert.match(html, /tabindex="0"/);
   assert.match(html, /Use left and right arrow keys to identify points/);
   assert.match(html, /Hover, click, or focus the canvas and use arrow keys/);
+});
+
+test('scatter selection exposes an explicit comparison action without auto-adding on canvas click', async () => {
+  const source = await readFile(new URL('./AdmetPlots.jsx', import.meta.url), 'utf8');
+  assert.match(source, /Add to comparison/);
+  assert.match(source, /onClick=\{\(event\) => setSelected\(pointAtEvent\(event\)\)\}/);
+  assert.doesNotMatch(source, /onClick=\{\(event\) => onAddToComparison\(pointAtEvent/);
 });

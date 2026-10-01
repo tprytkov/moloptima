@@ -46,6 +46,7 @@ import {
   setNumericAdmetFilter,
 } from './admetFilters.js';
 import { ADMET_STATUS_PRESENTATION } from './admetStatus.js';
+import { MAX_ADMET_COMPARISON_MOLECULES } from './admetComparison.js';
 
 const COLUMN_KEYS = ['compound', ...ADMET_PROPERTY_TABLE_ENDPOINTS];
 const QUICK_NUMERIC_ENDPOINTS = ['lipophilicity_astrazeneca', 'solubility_aqsoldb'];
@@ -194,7 +195,15 @@ function PropertyCell({ property, metadata }) {
   return <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>{display}</Typography>;
 }
 
-export default function AdmetPropertyTable({ molecules, totalCount, viewState, dispatch }) {
+export default function AdmetPropertyTable({
+  molecules,
+  totalCount,
+  viewState,
+  dispatch,
+  selectedComparisonIds = [],
+  onAddToComparison = () => {},
+  onRemoveFromComparison = () => {},
+}) {
   const sorted = useMemo(
     () => sortAdmetMolecules(molecules, viewState.sortKey, viewState.sortDirection),
     [molecules, viewState.sortDirection, viewState.sortKey],
@@ -213,6 +222,8 @@ export default function AdmetPropertyTable({ molecules, totalCount, viewState, d
     ),
     [molecules],
   );
+  const comparedIds = useMemo(() => new Set(selectedComparisonIds), [selectedComparisonIds]);
+  const comparisonAtLimit = selectedComparisonIds.length >= MAX_ADMET_COMPARISON_MOLECULES;
 
   function handleSort(key) {
     dispatch({ type: 'set-sort', sortKey: key });
@@ -234,6 +245,7 @@ export default function AdmetPropertyTable({ molecules, totalCount, viewState, d
             {molecules.length.toLocaleString()} of {totalCount.toLocaleString()} compounds
           </Typography>
         </Box>
+        {comparisonAtLimit ? <Alert severity="info" aria-live="polite">Comparison limit reached. Remove a compound before adding another.</Alert> : null}
         {molecules.length > 0 && availablePropertyCount === 0 ? (
           <Alert severity="info">ADMET has not produced available property values for this molecule library. Cell labels preserve the recorded model and endpoint status.</Alert>
         ) : null}
@@ -264,13 +276,25 @@ export default function AdmetPropertyTable({ molecules, totalCount, viewState, d
             </TableRow>
           </TableHead>
           <TableBody>
-            {paginated.rows.map((molecule) => (
-              <TableRow hover key={`${molecule.moleculeId}-${molecule.sourceIndex}`} data-testid="admet-property-row">
+            {paginated.rows.map((molecule) => {
+              const isCompared = comparedIds.has(molecule.moleculeId);
+              return (
+              <TableRow hover selected={isCompared} key={`${molecule.moleculeId}-${molecule.sourceIndex}`} data-testid="admet-property-row">
                 <TableCell component="th" scope="row" sx={{ maxWidth: 300 }}>
                   <Stack spacing={0.25}>
                     <Typography variant="body2" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>{molecule.displayName}</Typography>
                     {molecule.moleculeId !== molecule.displayName ? <Typography variant="caption" color="text.secondary">{molecule.moleculeId}</Typography> : null}
                     {molecule.sourceName ? <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{molecule.sourceName}</Typography> : null}
+                    <Button
+                      size="small"
+                      variant={isCompared ? 'contained' : 'outlined'}
+                      disabled={!isCompared && comparisonAtLimit}
+                      onClick={() => (isCompared ? onRemoveFromComparison(molecule.moleculeId) : onAddToComparison(molecule.moleculeId))}
+                      aria-label={`${isCompared ? 'Remove' : 'Add'} ${molecule.displayName} ${isCompared ? 'from' : 'to'} comparison`}
+                      sx={{ alignSelf: 'flex-start' }}
+                    >
+                      {isCompared ? 'Compared' : 'Compare'}
+                    </Button>
                   </Stack>
                 </TableCell>
                 {ADMET_PROPERTY_TABLE_ENDPOINTS.map((key) => (
@@ -279,7 +303,8 @@ export default function AdmetPropertyTable({ molecules, totalCount, viewState, d
                   </TableCell>
                 ))}
               </TableRow>
-            ))}
+              );
+            })}
             {!paginated.rows.length ? (
               <TableRow><TableCell colSpan={COLUMN_KEYS.length}>
                 <Stack spacing={1} alignItems="flex-start" sx={{ py: 2 }}>
