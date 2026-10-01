@@ -1,4 +1,4 @@
-import { deriveAdmetFamilyStatuses, normalizeAdmetStatus } from './admetStatus.js';
+import { ADMET_STATUS_PRESENTATION, deriveAdmetFamilyStatuses, normalizeAdmetStatus } from './admetStatus.js';
 
 export const ADMET_ENDPOINT_REGISTRY = Object.freeze([
   { key: 'hia_hou', label: 'HIA', category: 'Absorption', unit: 'Probability', modelFamily: 'chemberta', modelName: 'ChemBERTa multitask classifier', valueType: 'binary_classification' },
@@ -28,7 +28,7 @@ export const ADMET_PROPERTY_TABLE_ENDPOINTS = Object.freeze([
   'gmc_mpnn_bbb',
 ]);
 
-const ENDPOINT_NOT_RETURNED = Object.freeze({ code: 'endpoint_not_returned', label: 'Endpoint not returned', color: 'default' });
+const ENDPOINT_NOT_RETURNED = ADMET_STATUS_PRESENTATION.endpoint_not_returned;
 
 function finiteNumber(value) {
   if (value === null || value === undefined || value === '') return null;

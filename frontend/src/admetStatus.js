@@ -13,6 +13,7 @@ export const ADMET_STATUS_PRESENTATION = {
   failed: { code: 'failed', label: 'Failed', color: 'error' },
   running: { code: 'running', label: 'Running', color: 'info' },
   not_run: { code: 'not_run', label: 'Not run', color: 'default' },
+  endpoint_not_returned: { code: 'endpoint_not_returned', label: 'Endpoint not returned', color: 'default' },
 };
 
 function hasObjectValues(value) {
