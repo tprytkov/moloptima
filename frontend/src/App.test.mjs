@@ -25,6 +25,18 @@ test('primary navigation follows the scientific workflow and hides history tools
   assert.equal(labels.includes('Run Comparison'), false);
 });
 
+test('ADMET workspace keeps Overview and adds the Property Table view', () => {
+  const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    prioritizationState: { result: { results: [] }, job: null, loading: false },
+    sourceStatusState: { error: '' },
+    onNavigate: () => {},
+  }));
+  assert.match(html, />Overview</);
+  assert.match(html, />Property Table</);
+  assert.match(html, /No ADMET predictions are available for the current calculation/);
+  assert.match(html, /aria-label="ADMET workspace views"/);
+});
+
 test('sidebar uses the approved MolOptima logo without a duplicate wordmark', async () => {
   const source = await readFile(new URL('./App.jsx', import.meta.url), 'utf8');
   assert.match(source, /moloptima-logo\.png/);

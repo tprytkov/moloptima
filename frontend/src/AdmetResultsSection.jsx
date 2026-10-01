@@ -1,5 +1,13 @@
 import React from 'react';
 import { Alert, Box, Chip, Stack, Typography } from '@mui/material';
+import { ADMET_ENDPOINT_REGISTRY } from './admetAnalysisData.js';
+import {
+  aggregateAdmetFamilyStatus,
+  deriveAdmetFamilyStatuses,
+  normalizeAdmetStatus,
+} from './admetStatus.js';
+
+export { aggregateAdmetFamilyStatus, deriveAdmetFamilyStatuses, normalizeAdmetStatus } from './admetStatus.js';
 
 export const ADMET_GROUPS = [
   {
@@ -34,23 +42,7 @@ export const ADMET_GROUPS = [
   },
 ];
 
-const ENDPOINT_LABELS = {
-  hia_hou: 'HIA',
-  pgp_broccatelli: 'P-gp inhibition',
-  gmc_mpnn_bbb: 'BBB permeability',
-  caco2_wang: 'Caco2 permeability',
-  lipophilicity_astrazeneca: 'Lipophilicity',
-  solubility_aqsoldb: 'Solubility',
-  ppbr_az: 'Plasma protein binding',
-  vdss_lombardo: 'Volume of distribution',
-  cyp1a2_veith: 'CYP1A2 inhibition',
-  cyp2c19_veith: 'CYP2C19 inhibition',
-  cyp2c9_veith: 'CYP2C9 inhibition',
-  cyp2d6_veith: 'CYP2D6 inhibition',
-  cyp3a4_veith: 'CYP3A4 inhibition',
-  herg_karim: 'hERG liability',
-  ames: 'AMES mutagenicity',
-};
+const ENDPOINT_LABELS = Object.fromEntries(ADMET_ENDPOINT_REGISTRY.map(({ key, label }) => [key, label]));
 
 const EVIDENCE_LABELS = {
   experimental_low_confidence: 'Experimental / Low confidence',
@@ -60,75 +52,6 @@ const EVIDENCE_LABELS = {
   moderate: 'Moderate support',
   strong: 'Strong support',
 };
-
-const AVAILABLE_STATUSES = new Set(['available', 'completed', 'model_available', 'success']);
-const UNAVAILABLE_STATUSES = new Set(['incompatible', 'model_unavailable', 'unavailable']);
-const NOT_REQUESTED_STATUSES = new Set(['not_requested']);
-const FAILED_STATUSES = new Set(['error', 'failed', 'inference_failed']);
-const RUNNING_STATUSES = new Set(['checking', 'pending', 'queued', 'running']);
-
-const STATUS_PRESENTATION = {
-  available: { code: 'available', label: 'Results available', color: 'success' },
-  partial: { code: 'partial', label: 'Partial results', color: 'warning' },
-  model_unavailable: { code: 'model_unavailable', label: 'Model unavailable', color: 'warning' },
-  not_requested: { code: 'not_requested', label: 'Not requested', color: 'default' },
-  not_run_invalid_molecule: { code: 'not_run_invalid_molecule', label: 'Not run — invalid molecule', color: 'default' },
-  failed: { code: 'failed', label: 'Failed', color: 'error' },
-  running: { code: 'running', label: 'Running', color: 'info' },
-  not_run: { code: 'not_run', label: 'Not run', color: 'default' },
-};
-
-function hasObjectValues(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
-}
-
-export function normalizeAdmetStatus(value, hasResult = false) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (AVAILABLE_STATUSES.has(normalized)) return STATUS_PRESENTATION.available;
-  if (UNAVAILABLE_STATUSES.has(normalized)) return STATUS_PRESENTATION.model_unavailable;
-  if (NOT_REQUESTED_STATUSES.has(normalized)) return STATUS_PRESENTATION.not_requested;
-  if (normalized === 'not_run_invalid_molecule') return STATUS_PRESENTATION.not_run_invalid_molecule;
-  if (FAILED_STATUSES.has(normalized)) return STATUS_PRESENTATION.failed;
-  if (RUNNING_STATUSES.has(normalized)) return STATUS_PRESENTATION.running;
-  return hasResult ? STATUS_PRESENTATION.available : STATUS_PRESENTATION.not_run;
-}
-
-export function deriveAdmetFamilyStatuses(compound) {
-  const row = compound ?? {};
-  const familyStatus = hasObjectValues(row.admet_family_status) ? row.admet_family_status : {};
-  const predictions = hasObjectValues(row.admet_predictions) ? row.admet_predictions : {};
-  const bbbResult = hasObjectValues(row.bbb_result) ? row.bbb_result : {};
-  const regression = hasObjectValues(row.admet_regression) ? row.admet_regression : {};
-  return {
-    chemberta: normalizeAdmetStatus(
-      familyStatus.chemberta ?? familyStatus.chemberta_classification ?? row.admet_model_status,
-      Object.keys(predictions).length > 0,
-    ),
-    gmc_mpnn_bbb: normalizeAdmetStatus(
-      familyStatus.gmc_mpnn_bbb ?? bbbResult.status,
-      bbbResult.ensemble_probability !== undefined || bbbResult.raw_classification !== undefined,
-    ),
-    chemprop_regression: normalizeAdmetStatus(
-      familyStatus.chemprop_regression ?? regression.status,
-      hasObjectValues(regression.endpoints),
-    ),
-  };
-}
-
-export function aggregateAdmetFamilyStatus(rows, family, loading = false) {
-  if (!rows?.length) return loading ? STATUS_PRESENTATION.running : STATUS_PRESENTATION.not_run;
-  const codes = rows.map((row) => deriveAdmetFamilyStatuses(row)[family].code);
-  if (codes.every((code) => code === 'available')) return STATUS_PRESENTATION.available;
-  if (codes.includes('available')) return STATUS_PRESENTATION.partial;
-  if (codes.includes('running')) return STATUS_PRESENTATION.running;
-  if (codes.includes('failed')) return STATUS_PRESENTATION.failed;
-  if (codes.every((code) => code === 'model_unavailable')) return STATUS_PRESENTATION.model_unavailable;
-  if (codes.every((code) => code === 'not_requested')) return STATUS_PRESENTATION.not_requested;
-  if (codes.every((code) => ['not_requested', 'not_run_invalid_molecule', 'not_run'].includes(code))) {
-    return STATUS_PRESENTATION.not_run;
-  }
-  return STATUS_PRESENTATION.model_unavailable;
-}
 
 export function formatCalibratedProbability(value) {
   if (value === null || value === undefined || value === '') {

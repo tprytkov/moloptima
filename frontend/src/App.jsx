@@ -50,6 +50,7 @@ import AdmetResultsSection, {
   aggregateAdmetFamilyStatus,
   deriveAdmetFamilyStatuses,
 } from './AdmetResultsSection.jsx';
+import AdmetPropertyTable from './AdmetPropertyTable.jsx';
 import DockingResultsSection, { dockingStatusLabel } from './DockingResultsSection.jsx';
 import DockingSetup from './DockingSetup.jsx';
 import PrioritizationExplanationSection from './PrioritizationExplanationSection.jsx';
@@ -1298,6 +1299,8 @@ const ADMET_MODEL_GROUPS = [
 
 export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNavigate }) {
   const rows = prioritizationState.result?.results ?? [];
+  const overviewRows = rows.slice(0, 50);
+  const [workspaceTab, setWorkspaceTab] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const selected = rows[selectedIndex] ?? null;
   const rowStatuses = rows.map(deriveAdmetFamilyStatuses);
@@ -1314,32 +1317,42 @@ export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNa
   return (
     <Stack spacing={2}>
       <PageIntro title="ADMET" description="Review the existing ChemBERTa classification, GMC-MPNN BBB, and Chemprop regression outputs for the current calculation." />
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5 }}>
-        {ADMET_MODEL_GROUPS.map(([key, name, detail]) => (
-          <Paper key={name} elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
-            <Stack spacing={0.75}><Typography sx={{ fontWeight: 700 }}>{name}</Typography><Typography variant="caption" color="text.secondary">{detail}</Typography>
-              <Chip label={familyStatuses[key].label} color={familyStatuses[key].color} variant="outlined" />
-            </Stack>
-          </Paper>
-        ))}
-      </Box>
+      <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
+        <Tabs value={workspaceTab} onChange={(_, value) => setWorkspaceTab(value)} aria-label="ADMET workspace views">
+          <Tab label="Overview" id="admet-tab-overview" aria-controls="admet-panel-overview" />
+          <Tab label="Property Table" id="admet-tab-property-table" aria-controls="admet-panel-property-table" />
+        </Tabs>
+      </Paper>
       {sourceStatusState.error ? <Alert severity="warning">{sourceStatusState.error}</Alert> : null}
-      {rows.length ? (
+      {workspaceTab === 0 ? <Box id="admet-panel-overview" role="tabpanel" aria-labelledby="admet-tab-overview"><Stack spacing={2}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5 }}>
+          {ADMET_MODEL_GROUPS.map(([key, name, detail]) => (
+            <Paper key={name} elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
+              <Stack spacing={0.75}><Typography sx={{ fontWeight: 700 }}>{name}</Typography><Typography variant="caption" color="text.secondary">{detail}</Typography>
+                <Chip label={familyStatuses[key].label} color={familyStatuses[key].color} variant="outlined" />
+              </Stack>
+            </Paper>
+          ))}
+        </Box>
+        {rows.length ? (
         <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
           <Stack spacing={1.5}>
             <MetadataPanel rows={[["Molecules submitted", rows.length], ["Available families", completed], ["Unavailable / failed families", failures], ["Warnings", warnings]]} />
             <Typography variant="h2">Molecule results</Typography>
-            <Table size="small"><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>ChemBERTa</TableCell><TableCell>GMC BBB</TableCell><TableCell>Chemprop regression</TableCell></TableRow></TableHead><TableBody>{rows.map((row, index) => {
+            {rows.length > overviewRows.length ? <Alert severity="info">Overview shows the first 50 molecules. Use Property Table to search, sort, and page through the complete library.</Alert> : null}
+            <Table size="small"><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>ChemBERTa</TableCell><TableCell>GMC BBB</TableCell><TableCell>Chemprop regression</TableCell></TableRow></TableHead><TableBody>{overviewRows.map((row, index) => {
               const statuses = rowStatuses[index];
               return <TableRow key={compoundRowKey(row, index)}><TableCell>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</TableCell><TableCell>{statuses.chemberta.label}</TableCell><TableCell>{statuses.gmc_mpnn_bbb.label}</TableCell><TableCell>{statuses.chemprop_regression.label}</TableCell></TableRow>;
             })}</TableBody></Table>
             <TextField select label="Molecule" value={selectedIndex} onChange={(event) => setSelectedIndex(Number(event.target.value))} sx={{ maxWidth: 420 }}>
-              {rows.map((row, index) => <MenuItem key={compoundRowKey(row, index)} value={index}>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</MenuItem>)}
+              {overviewRows.map((row, index) => <MenuItem key={compoundRowKey(row, index)} value={index}>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</MenuItem>)}
             </TextField>
             <AdmetResultsSection compound={selected} />
           </Stack>
         </Paper>
-      ) : <Alert severity="info">No ADMET predictions are available for the current calculation.</Alert>}
+        ) : <Alert severity="info">No ADMET predictions are available for the current calculation.</Alert>}
+      </Stack></Box> : null}
+      {workspaceTab === 1 ? <Box id="admet-panel-property-table" role="tabpanel" aria-labelledby="admet-tab-property-table"><AdmetPropertyTable rows={rows} /></Box> : null}
       <Box><Button variant="contained" onClick={() => onNavigate('Prioritization')}>Continue to {single ? 'Compound Assessment' : 'Prioritization'}</Button></Box>
     </Stack>
   );
