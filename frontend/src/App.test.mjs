@@ -7,10 +7,13 @@ import { createServer } from 'vite';
 
 let vite;
 let module;
+let createEmptyAdmetFilters;
+let setNumericAdmetFilter;
 
 before(async () => {
   vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
   module = await vite.ssrLoadModule('/src/App.jsx');
+  ({ createEmptyAdmetFilters, setNumericAdmetFilter } = await vite.ssrLoadModule('/src/admetFilters.js'));
 });
 
 after(async () => vite?.close());
@@ -25,7 +28,7 @@ test('primary navigation follows the scientific workflow and hides history tools
   assert.equal(labels.includes('Run Comparison'), false);
 });
 
-test('ADMET workspace keeps Overview and adds the Property Table view', () => {
+test('ADMET workspace keeps Overview and Property Table and adds Plots', () => {
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
     prioritizationState: { result: { results: [] }, job: null, loading: false },
     sourceStatusState: { error: '' },
@@ -33,8 +36,50 @@ test('ADMET workspace keeps Overview and adds the Property Table view', () => {
   }));
   assert.match(html, />Overview</);
   assert.match(html, />Property Table</);
+  assert.match(html, />Plots</);
   assert.match(html, /No ADMET predictions are available for the current calculation/);
   assert.match(html, /aria-label="ADMET workspace views"/);
+});
+
+function admetRow(index, lipophilicity = index, solubility = -index) {
+  return {
+    molecule_id: `compound-${index}`, canonical_smiles: 'CCO', source_filename: 'library.sdf',
+    admet_model_status: 'model_available', admet_family_status: { chemberta: 'available', gmc_bbb: 'success', chemprop_regression: 'success' },
+    admet_predictions: {}, bbb_result: { status: 'success', raw_classification: 'BBB+', ensemble_probability: 0.8 },
+    admet_regression: { status: 'success', endpoints: {
+      caco2_wang: { status: 'success', ensemble_mean_log10_papp_cm_per_s: -5 },
+      lipophilicity_astrazeneca: { status: 'success', ensemble_mean_log_ratio: lipophilicity },
+      solubility_aqsoldb: { status: 'success', ensemble_mean_log_mol_per_l: solubility },
+      ppbr_az: { status: 'success', ensemble_mean_percent_bound: 80 },
+      vdss_lombardo: { status: 'success', ensemble_mean_l_per_kg: 1 },
+    } },
+  };
+}
+
+test('ADMET Plots consumes the shared search and filter result before plotting', () => {
+  let filters = createEmptyAdmetFilters();
+  filters = setNumericAdmetFilter(filters, 'lipophilicity_astrazeneca', 'max', '3');
+  const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    prioritizationState: { result: { results: [admetRow(1), admetRow(2), admetRow(4), admetRow(12)] }, job: null, loading: false },
+    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 2,
+    initialAdmetViewState: { query: 'compound-1', filters, sortKey: 'compound', sortDirection: 'desc', page: 3, pageSize: 25 },
+  }));
+  assert.match(html, /1 of 4 compounds/);
+  assert.match(html, /1 filtered compounds · 1 plotted · 0 unavailable/);
+  assert.match(html, /value="compound-1"/);
+  assert.match(html, /Lipophilicity: ≤ 3/);
+});
+
+test('shared ADMET search, filters, sort, and page state can render the table after a plot view', () => {
+  const filters = setNumericAdmetFilter(createEmptyAdmetFilters(), 'lipophilicity_astrazeneca', 'max', '3');
+  const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    prioritizationState: { result: { results: [admetRow(1), admetRow(2), admetRow(4)] }, job: null, loading: false },
+    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 1,
+    initialAdmetViewState: { query: 'compound', filters, sortKey: 'lipophilicity_astrazeneca', sortDirection: 'desc', page: 0, pageSize: 25 },
+  }));
+  assert.match(html, /2 of 3 compounds/);
+  assert.match(html, /compound-2[\s\S]*compound-1/);
+  assert.match(html, /Rows per page:/);
 });
 
 test('sidebar uses the approved MolOptima logo without a duplicate wordmark', async () => {

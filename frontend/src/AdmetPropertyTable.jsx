@@ -1,4 +1,4 @@
-import React, { useDeferredValue, useMemo, useReducer } from 'react';
+import React, { useMemo } from 'react';
 import {
   Accordion,
   AccordionDetails,
@@ -32,19 +32,15 @@ import {
   ADMET_ENDPOINT_BY_KEY,
   ADMET_PROPERTY_TABLE_ENDPOINTS,
   formatAdmetProperty,
-  normalizeAdmetAnalysis,
   paginateAdmetMolecules,
-  searchAdmetMolecules,
   sortAdmetMolecules,
 } from './admetAnalysisData.js';
 import {
   ADMET_FILTERABLE_STATUSES,
   BBB_CLASSIFICATIONS,
   activeAdmetFilterSummaries,
-  admetTableStateReducer,
   clearAdmetFilter,
   createEmptyAdmetFilters,
-  filterAdmetMolecules,
   numericFilterValidity,
   setAdmetFilterSelections,
   setNumericAdmetFilter,
@@ -198,53 +194,31 @@ function PropertyCell({ property, metadata }) {
   return <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>{display}</Typography>;
 }
 
-export default function AdmetPropertyTable({ rows, initialFilters = null }) {
-  const normalized = useMemo(() => normalizeAdmetAnalysis(rows), [rows]);
-  const [viewState, dispatch] = useReducer(admetTableStateReducer, undefined, () => ({
-    query: '',
-    filters: initialFilters || createEmptyAdmetFilters(),
-    sortKey: 'compound',
-    sortDirection: 'asc',
-    page: 0,
-    pageSize: 50,
-  }));
-  const deferredQuery = useDeferredValue(viewState.query);
-
-  const searched = useMemo(
-    () => searchAdmetMolecules(normalized.molecules, deferredQuery),
-    [deferredQuery, normalized.molecules],
-  );
-  const filtered = useMemo(
-    () => filterAdmetMolecules(searched, viewState.filters),
-    [searched, viewState.filters],
-  );
+export default function AdmetPropertyTable({ molecules, totalCount, viewState, dispatch }) {
   const sorted = useMemo(
-    () => sortAdmetMolecules(filtered, viewState.sortKey, viewState.sortDirection),
-    [filtered, viewState.sortDirection, viewState.sortKey],
+    () => sortAdmetMolecules(molecules, viewState.sortKey, viewState.sortDirection),
+    [molecules, viewState.sortDirection, viewState.sortKey],
   );
   const paginated = useMemo(
     () => paginateAdmetMolecules(sorted, viewState.page, viewState.pageSize),
     [sorted, viewState.page, viewState.pageSize],
   );
-  const hasActiveFilters = useMemo(
-    () => activeAdmetFilterSummaries(viewState.filters).length > 0,
-    [viewState.filters],
-  );
+  const hasActiveFilters = useMemo(() => activeAdmetFilterSummaries(viewState.filters).length > 0, [viewState.filters]);
   const availablePropertyCount = useMemo(
-    () => normalized.molecules.reduce(
+    () => molecules.reduce(
       (count, molecule) => count + ADMET_PROPERTY_TABLE_ENDPOINTS.filter(
         (key) => molecule.properties[key].status.code === 'available',
       ).length,
       0,
     ),
-    [normalized.molecules],
+    [molecules],
   );
 
   function handleSort(key) {
     dispatch({ type: 'set-sort', sortKey: key });
   }
 
-  if (!normalized.molecules.length) {
+  if (!totalCount) {
     return <Alert severity="info">No molecules are available for ADMET analysis.</Alert>;
   }
 
@@ -256,25 +230,13 @@ export default function AdmetPropertyTable({ rows, initialFilters = null }) {
           <Typography variant="body2" color="text.secondary">
             Existing prediction outputs only. Model and endpoint availability are retained for every molecule.
           </Typography>
+          <Typography variant="caption" color="text.secondary" aria-live="polite">
+            {molecules.length.toLocaleString()} of {totalCount.toLocaleString()} compounds
+          </Typography>
         </Box>
-        {availablePropertyCount === 0 ? (
+        {molecules.length > 0 && availablePropertyCount === 0 ? (
           <Alert severity="info">ADMET has not produced available property values for this molecule library. Cell labels preserve the recorded model and endpoint status.</Alert>
         ) : null}
-        <TextField
-          label="Search compounds"
-          value={viewState.query}
-          onChange={(event) => dispatch({ type: 'set-query', query: event.target.value })}
-          placeholder="Molecule name, ID, SMILES, or source file"
-          size="small"
-          sx={{ maxWidth: 440 }}
-          inputProps={{ 'aria-label': 'Search ADMET compounds' }}
-        />
-        <AdmetFilterPanel
-          filters={viewState.filters}
-          onChange={(filters) => dispatch({ type: 'set-filters', filters })}
-          matchedCount={filtered.length}
-          totalCount={normalized.molecules.length}
-        />
       </Stack>
       <TableContainer sx={{ overflowX: 'auto', borderTop: '1px solid', borderColor: 'divider' }}>
         <Table stickyHeader size="small" aria-label="ADMET property table" sx={{ minWidth: 1120 }}>

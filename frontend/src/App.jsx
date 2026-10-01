@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   Alert,
   AppBar,
@@ -50,7 +50,10 @@ import AdmetResultsSection, {
   aggregateAdmetFamilyStatus,
   deriveAdmetFamilyStatuses,
 } from './AdmetResultsSection.jsx';
-import AdmetPropertyTable from './AdmetPropertyTable.jsx';
+import AdmetPropertyTable, { AdmetFilterPanel } from './AdmetPropertyTable.jsx';
+import AdmetPlots from './AdmetPlots.jsx';
+import { normalizeAdmetAnalysis, searchAdmetMolecules } from './admetAnalysisData.js';
+import { admetTableStateReducer, createEmptyAdmetFilters, filterAdmetMolecules } from './admetFilters.js';
 import DockingResultsSection, { dockingStatusLabel } from './DockingResultsSection.jsx';
 import DockingSetup from './DockingSetup.jsx';
 import PrioritizationExplanationSection from './PrioritizationExplanationSection.jsx';
@@ -1297,10 +1300,23 @@ const ADMET_MODEL_GROUPS = [
   ['chemprop_regression', 'Chemprop regression', '5 regression endpoints'],
 ];
 
-export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNavigate }) {
+export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNavigate, initialWorkspaceTab = 0, initialAdmetViewState = null }) {
   const rows = prioritizationState.result?.results ?? [];
   const overviewRows = rows.slice(0, 50);
-  const [workspaceTab, setWorkspaceTab] = useState(0);
+  const [workspaceTab, setWorkspaceTab] = useState(initialWorkspaceTab);
+  const normalizedAdmet = useMemo(() => normalizeAdmetAnalysis(rows), [rows]);
+  const [admetViewState, admetDispatch] = useReducer(admetTableStateReducer, undefined, () => initialAdmetViewState || ({
+    query: '', filters: createEmptyAdmetFilters(), sortKey: 'compound', sortDirection: 'asc', page: 0, pageSize: 50,
+  }));
+  const deferredAdmetQuery = useDeferredValue(admetViewState.query);
+  const searchedAdmetMolecules = useMemo(
+    () => searchAdmetMolecules(normalizedAdmet.molecules, deferredAdmetQuery),
+    [deferredAdmetQuery, normalizedAdmet.molecules],
+  );
+  const filteredAdmetMolecules = useMemo(
+    () => filterAdmetMolecules(searchedAdmetMolecules, admetViewState.filters),
+    [admetViewState.filters, searchedAdmetMolecules],
+  );
   const [selectedIndex, setSelectedIndex] = useState(0);
   const selected = rows[selectedIndex] ?? null;
   const rowStatuses = rows.map(deriveAdmetFamilyStatuses);
@@ -1321,9 +1337,31 @@ export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNa
         <Tabs value={workspaceTab} onChange={(_, value) => setWorkspaceTab(value)} aria-label="ADMET workspace views">
           <Tab label="Overview" id="admet-tab-overview" aria-controls="admet-panel-overview" />
           <Tab label="Property Table" id="admet-tab-property-table" aria-controls="admet-panel-property-table" />
+          <Tab label="Plots" id="admet-tab-plots" aria-controls="admet-panel-plots" />
         </Tabs>
       </Paper>
       {sourceStatusState.error ? <Alert severity="warning">{sourceStatusState.error}</Alert> : null}
+      {workspaceTab > 0 ? (
+        <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
+          <Stack spacing={1.5}>
+            <TextField
+              label="Search compounds"
+              value={admetViewState.query}
+              onChange={(event) => admetDispatch({ type: 'set-query', query: event.target.value })}
+              placeholder="Molecule name, ID, SMILES, or source file"
+              size="small"
+              sx={{ maxWidth: 440 }}
+              inputProps={{ 'aria-label': 'Search ADMET compounds' }}
+            />
+            <AdmetFilterPanel
+              filters={admetViewState.filters}
+              onChange={(filters) => admetDispatch({ type: 'set-filters', filters })}
+              matchedCount={filteredAdmetMolecules.length}
+              totalCount={normalizedAdmet.molecules.length}
+            />
+          </Stack>
+        </Paper>
+      ) : null}
       {workspaceTab === 0 ? <Box id="admet-panel-overview" role="tabpanel" aria-labelledby="admet-tab-overview"><Stack spacing={2}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5 }}>
           {ADMET_MODEL_GROUPS.map(([key, name, detail]) => (
@@ -1352,7 +1390,8 @@ export function AdmetWorkflowPage({ prioritizationState, sourceStatusState, onNa
         </Paper>
         ) : <Alert severity="info">No ADMET predictions are available for the current calculation.</Alert>}
       </Stack></Box> : null}
-      {workspaceTab === 1 ? <Box id="admet-panel-property-table" role="tabpanel" aria-labelledby="admet-tab-property-table"><AdmetPropertyTable rows={rows} /></Box> : null}
+      {workspaceTab === 1 ? <Box id="admet-panel-property-table" role="tabpanel" aria-labelledby="admet-tab-property-table"><AdmetPropertyTable molecules={filteredAdmetMolecules} totalCount={normalizedAdmet.molecules.length} viewState={admetViewState} dispatch={admetDispatch} /></Box> : null}
+      {workspaceTab === 2 ? <Box id="admet-panel-plots" role="tabpanel" aria-labelledby="admet-tab-plots"><AdmetPlots molecules={filteredAdmetMolecules} /></Box> : null}
       <Box><Button variant="contained" onClick={() => onNavigate('Prioritization')}>Continue to {single ? 'Compound Assessment' : 'Prioritization'}</Button></Box>
     </Stack>
   );

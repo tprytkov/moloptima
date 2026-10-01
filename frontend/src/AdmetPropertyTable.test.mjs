@@ -9,11 +9,14 @@ let AdmetPropertyTable;
 let createEmptyAdmetFilters;
 let setNumericAdmetFilter;
 let setAdmetFilterSelections;
+let normalizeAdmetAnalysis;
+let filterAdmetMolecules;
 
 before(async () => {
   vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
   AdmetPropertyTable = (await vite.ssrLoadModule('/src/AdmetPropertyTable.jsx')).default;
-  ({ createEmptyAdmetFilters, setNumericAdmetFilter, setAdmetFilterSelections } = await vite.ssrLoadModule('/src/admetFilters.js'));
+  ({ createEmptyAdmetFilters, setNumericAdmetFilter, setAdmetFilterSelections, filterAdmetMolecules } = await vite.ssrLoadModule('/src/admetFilters.js'));
+  ({ normalizeAdmetAnalysis } = await vite.ssrLoadModule('/src/admetAnalysisData.js'));
 });
 
 after(async () => vite?.close());
@@ -39,7 +42,13 @@ function row(index, overrides = {}) {
 }
 
 function render(rows, initialFilters = null) {
-  return renderToStaticMarkup(React.createElement(AdmetPropertyTable, { rows, initialFilters }));
+  const filters = initialFilters || createEmptyAdmetFilters();
+  const normalized = normalizeAdmetAnalysis(rows).molecules;
+  const molecules = filterAdmetMolecules(normalized, filters);
+  const viewState = { query: '', filters, sortKey: 'compound', sortDirection: 'asc', page: 0, pageSize: 50 };
+  return renderToStaticMarkup(React.createElement(AdmetPropertyTable, {
+    molecules, totalCount: normalized.length, viewState, dispatch: () => {},
+  }));
 }
 
 test('property table renders molecules, endpoint columns, regression values, and BBB output', () => {
@@ -87,21 +96,21 @@ test('empty and ADMET-not-run states are explicit', () => {
   assert.match(html, /Not run/);
 });
 
-test('table exposes accessible sorting, search, pagination, and bounded horizontal scrolling', () => {
+test('table exposes accessible sorting, pagination, and bounded horizontal scrolling', () => {
   const html = render([row(1), row(2)]);
   assert.match(html, /aria-label="ADMET property table"/);
-  assert.match(html, /aria-label="Search ADMET compounds"/);
   assert.match(html, /aria-label="Sort by Compound"/);
   assert.match(html, /aria-label="Go to next page"/);
   assert.match(html, /overflow-x:auto/);
 });
 
-test('compact filter panel exposes numeric, BBB, status, summary, and clear controls', () => {
+test('shared compact filter panel exposes numeric, BBB, status, summary, and clear controls', async () => {
   let filters = createEmptyAdmetFilters();
   filters = setNumericAdmetFilter(filters, 'lipophilicity_astrazeneca', 'min', '1');
   filters = setNumericAdmetFilter(filters, 'lipophilicity_astrazeneca', 'max', '4');
   filters = setAdmetFilterSelections(filters, 'classifications', 'gmc_mpnn_bbb', ['BBB+']);
-  const html = render([row(1)], filters);
+  const { AdmetFilterPanel } = await vite.ssrLoadModule('/src/AdmetPropertyTable.jsx');
+  const html = renderToStaticMarkup(React.createElement(AdmetFilterPanel, { filters, onChange: () => {}, matchedCount: 1, totalCount: 1 }));
   assert.match(html, /aria-label="ADMET property filters"/);
   assert.match(html, /Lipophilicity: 1–4/);
   assert.match(html, /BBB permeability: BBB\+/);
