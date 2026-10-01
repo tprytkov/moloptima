@@ -146,14 +146,55 @@ test('backend connectivity gates validation without removing pending files', () 
   assert.match(online, /one\.sdf/);
 });
 
-test('no supported pending file disables validation and the 1000-record threshold is unchanged', async () => {
+test('no supported pending file disables validation and large file selections use chunking', async () => {
   const selection = await vite.ssrLoadModule('/src/moleculeSelection.js');
   const html = render(null, { selectedFiles: [{ name: 'model.pkl' }] });
   assert.match(html.match(/<button[^>]*>Validate and load molecules<\/button>/)?.[0] ?? '', /disabled/);
   const tooMany = Array.from({ length: 1001 }, (_, index) => ({ name: `${index}.sdf`, size: 1, lastModified: index }));
-  assert.match(selection.pendingSelectionLimitError(tooMany), /Maximum number of uploaded files is 1,000/);
+  assert.equal(selection.pendingSelectionLimitError(tooMany), '');
   assert.equal(selection.pendingSelectionLimitError(tooMany.slice(0, 1000)), '');
   assert.match(selection.pendingSelectionLimitError([], Array(1001).fill('CCO').join('\n')), /Maximum batch size is 1,000/);
   const tooManyCsvFiles = tooMany.map((file, index) => ({ ...file, name: `${index}.csv` }));
-  assert.match(selection.pendingSelectionLimitError(tooManyCsvFiles), /Maximum number of uploaded files is 1,000/);
+  assert.equal(selection.pendingSelectionLimitError(tooManyCsvFiles), '');
+});
+
+test('renders acknowledged chunk progress and cancel action without replacing loaded upload', () => {
+  const html = render({ upload_id: 'previous', valid_count: 1 }, {
+    loading: true,
+    importProgress: {
+      status: 'running', processedFiles: 250, totalFiles: 501,
+      parsedRecords: 250, batchNumber: 1, totalBatches: 3,
+    },
+  });
+  assert.match(html, /250 \/ 501 files processed/);
+  assert.match(html, /Batch 1 of 3/);
+  assert.match(html, /250 molecule records parsed/);
+  assert.match(html, /Cancel import/);
+  assert.match(html, /Input Summary/);
+});
+
+test('renders stopped chunk progress honestly after a failure', () => {
+  const html = render({ upload_id: 'previous', valid_count: 1 }, {
+    error: 'Import stopped after 250 / 501 files. Batch failed.',
+    importProgress: {
+      status: 'failed', processedFiles: 250, totalFiles: 501,
+      parsedRecords: 250, batchNumber: 1, totalBatches: 3,
+    },
+  });
+  assert.match(html, /Import stopped/);
+  assert.doesNotMatch(html, />Importing molecules</);
+  assert.match(html, /Input Summary/);
+});
+
+test('finalization is visibly non-cancellable', () => {
+  const html = render(null, {
+    loading: true,
+    importProgress: {
+      status: 'finalizing', processedFiles: 501, totalFiles: 501,
+      parsedRecords: 501, batchNumber: 3, totalBatches: 3,
+    },
+  });
+  assert.match(html, /Finalizing molecule import/);
+  assert.match(html, /Finalizing import/);
+  assert.doesNotMatch(html, /Cancel import/);
 });

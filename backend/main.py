@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import FastAPI, File, Form, Query, Response, UploadFile
+from fastapi import FastAPI, File, Form, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -15,6 +15,9 @@ from backend.schemas import (
     DockingConfigurationResponse,
     DockingReceptorResponse,
     HealthResponse,
+    ImportBatchResponse,
+    ImportJobCreateRequest,
+    ImportJobResponse,
     JobAnnotationsRequest,
     JobAnnotationsResponse,
     JobHistoryResponse,
@@ -47,7 +50,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
     ],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
     expose_headers=[
         "X-MolOptima-Structure-Format",
@@ -81,6 +84,37 @@ def import_molecules(
         smiles_text=smiles_text,
         selected_structure_column=selected_structure_column,
     ))
+
+
+@app.post("/api/molecules/import-jobs", response_model=ImportJobResponse)
+def create_molecule_import_job(request: ImportJobCreateRequest) -> ImportJobResponse:
+    return ImportJobResponse(**services.create_molecule_import_job(
+        expected_file_count=request.expected_file_count,
+        smiles_text=request.smiles_text,
+        selected_structure_column=request.selected_structure_column,
+    ))
+
+
+@app.post("/api/molecules/import-jobs/{import_job_id}/batches", response_model=ImportBatchResponse)
+def append_molecule_import_batch(
+    import_job_id: str,
+    files: list[UploadFile] = File(default=[]),
+    batch_index: int = Form(...),
+) -> ImportBatchResponse:
+    return ImportBatchResponse(**services.append_molecule_import_batch(
+        import_job_id, batch_index=batch_index, files=files,
+    ))
+
+
+@app.post("/api/molecules/import-jobs/{import_job_id}/finalize", response_model=UploadResponse)
+def finalize_molecule_import_job(import_job_id: str) -> UploadResponse:
+    return UploadResponse(**services.finalize_molecule_import_job(import_job_id))
+
+
+@app.delete("/api/molecules/import-jobs/{import_job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_molecule_import_job(import_job_id: str) -> Response:
+    services.cancel_molecule_import_job(import_job_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.post("/api/receptors/upload", response_model=ReceptorUploadResponse)

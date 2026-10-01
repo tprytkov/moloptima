@@ -1,4 +1,5 @@
 import { MAX_BATCH_SIZE } from './jobWorkflow.js';
+import { SMALL_IMPORT_FILE_THRESHOLD } from './moleculeImportWorkflow.js';
 
 export const SUPPORTED_MOLECULE_EXTENSIONS = Object.freeze(['.csv', '.tsv', '.sdf', '.pdb']);
 export const LARGE_SELECTION_THRESHOLD = 12;
@@ -47,14 +48,15 @@ export function classifyPendingMoleculeFiles(files = []) {
 
 export function pendingSelectionLimitError(files = [], smilesText = '') {
   const { supported } = classifyPendingMoleculeFiles(files);
-  if (supported.length > MAX_BATCH_SIZE) {
-    return `Maximum number of uploaded files is ${MAX_BATCH_SIZE.toLocaleString()}; this selection contains ${supported.length.toLocaleString()} supported files.`;
+  const smilesRecordCount = String(smilesText).split(/\r?\n/).filter((line) => line.trim()).length;
+  if (smilesRecordCount > MAX_BATCH_SIZE) {
+    return `Maximum batch size is ${MAX_BATCH_SIZE.toLocaleString()} submitted molecule records; pasted SMILES contains ${smilesRecordCount.toLocaleString()}.`;
   }
+  if (supported.length > SMALL_IMPORT_FILE_THRESHOLD) return '';
   const structureFileCount = supported.filter((file) => {
     const extension = moleculeFileExtension(file);
     return extension === '.sdf' || extension === '.pdb';
   }).length;
-  const smilesRecordCount = String(smilesText).split(/\r?\n/).filter((line) => line.trim()).length;
   const knownRecordCount = structureFileCount + smilesRecordCount;
   if (knownRecordCount <= MAX_BATCH_SIZE) return '';
   return `Maximum batch size is ${MAX_BATCH_SIZE.toLocaleString()} submitted molecule records; this selection contains at least ${knownRecordCount.toLocaleString()}.`;

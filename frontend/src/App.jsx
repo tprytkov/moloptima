@@ -61,6 +61,12 @@ import {
   filesForMoleculeValidation,
   pendingSelectionLimitError,
 } from './moleculeSelection.js';
+import {
+  cleanupMoleculeImportJob,
+  IMPORT_CHUNK_SIZE,
+  importFailureState,
+  runMoleculeImport,
+} from './moleculeImportWorkflow.js';
 import ResultsPackageDownloads from './ResultsPackageDownloads.jsx';
 import {
   TERMINAL_JOB_STATUSES,
@@ -193,7 +199,7 @@ export const PRIMARY_NAVIGATION = [
 
 const EMPTY_UPLOAD_STATE = Object.freeze({
   smilesText: '', selectedFiles: [], selectedStructureColumn: '', upload: null,
-  loading: false, error: '', fileInputResetKey: 0,
+  loading: false, error: '', fileInputResetKey: 0, importProgress: null,
 });
 const EMPTY_PRIORITIZATION_STATE = Object.freeze({
   job: null, result: null, loading: false, error: '',
@@ -328,6 +334,7 @@ function App() {
   const [activeItem, setActiveItem] = useState('New Calculation');
   const previousActiveItem = useRef(activeItem);
   const [uploadState, setUploadState] = useState({ ...EMPTY_UPLOAD_STATE });
+  const activeImportRef = useRef(null);
   const [prioritizationState, setPrioritizationState] = useState({ ...EMPTY_PRIORITIZATION_STATE });
   const [latestRunState, setLatestRunState] = useState({
     job: null,
@@ -363,6 +370,8 @@ function App() {
   });
   const [targetContext, setTargetContext] = useState({ ...EMPTY_TARGET_CONTEXT });
   const health = useBackendHealth();
+  const healthRef = useRef(health);
+  healthRef.current = health;
   const annotatedPrioritizationState = useMemo(
     () => annotateAnalysisState(prioritizationState, annotationsState),
     [prioritizationState, annotationsState],
@@ -465,32 +474,60 @@ function App() {
       return;
     }
 
-    setUploadState((current) => ({ ...current, loading: true, error: '' }));
-    setPrioritizationState({ job: null, result: null, loading: false, error: '' });
-
-    const formData = new FormData();
-    formData.append('smiles_text', uploadState.smilesText ?? '');
-    formData.append('selected_structure_column', uploadState.selectedStructureColumn ?? '');
-    uploadableFiles.forEach((file) => formData.append('files', file));
+    const activeImport = {
+      controller: new AbortController(), importJobId: '', progress: null, cancelled: false,
+    };
+    activeImportRef.current = activeImport;
+    setUploadState((current) => ({ ...current, loading: true, error: '', importProgress: null }));
 
     try {
-      const payload = await apiRequest('/api/molecules/import', {
-        method: 'POST',
-        body: formData,
+      const payload = await runMoleculeImport({
+        files: uploadableFiles,
+        smilesText: uploadState.smilesText ?? '',
+        selectedStructureColumn: uploadState.selectedStructureColumn ?? '',
+        request: apiRequest,
+        isOnline: () => healthRef.current.status === 'online',
+        signal: activeImport.controller.signal,
+        onJobCreated: (importJobId) => {
+          activeImport.importJobId = importJobId;
+          const progress = {
+            mode: 'chunked', status: 'running', processedFiles: 0,
+            totalFiles: uploadableFiles.length, parsedRecords: 0, batchNumber: 0,
+            totalBatches: Math.ceil(uploadableFiles.length / IMPORT_CHUNK_SIZE),
+          };
+          activeImport.progress = progress;
+          setUploadState((current) => ({ ...current, importProgress: progress }));
+        },
+        onProgress: (progress) => {
+          activeImport.progress = progress;
+          setUploadState((current) => ({ ...current, importProgress: progress }));
+        },
       });
+      setPrioritizationState({ job: null, result: null, loading: false, error: '' });
       setUploadState((current) => ({
         ...current,
         upload: payload,
         loading: false,
         error: '',
+        importProgress: null,
       }));
     } catch (error) {
-      setUploadState((current) => ({
-        ...current,
-        loading: false,
-        error: readableError(error),
-      }));
+      await cleanupMoleculeImportJob(activeImport.importJobId, apiRequest);
+      const prefix = activeImport.progress
+        ? `Import stopped after ${activeImport.progress.processedFiles.toLocaleString()} / ${activeImport.progress.totalFiles.toLocaleString()} files. `
+        : '';
+      const message = activeImport.cancelled ? `${prefix}Import cancelled.` : `${prefix}${readableError(error)}`;
+      setUploadState((current) => importFailureState(current, message, activeImport.progress));
+    } finally {
+      if (activeImportRef.current === activeImport) activeImportRef.current = null;
     }
+  }
+
+  function handleCancelMoleculeImport() {
+    const activeImport = activeImportRef.current;
+    if (!activeImport || activeImport.progress?.status === 'finalizing') return;
+    activeImport.cancelled = true;
+    activeImport.controller.abort();
   }
 
   function handleMoleculeInputChange(update) {
@@ -814,6 +851,7 @@ function App() {
               annotationsState={annotationsState}
               sourceStatusState={sourceStatusState}
               onUpload={handleUpload}
+              onCancelMoleculeImport={handleCancelMoleculeImport}
               onMoleculeInputChange={handleMoleculeInputChange}
               onDockingSetupConfirmed={handleDockingSetupConfirmed}
               onStartPrioritization={handleStartPrioritization}
@@ -932,6 +970,7 @@ function ActivePage({
   annotationsState,
   sourceStatusState,
   onUpload,
+  onCancelMoleculeImport,
   onMoleculeInputChange,
   onDockingSetupConfirmed,
   onStartPrioritization,
@@ -974,6 +1013,7 @@ function ActivePage({
         backendHealth={health}
         uploadState={uploadState}
         onUpload={onUpload}
+        onCancelImport={onCancelMoleculeImport}
         onChange={onMoleculeInputChange}
         onContinue={() => onNavigate('Receptor & Docking')}
       />
@@ -2968,8 +3008,8 @@ function formatCounts(counts) {
     .join(', ');
 }
 
-function UploadMoleculesPage({ uploadState, backendHealth, onUpload, onChange, onContinue }) {
-  return <MoleculeInputPanel uploadState={uploadState} backendHealth={backendHealth} onImport={onUpload} onChange={onChange} onContinue={onContinue} />;
+function UploadMoleculesPage({ uploadState, backendHealth, onUpload, onCancelImport, onChange, onContinue }) {
+  return <MoleculeInputPanel uploadState={uploadState} backendHealth={backendHealth} onImport={onUpload} onCancelImport={onCancelImport} onChange={onChange} onContinue={onContinue} />;
 }
 
 export function CandidateExportPanel({ rows }) {

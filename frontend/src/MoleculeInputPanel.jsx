@@ -58,7 +58,7 @@ function FileButton({ label, accept, multiple = false, folder = false, onFiles, 
   );
 }
 
-export default function MoleculeInputPanel({ uploadState, backendHealth, onChange, onImport, onContinue }) {
+export default function MoleculeInputPanel({ uploadState, backendHealth, onChange, onImport, onCancelImport, onContinue }) {
   const upload = uploadState.upload;
   const preview = upload?.preview ?? [];
   const valid = upload?.valid_count ?? 0;
@@ -72,6 +72,7 @@ export default function MoleculeInputPanel({ uploadState, backendHealth, onChang
     ? selectedFiles.slice(0, FILE_PREVIEW_LIMIT)
     : selectedFiles;
   const hiddenFileCount = selection.total - visibleFiles.length;
+  const progress = uploadState.importProgress;
   return (
     <Stack spacing={3}>
       <Box>
@@ -137,10 +138,21 @@ export default function MoleculeInputPanel({ uploadState, backendHealth, onChang
           {backendHealth?.status === 'offline' && hasSupportedPendingInput ? <Alert severity="warning">Validation requires the MolOptima backend. Your selected files are preserved.</Alert> : null}
           {blockingSelectionError ? <Alert severity="error">{blockingSelectionError}</Alert> : null}
           {uploadState.error ? <Alert severity="error">{uploadState.error}</Alert> : null}
-          <Box>
+          {progress ? <Alert severity={progress.status === 'failed' ? 'warning' : 'info'}>
+            <Typography sx={{ fontWeight: 700 }}>
+              {progress.status === 'failed' ? 'Import stopped' : progress.status === 'finalizing' ? 'Finalizing molecule import' : 'Importing molecules'}
+            </Typography>
+            <Typography>
+              {progress.processedFiles.toLocaleString()} / {progress.totalFiles.toLocaleString()} files processed
+              {' · '}{progress.batchNumber > 0 ? `Batch ${progress.batchNumber} of ${progress.totalBatches}` : `Preparing batch 1 of ${progress.totalBatches}`}
+            </Typography>
+            <Typography variant="caption">{progress.parsedRecords.toLocaleString()} molecule records parsed in acknowledged batches</Typography>
+          </Alert> : null}
+          <Box sx={{ display: 'flex', gap: 1 }}>
             <Button variant="contained" disabled={!canSubmit || uploadState.loading} onClick={onImport} startIcon={uploadState.loading ? <CircularProgress size={18} color="inherit" /> : null}>
-              {uploadState.loading ? 'Validating collection' : 'Validate and load molecules'}
+              {uploadState.loading ? (progress?.status === 'finalizing' ? 'Finalizing import' : progress ? 'Importing molecules' : 'Validating collection') : 'Validate and load molecules'}
             </Button>
+            {uploadState.loading && progress?.status === 'running' ? <Button variant="outlined" color="inherit" onClick={onCancelImport}>Cancel import</Button> : null}
           </Box>
         </Stack>
       </Paper>

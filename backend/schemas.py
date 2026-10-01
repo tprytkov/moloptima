@@ -163,6 +163,29 @@ class UploadResponse(BaseModel):
     preview: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ImportJobCreateRequest(BaseModel):
+    expected_file_count: int = Field(ge=0)
+    smiles_text: str = ""
+    selected_structure_column: str = ""
+
+
+class ImportJobResponse(BaseModel):
+    import_job_id: str
+    status: Literal["pending"] = "pending"
+    expected_file_count: int = 0
+    processed_file_count: int = 0
+    parsed_record_count: int = 0
+    batch_count: int = 0
+
+
+class ImportBatchResponse(ImportJobResponse):
+    batch_index: int
+    batch_file_count: int
+    batch_submitted_count: int
+    batch_valid_count: int
+    batch_invalid_count: int
+
+
 class ReceptorUploadResponse(BaseModel):
     receptor_upload_id: str
     status: str = "uploaded"

@@ -69,8 +69,10 @@ RECEPTOR_DIR = BACKEND_DIR / "receptors"
 JOB_OUTPUT_DIR = BACKEND_DIR / "job_outputs"
 JOB_METADATA_DIR = BACKEND_DIR / "job_metadata"
 JOB_ANNOTATION_DIR = BACKEND_DIR / "job_annotations"
+IMPORT_JOB_DIR = BACKEND_DIR / "import_jobs"
 REQUIRED_COLUMNS = {"molecule_id", "smiles"}
 MAX_BATCH_SIZE = 1000
+MAX_IMPORT_BATCH_FILES = 250
 TERMINAL_JOB_STATUSES = {
     "completed",
     "completed_with_warnings",
@@ -338,10 +340,7 @@ def save_molecule_import(
 ) -> dict[str, object]:
     """Normalize all supported molecule inputs into one canonical collection."""
 
-    source_inputs = [
-        SourceInput(filename=Path(file.filename or "unnamed").name, content=file.file.read())
-        for file in files
-    ]
+    source_inputs = _source_inputs_from_uploads(files)
     collection = import_molecule_collection(
         smiles_text=smiles_text,
         files=source_inputs,
@@ -362,32 +361,268 @@ def save_molecule_import(
 
     upload_id = uuid4().hex
     upload_dir = UPLOAD_DIR / upload_id
-    sources_dir = upload_dir / "source_structures"
-    upload_dir.mkdir(parents=True, exist_ok=False)
-    sources_dir.mkdir()
     try:
-        for index, source in enumerate(source_inputs, start=1):
-            safe_name = Path(source.filename).name
-            target = sources_dir / f"{index:04d}_{safe_name}"
-            target.write_bytes(source.content)
-        canonical_path = upload_dir / "canonical_molecules.csv"
-        manifest_path = upload_dir / "molecule_collection.json"
-        write_canonical_collection(collection, canonical_path, manifest_path)
+        return _persist_molecule_collection(
+            collection=collection,
+            source_inputs=source_inputs,
+            smiles_text=smiles_text,
+            upload_id=upload_id,
+            upload_dir=upload_dir,
+        )
     except Exception:
         shutil.rmtree(upload_dir, ignore_errors=True)
         raise
 
-    preview = list(collection["records"])[:20]
+
+def create_molecule_import_job(
+    *, expected_file_count: int, smiles_text: str = "", selected_structure_column: str = "",
+) -> dict[str, object]:
+    """Create temporary state for one logical, sequential multi-request import."""
+
+    smiles_collection = import_molecule_collection(smiles_text=smiles_text)
+    smiles_record_count = int(dict(smiles_collection["summary"])["submitted_count"])
+    if smiles_record_count > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Maximum batch size is {MAX_BATCH_SIZE:,} submitted molecule records.",
+        )
+    import_job_id = uuid4().hex
+    job_dir = IMPORT_JOB_DIR / import_job_id
+    job_dir.mkdir(parents=True, exist_ok=False)
+    metadata = {
+        "import_job_id": import_job_id,
+        "status": "pending",
+        "expected_file_count": expected_file_count,
+        "processed_file_count": 0,
+        "parsed_record_count": 0,
+        "pasted_smiles_record_count": smiles_record_count,
+        "batch_count": 0,
+        "smiles_text": smiles_text,
+        "selected_structure_column": selected_structure_column,
+        "sources": [],
+        "created_at": utc_timestamp(),
+    }
+    _write_import_job_metadata(job_dir, metadata)
+    return _public_import_job(metadata)
+
+
+def append_molecule_import_batch(
+    import_job_id: str, *, batch_index: int, files: list[UploadFile],
+) -> dict[str, object]:
+    """Validate and durably stage one ordered transport batch."""
+
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Import batches must contain files.")
+    if len(files) > MAX_IMPORT_BATCH_FILES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Maximum import batch size is {MAX_IMPORT_BATCH_FILES:,} files.",
+        )
+
+    with _metadata_lock:
+        job_dir, metadata = _load_import_job(import_job_id)
+        expected_batch = int(metadata["batch_count"]) + 1
+        if batch_index != expected_batch:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Expected import batch {expected_batch}, received {batch_index}.",
+            )
+        source_inputs = _source_inputs_from_uploads(files)
+        collection = import_molecule_collection(
+            files=source_inputs,
+            selected_structure_column=str(metadata.get("selected_structure_column") or ""),
+        )
+        batch_summary = dict(collection["summary"])
+        batch_records = int(batch_summary["submitted_count"])
+        if batch_records > MAX_BATCH_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Maximum batch size is {MAX_BATCH_SIZE:,} submitted molecule records.",
+            )
+
+        current_count = int(metadata["processed_file_count"])
+        expected_count = int(metadata["expected_file_count"])
+        if current_count + len(source_inputs) > expected_count:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Import batch exceeds the job's expected file count.",
+            )
+
+        batches_dir = job_dir / "batches"
+        batches_dir.mkdir(exist_ok=True)
+        incoming_dir = batches_dir / f".incoming-{uuid4().hex}"
+        batch_dir = batches_dir / f"{batch_index:06d}"
+        incoming_dir.mkdir()
+        staged_sources: list[dict[str, object]] = []
+        try:
+            for offset, source in enumerate(source_inputs, start=1):
+                global_index = current_count + offset
+                stored_name = f"{global_index:08d}_{Path(source.filename).name}"
+                (incoming_dir / stored_name).write_bytes(source.content)
+                staged_sources.append({
+                    "index": global_index,
+                    "filename": Path(source.filename).name,
+                    "relative_path": f"batches/{batch_index:06d}/{stored_name}",
+                })
+            with (incoming_dir / "batch_collection.json").open("w", encoding="utf-8") as handle:
+                json.dump(collection, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+            incoming_dir.replace(batch_dir)
+            metadata["sources"] = [*list(metadata.get("sources") or []), *staged_sources]
+            metadata["processed_file_count"] = current_count + len(source_inputs)
+            metadata["parsed_record_count"] = int(metadata["parsed_record_count"]) + batch_records
+            metadata["batch_count"] = batch_index
+            _write_import_job_metadata(job_dir, metadata)
+        except Exception:
+            shutil.rmtree(incoming_dir, ignore_errors=True)
+            shutil.rmtree(batch_dir, ignore_errors=True)
+            raise
+
+    return {
+        **_public_import_job(metadata),
+        "batch_index": batch_index,
+        "batch_file_count": len(source_inputs),
+        "batch_submitted_count": batch_records,
+        "batch_valid_count": int(batch_summary["valid_count"]),
+        "batch_invalid_count": int(batch_summary["invalid_count"]),
+    }
+
+
+def finalize_molecule_import_job(import_job_id: str) -> dict[str, object]:
+    """Atomically publish one canonical upload assembled from all staged batches."""
+
+    with _metadata_lock:
+        job_dir, metadata = _load_import_job(import_job_id)
+        processed = int(metadata["processed_file_count"])
+        expected = int(metadata["expected_file_count"])
+        if processed != expected:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Import job has received {processed:,} of {expected:,} expected files.",
+            )
+        source_inputs = [
+            SourceInput(
+                filename=str(source["filename"]),
+                content=(job_dir / str(source["relative_path"])).read_bytes(),
+            )
+            for source in sorted(list(metadata.get("sources") or []), key=lambda item: int(item["index"]))
+        ]
+        smiles_text = str(metadata.get("smiles_text") or "")
+        collection = import_molecule_collection(
+            smiles_text=smiles_text,
+            files=source_inputs,
+            selected_structure_column=str(metadata.get("selected_structure_column") or ""),
+        )
+        if int(dict(collection["summary"])["submitted_count"]) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No supported molecule records were submitted.",
+            )
+
+        upload_id = uuid4().hex
+        staged_upload_dir = job_dir / f"finalized-{upload_id}"
+        final_upload_dir = UPLOAD_DIR / upload_id
+        try:
+            response = _persist_molecule_collection(
+                collection=collection,
+                source_inputs=source_inputs,
+                smiles_text=smiles_text,
+                upload_id=upload_id,
+                upload_dir=staged_upload_dir,
+                source_index_width=8,
+            )
+            UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            staged_upload_dir.replace(final_upload_dir)
+            response["path"] = relative_path(final_upload_dir / "canonical_molecules.csv")
+        except Exception:
+            shutil.rmtree(staged_upload_dir, ignore_errors=True)
+            raise
+        shutil.rmtree(job_dir, ignore_errors=True)
+        return response
+
+
+def cancel_molecule_import_job(import_job_id: str) -> None:
+    """Remove an unfinished import job without touching finalized uploads."""
+
+    with _metadata_lock:
+        job_dir, _ = _load_import_job(import_job_id)
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
+def _source_inputs_from_uploads(files: list[UploadFile]) -> list[SourceInput]:
+    return [
+        SourceInput(filename=Path(file.filename or "unnamed").name, content=file.file.read())
+        for file in files
+    ]
+
+
+def _persist_molecule_collection(
+    *, collection: dict[str, object], source_inputs: list[SourceInput], smiles_text: str,
+    upload_id: str, upload_dir: Path, source_index_width: int = 4,
+) -> dict[str, object]:
+    summary = dict(collection["summary"])
+    sources_dir = upload_dir / "source_structures"
+    upload_dir.mkdir(parents=True, exist_ok=False)
+    sources_dir.mkdir()
+    for index, source in enumerate(source_inputs, start=1):
+        safe_name = Path(source.filename).name
+        (sources_dir / f"{index:0{source_index_width}d}_{safe_name}").write_bytes(source.content)
+    canonical_path = upload_dir / "canonical_molecules.csv"
+    write_canonical_collection(collection, canonical_path, upload_dir / "molecule_collection.json")
     return {
         "upload_id": upload_id,
         "status": "ready" if int(summary["valid_count"]) else "no_valid_compounds",
         "filename": "mixed molecule collection" if len(source_inputs) + bool(smiles_text.strip()) > 1 else (
             source_inputs[0].filename if source_inputs else "entered_smiles.txt"
         ),
-        "rows": submitted_count,
+        "rows": int(summary["submitted_count"]),
         "path": relative_path(canonical_path),
         **summary,
-        "preview": preview,
+        "preview": list(collection["records"])[:20],
+    }
+
+
+def _import_job_path(import_job_id: str) -> Path:
+    if len(import_job_id) != 32 or any(character not in "0123456789abcdef" for character in import_job_id.lower()):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found.")
+    return IMPORT_JOB_DIR / import_job_id
+
+
+def _load_import_job(import_job_id: str) -> tuple[Path, dict[str, object]]:
+    job_dir = _import_job_path(import_job_id)
+    metadata_path = job_dir / "job.json"
+    if not metadata_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found.")
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Import job state is unreadable.") from exc
+    if metadata.get("status") != "pending":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Import job is not pending.")
+    return job_dir, metadata
+
+
+def _write_import_job_metadata(job_dir: Path, metadata: dict[str, object]) -> None:
+    temporary_path = job_dir / f"job-{uuid4().hex}.tmp"
+    try:
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            json.dump(metadata, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, job_dir / "job.json")
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _public_import_job(metadata: dict[str, object]) -> dict[str, object]:
+    return {
+        "import_job_id": metadata["import_job_id"],
+        "status": metadata["status"],
+        "expected_file_count": metadata["expected_file_count"],
+        "processed_file_count": metadata["processed_file_count"],
+        "parsed_record_count": metadata["parsed_record_count"],
+        "batch_count": metadata["batch_count"],
     }
 
 
@@ -581,7 +816,7 @@ def run_prioritization_job(
 
     pubchem_lookup_requested = enable_public_lookup if enable_pubchem_lookup is None else enable_pubchem_lookup
     input_path = find_upload_path(upload_id)
-    submitted_count = validate_molecule_csv(input_path)
+    submitted_count = validate_molecule_csv(input_path, enforce_batch_limit=False)
     import_manifest = read_molecule_collection_manifest(upload_id)
     import_summary = dict(import_manifest.get("summary") or {})
     imported_valid_count = import_summary.get("valid_count")
@@ -1295,7 +1530,7 @@ def read_target_reference_metadata(job: dict[str, object]) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
-def validate_molecule_csv(path: Path) -> int:
+def validate_molecule_csv(path: Path, *, enforce_batch_limit: bool = True) -> int:
     """Validate required CSV columns and return the row count."""
 
     with path.open(newline="", encoding="utf-8-sig") as handle:
@@ -1308,7 +1543,7 @@ def validate_molecule_csv(path: Path) -> int:
                 detail=f"CSV is missing required columns: {', '.join(missing)}.",
             )
         row_count = sum(1 for _ in reader)
-        if row_count > MAX_BATCH_SIZE:
+        if enforce_batch_limit and row_count > MAX_BATCH_SIZE:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(

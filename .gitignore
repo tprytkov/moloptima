@@ -25,6 +25,8 @@ backend/job_metadata/*
 !backend/job_metadata/.gitkeep
 backend/job_annotations/*
 !backend/job_annotations/.gitkeep
+backend/import_jobs/*
+!backend/import_jobs/.gitkeep
 
 # App-managed local caches and manifests
 app_data/model_resources/
