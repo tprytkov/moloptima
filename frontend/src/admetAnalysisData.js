@@ -1,4 +1,5 @@
 import { ADMET_STATUS_PRESENTATION, deriveAdmetFamilyStatuses, normalizeAdmetStatus } from './admetStatus.js';
+import { resolveAdmetEndpointModelMetadata } from './admetModelMetadata.js';
 
 export const ADMET_ENDPOINT_REGISTRY = Object.freeze([
   { key: 'hia_hou', label: 'HIA', category: 'Absorption', unit: 'Probability', modelFamily: 'chemberta', modelName: 'ChemBERTa multitask classifier', valueType: 'binary_classification' },
@@ -51,11 +52,23 @@ function regressionValue(endpoint) {
   return valueKey ? finiteNumber(endpoint[valueKey]) : finiteNumber(endpoint.ensemble_mean);
 }
 
-function normalizeRegressionProperty(row, metadata, familyStatus) {
+function attachModelMetadata(property, metadata, familyRaw, runtimeIdentities) {
+  return {
+    ...property,
+    modelMetadata: resolveAdmetEndpointModelMetadata({
+      endpoint: metadata,
+      property,
+      familyRaw,
+      runtimeIdentities,
+    }),
+  };
+}
+
+function normalizeRegressionProperty(row, metadata, familyStatus, runtimeIdentities) {
   const family = row.admet_regression && typeof row.admet_regression === 'object' ? row.admet_regression : {};
   const endpoint = family.endpoints?.[metadata.key];
   const value = regressionValue(endpoint);
-  return {
+  return attachModelMetadata({
     endpointKey: metadata.key,
     value,
     displayValue: null,
@@ -64,16 +77,16 @@ function normalizeRegressionProperty(row, metadata, familyStatus) {
     modelFamily: metadata.modelFamily,
     modelName: family.model_family || endpoint?.model_family || metadata.modelName,
     raw: endpoint ?? null,
-  };
+  }, metadata, family, runtimeIdentities);
 }
 
-function normalizeClassificationProperty(row, metadata, familyStatus) {
+function normalizeClassificationProperty(row, metadata, familyStatus, runtimeIdentities) {
   const endpoint = row.admet_predictions?.[metadata.key];
   const value = endpoint?.binary_prediction === 0 || endpoint?.binary_prediction === 1
     ? endpoint.binary_prediction
     : null;
   const probability = finiteNumber(endpoint?.calibrated_probability);
-  return {
+  return attachModelMetadata({
     endpointKey: metadata.key,
     value,
     classification: value === 1 ? 'Positive' : value === 0 ? 'Negative' : null,
@@ -84,15 +97,15 @@ function normalizeClassificationProperty(row, metadata, familyStatus) {
     modelFamily: metadata.modelFamily,
     modelName: metadata.modelName,
     raw: endpoint ?? null,
-  };
+  }, metadata, row.admet_predictions, runtimeIdentities);
 }
 
-function normalizeBbbProperty(row, metadata, familyStatus) {
+function normalizeBbbProperty(row, metadata, familyStatus, runtimeIdentities) {
   const endpoint = row.bbb_result && typeof row.bbb_result === 'object' ? row.bbb_result : null;
   const probability = finiteNumber(endpoint?.ensemble_probability);
   const classification = endpoint?.raw_classification || endpoint?.prediction;
   const value = classification && classification !== 'unavailable' ? classification : null;
-  return {
+  return attachModelMetadata({
     endpointKey: metadata.key,
     value,
     classification: value,
@@ -103,20 +116,20 @@ function normalizeBbbProperty(row, metadata, familyStatus) {
     modelFamily: metadata.modelFamily,
     modelName: endpoint?.model_family || metadata.modelName,
     raw: endpoint,
-  };
+  }, metadata, endpoint, runtimeIdentities);
 }
 
-export function normalizeAdmetMolecule(row, sourceIndex = 0) {
+export function normalizeAdmetMolecule(row, sourceIndex = 0, runtimeIdentities = []) {
   const source = row && typeof row === 'object' ? row : {};
   const familyStatuses = deriveAdmetFamilyStatuses(source);
   const properties = {};
   for (const metadata of ADMET_ENDPOINT_REGISTRY) {
     if (metadata.modelFamily === 'chemprop_regression') {
-      properties[metadata.key] = normalizeRegressionProperty(source, metadata, familyStatuses.chemprop_regression);
+      properties[metadata.key] = normalizeRegressionProperty(source, metadata, familyStatuses.chemprop_regression, runtimeIdentities);
     } else if (metadata.modelFamily === 'gmc_mpnn_bbb') {
-      properties[metadata.key] = normalizeBbbProperty(source, metadata, familyStatuses.gmc_mpnn_bbb);
+      properties[metadata.key] = normalizeBbbProperty(source, metadata, familyStatuses.gmc_mpnn_bbb, runtimeIdentities);
     } else {
-      properties[metadata.key] = normalizeClassificationProperty(source, metadata, familyStatuses.chemberta);
+      properties[metadata.key] = normalizeClassificationProperty(source, metadata, familyStatuses.chemberta, runtimeIdentities);
     }
   }
   const moleculeId = String(source.molecule_id || source.original_molecule_id || source.canonical_smiles || `Molecule ${sourceIndex + 1}`);
@@ -133,10 +146,10 @@ export function normalizeAdmetMolecule(row, sourceIndex = 0) {
   };
 }
 
-export function normalizeAdmetAnalysis(rows = []) {
+export function normalizeAdmetAnalysis(rows = [], runtimeIdentities = []) {
   const safeRows = Array.isArray(rows) ? rows : [];
   return {
-    molecules: safeRows.map((row, index) => normalizeAdmetMolecule(row, index)),
+    molecules: safeRows.map((row, index) => normalizeAdmetMolecule(row, index, runtimeIdentities)),
     endpoints: ADMET_ENDPOINT_REGISTRY,
   };
 }

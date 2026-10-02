@@ -42,6 +42,26 @@ test('ADMET workspace keeps Overview, Property Table, and Plots and adds Compare
   assert.match(html, /aria-label="ADMET workspace views"/);
 });
 
+test('ADMET Overview summarizes model families and portable runtime identities', () => {
+  const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    prioritizationState: {
+      result: { results: [admetRow(1)] }, loading: false,
+      job: { admet_runtime_identities: [
+        { family: 'chemberta', runtime_source: 'application_process', release_archive_sha256: 'release-sha' },
+        { family: 'chemprop_regression', runtime_source: 'packaged', runner_identity: 'scripts/chemprop.py@abc' },
+        { family: 'gmc_mpnn_bbb', runtime_source: 'packaged', runner_identity: 'scripts/bbb.py@def' },
+      ] },
+    },
+    sourceStatusState: { error: '' }, onNavigate: () => {},
+  }));
+  assert.match(html, /Models used/);
+  assert.match(html, /ChemBERTa classification/);
+  assert.match(html, /9 public classification endpoints/);
+  assert.match(html, /Runtime details for hia_hou/);
+  assert.match(html, /chemprop\.py@abc/);
+  assert.match(html, /bbb\.py@def/);
+});
+
 test('ADMET Compare resolves workspace-owned selections from the normalized source set', () => {
   const rows = [admetRow(1), admetRow(2), admetRow(3)];
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {

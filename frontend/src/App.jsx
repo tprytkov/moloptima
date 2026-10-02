@@ -53,7 +53,9 @@ import AdmetResultsSection, {
 import AdmetPropertyTable, { AdmetFilterPanel } from './AdmetPropertyTable.jsx';
 import AdmetPlots from './AdmetPlots.jsx';
 import AdmetComparison from './AdmetComparison.jsx';
+import AdmetModelInfo from './AdmetModelInfo.jsx';
 import { normalizeAdmetAnalysis, searchAdmetMolecules } from './admetAnalysisData.js';
+import { endpointMetadataFromMolecules } from './admetModelMetadata.js';
 import { admetTableStateReducer, createEmptyAdmetFilters, filterAdmetMolecules } from './admetFilters.js';
 import { addAdmetComparisonId, clearAdmetComparison, removeAdmetComparisonId } from './admetComparison.js';
 import DockingResultsSection, { dockingStatusLabel } from './DockingResultsSection.jsx';
@@ -1301,6 +1303,7 @@ const ADMET_MODEL_GROUPS = [
   ['gmc_mpnn_bbb', 'GMC-MPNN BBB', 'Raw five-seed ensemble; threshold policy provisional'],
   ['chemprop_regression', 'Chemprop regression', '5 regression endpoints'],
 ];
+const EMPTY_ADMET_RUNTIME_IDENTITIES = Object.freeze([]);
 
 export function AdmetWorkflowPage({
   prioritizationState,
@@ -1314,7 +1317,13 @@ export function AdmetWorkflowPage({
   const overviewRows = rows.slice(0, 50);
   const [workspaceTab, setWorkspaceTab] = useState(initialWorkspaceTab);
   const [comparisonIds, setComparisonIds] = useState(initialComparisonIds);
-  const normalizedAdmet = useMemo(() => normalizeAdmetAnalysis(rows), [rows]);
+  const runtimeIdentities = prioritizationState.job?.admet_runtime_identities
+    ?? prioritizationState.result?.admet_runtime_identities
+    ?? EMPTY_ADMET_RUNTIME_IDENTITIES;
+  const normalizedAdmet = useMemo(
+    () => normalizeAdmetAnalysis(rows, runtimeIdentities),
+    [rows, runtimeIdentities],
+  );
   const [admetViewState, admetDispatch] = useReducer(admetTableStateReducer, undefined, () => initialAdmetViewState || ({
     query: '', filters: createEmptyAdmetFilters(), sortKey: 'compound', sortDirection: 'asc', page: 0, pageSize: 50,
   }));
@@ -1374,11 +1383,20 @@ export function AdmetWorkflowPage({
         </Paper>
       ) : null}
       {workspaceTab === 0 ? <Box id="admet-panel-overview" role="tabpanel" aria-labelledby="admet-tab-overview"><Stack spacing={2}>
+        <Typography variant="h2">Models used</Typography>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5 }}>
           {ADMET_MODEL_GROUPS.map(([key, name, detail]) => (
             <Paper key={name} elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
               <Stack spacing={0.75}><Typography sx={{ fontWeight: 700 }}>{name}</Typography><Typography variant="caption" color="text.secondary">{detail}</Typography>
                 <Chip label={familyStatuses[key].label} color={familyStatuses[key].color} variant="outlined" />
+                <AdmetModelInfo
+                  label="Runtime details"
+                  metadata={endpointMetadataFromMolecules(
+                    normalizedAdmet.molecules,
+                    normalizedAdmet.endpoints.find((endpoint) => endpoint.modelFamily === key),
+                  )}
+                  compact
+                />
               </Stack>
             </Paper>
           ))}
@@ -1386,7 +1404,7 @@ export function AdmetWorkflowPage({
         {rows.length ? (
         <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
           <Stack spacing={1.5}>
-            <MetadataPanel rows={[["Molecules submitted", rows.length], ["Available families", completed], ["Unavailable / failed families", failures], ["Warnings", warnings]]} />
+            <MetadataPanel rows={[["Molecules submitted", rows.length], ["Available molecule-family results", completed], ["Unavailable / failed molecule-family results", failures], ["Warnings", warnings]]} />
             <Typography variant="h2">Molecule results</Typography>
             {rows.length > overviewRows.length ? <Alert severity="info">Overview shows the first 50 molecules. Use Property Table to search, sort, and page through the complete library.</Alert> : null}
             <Table size="small"><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>ChemBERTa</TableCell><TableCell>GMC BBB</TableCell><TableCell>Chemprop regression</TableCell></TableRow></TableHead><TableBody>{overviewRows.map((row, index) => {

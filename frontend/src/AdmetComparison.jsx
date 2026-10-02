@@ -16,6 +16,8 @@ import {
   Typography,
 } from '@mui/material';
 import { formatAdmetProperty } from './admetAnalysisData.js';
+import AdmetModelInfo from './AdmetModelInfo.jsx';
+import { endpointMetadataFromMolecules } from './admetModelMetadata.js';
 import {
   ADMET_COMPARISON_PICKER_LIMIT,
   MAX_ADMET_COMPARISON_MOLECULES,
@@ -186,6 +188,7 @@ export default function AdmetComparison({ molecules = [], filteredMolecules = []
                         <Stack spacing={0.25}>
                           <Typography variant="body2" sx={{ fontWeight: 800 }}>{row.endpoint.label}</Typography>
                           <Typography variant="caption" color="text.secondary">{row.endpoint.modelName}</Typography>
+                          <AdmetModelInfo metadata={endpointMetadataFromMolecules(selectedMolecules, row.endpoint)} compact />
                           <NumericSummary summary={row.numericSummary} />
                           {row.classificationDifferent ? <Chip size="small" color="warning" variant="outlined" label="Different classification" sx={{ alignSelf: 'flex-start' }} /> : null}
                         </Stack>

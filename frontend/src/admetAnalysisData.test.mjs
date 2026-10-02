@@ -66,6 +66,22 @@ test('preserves GMC BBB scientific classification and raw ensemble probability',
   assert.equal(formatAdmetProperty(property, ADMET_ENDPOINT_BY_KEY.get('gmc_mpnn_bbb')), 'BBB+ · 87%');
 });
 
+test('normalized endpoint metadata preserves BBB threshold, calibration, version, and runtime identity', () => {
+  const row = resultRow({ bbb_result: {
+    status: 'success', raw_classification: 'BBB+', ensemble_probability: 0.87,
+    threshold: 0.7464, threshold_status: 'frozen', calibration_method: 'platt_scaling',
+    calibration_status: 'frozen', manifest_version: 'bbb-v2', model_interface_version: 'bbb-interface-v1',
+  } });
+  const runtimeIdentities = [{ family: 'gmc_mpnn_bbb', runtime_source: 'packaged', runner_identity: 'scripts/bbb.py@abc' }];
+  const metadata = normalizeAdmetAnalysis([row], runtimeIdentities).molecules[0].properties.gmc_mpnn_bbb.modelMetadata;
+  assert.equal(metadata.probability, 0.87);
+  assert.equal(metadata.threshold, 0.7464);
+  assert.equal(metadata.calibrationMethod, 'platt_scaling');
+  assert.equal(metadata.calibrationStatus, 'frozen');
+  assert.equal(metadata.modelVersion, 'bbb-interface-v1');
+  assert.equal(metadata.runtimeIdentity.runner_identity, 'scripts/bbb.py@abc');
+});
+
 test('zero remains an available regression value', () => {
   const property = normalizeAdmetAnalysis([resultRow()]).molecules[0].properties.lipophilicity_astrazeneca;
   assert.equal(property.value, 0);

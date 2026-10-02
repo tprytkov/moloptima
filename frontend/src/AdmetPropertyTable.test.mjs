@@ -29,7 +29,7 @@ function row(index, overrides = {}) {
     admet_model_status: 'model_available',
     admet_family_status: { chemberta: 'available', gmc_bbb: 'success', chemprop_regression: 'success' },
     admet_predictions: {},
-    bbb_result: { status: 'success', raw_classification: 'BBB+', ensemble_probability: 0.87 },
+    bbb_result: { status: 'success', raw_classification: 'BBB+', ensemble_probability: 0.87, threshold: 0.7464, calibration_status: 'frozen' },
     admet_regression: { status: 'success', endpoints: {
       caco2_wang: { status: 'success', ensemble_mean_log10_papp_cm_per_s: -5.2, unit: 'log10(Papp [cm/s])' },
       lipophilicity_astrazeneca: { status: 'success', ensemble_mean_log_ratio: 2.1, unit: 'log ratio' },
@@ -158,4 +158,14 @@ test('table disables additional comparison controls at the five-compound limit',
   const html = render([row(1), row(6)], null, { selectedComparisonIds });
   assert.match(html, /Comparison limit reached/);
   assert.match(html.match(/<button[^>]*aria-label="Add compound-0006 to comparison"[^>]*>/)?.[0] || '', /disabled/);
+});
+
+test('property table headers expose compact factual model information', () => {
+  const html = render([row(1)]);
+  assert.match(html, /Model info for caco2_wang/);
+  assert.match(html, /Model info for gmc_mpnn_bbb/);
+  assert.match(html, /Decision threshold/);
+  assert.match(html, /0\.7464/);
+  assert.match(html, /Calibration status/);
+  assert.match(html, /Probability is not confidence, uncertainty, or applicability domain/);
 });

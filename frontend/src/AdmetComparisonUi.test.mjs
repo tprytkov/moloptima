@@ -56,7 +56,7 @@ test('two molecules render a semantic matrix with every normalized endpoint', ()
   assert.match(html, /aria-label="ADMET compound comparison"/);
   for (const endpoint of ADMET_ENDPOINT_REGISTRY) assert.match(html, new RegExp(endpoint.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(html, /probability/);
-  assert.doesNotMatch(html, /confidence/i);
+  assert.match(html, /Probability is not confidence, uncertainty, or applicability domain/);
 });
 
 test('five-molecule comparison renders five removable compound headers and limit feedback', () => {
@@ -110,4 +110,17 @@ test('clear and remove controls expose accessible names', () => {
   const html = render({ molecules, selectedIds: molecules.map(({ moleculeId }) => moleculeId) });
   assert.match(html, />Clear comparison</);
   assert.match(html, /aria-label="Remove Compound 1 from comparison"/);
+});
+
+test('comparison reuses endpoint model metadata including BBB threshold and calibration status', () => {
+  const first = molecule(1, { properties: { gmc_mpnn_bbb: { modelMetadata: {
+    endpointKey: 'gmc_mpnn_bbb', modelFamilyLabel: 'GMC-MPNN BBB', modelName: 'GMC-MPNN',
+    predictionType: 'binary_classification', threshold: 0.7464, thresholdStatus: 'frozen',
+    calibrationMethod: 'platt_scaling', calibrationStatus: 'frozen', status: { label: 'Results available' },
+  } } } });
+  const html = render({ molecules: [first, molecule(2)], selectedIds: ['compound-1', 'compound-2'] });
+  assert.match(html, /Model info for gmc_mpnn_bbb/);
+  assert.match(html, /Decision threshold/);
+  assert.match(html, /0\.7464/);
+  assert.match(html, /Platt Scaling/);
 });

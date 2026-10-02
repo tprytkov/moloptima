@@ -28,6 +28,7 @@ import {
   Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import AdmetModelInfo from './AdmetModelInfo.jsx';
 import {
   ADMET_ENDPOINT_BY_KEY,
   ADMET_PROPERTY_TABLE_ENDPOINTS,
@@ -47,6 +48,7 @@ import {
 } from './admetFilters.js';
 import { ADMET_STATUS_PRESENTATION } from './admetStatus.js';
 import { MAX_ADMET_COMPARISON_MOLECULES } from './admetComparison.js';
+import { endpointMetadataFromMolecules } from './admetModelMetadata.js';
 
 const COLUMN_KEYS = ['compound', ...ADMET_PROPERTY_TABLE_ENDPOINTS];
 const QUICK_NUMERIC_ENDPOINTS = ['lipophilicity_astrazeneca', 'solubility_aqsoldb'];
@@ -270,6 +272,7 @@ export default function AdmetPropertyTable({
                         {metadata ? <Typography component="span" variant="caption" color="text.secondary">{metadata.unit} · {metadata.modelName}</Typography> : null}
                       </Stack>
                     </TableSortLabel>
+                    {metadata ? <AdmetModelInfo metadata={endpointMetadataFromMolecules(molecules, metadata)} compact /> : null}
                   </TableCell>
                 );
               })}
