@@ -88,6 +88,36 @@ test('ADMET Compare retains a selected compound hidden by shared search and filt
   assert.match(html, /compound-2/);
 });
 
+test('ADMET Property Table renders compact filtered export and report controls', () => {
+  const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    prioritizationState: { result: { results: [admetRow(1), admetRow(2)] }, job: null, loading: false },
+    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 1,
+  }));
+  assert.match(html, />Export filtered CSV</);
+  assert.match(html, />Generate report</);
+  assert.match(html, /aria-label="Export all currently filtered ADMET rows as CSV"/);
+});
+
+test('ADMET comparison exports are disabled until two compounds are selected', () => {
+  const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    prioritizationState: { result: { results: [admetRow(1)] }, job: null, loading: false },
+    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 3,
+    initialComparisonIds: ['compound-1'],
+  }));
+  assert.match(html.match(/<button[^>]*aria-label="Export current ADMET comparison as CSV"[^>]*>/)?.[0] || '', /disabled/);
+  assert.match(html, /Select 2–5 available compounds to enable comparison exports/);
+});
+
+test('ADMET comparison export controls enable for 2–5 selected compounds', () => {
+  const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    prioritizationState: { result: { results: [admetRow(1), admetRow(2)] }, job: null, loading: false },
+    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 3,
+    initialComparisonIds: ['compound-1', 'compound-2'],
+  }));
+  assert.doesNotMatch(html.match(/<button[^>]*aria-label="Export current ADMET comparison as CSV"[^>]*>/)?.[0] || '', /disabled/);
+  assert.match(html, />Generate comparison report</);
+});
+
 function admetRow(index, lipophilicity = index, solubility = -index) {
   return {
     molecule_id: `compound-${index}`, canonical_smiles: 'CCO', source_filename: 'library.sdf',
