@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import numpy as np
-from rdkit import Chem, DataStructs
-from rdkit.Chem import AllChem
+from rdkit import DataStructs
 from rdkit.ML.Cluster import Butina
+
+from biopharma_intelligence.similarity import MORGAN_FP_SIZE, morgan_fingerprint
 
 
 DIVERSITY_COLUMNS = [
@@ -43,13 +44,11 @@ def add_diversity_analysis(
             row.update(_invalid_chemical_space_fields())
             continue
 
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
+        fingerprint = morgan_fingerprint(smiles)
+        if fingerprint is None:
             row.update(_invalid_diversity_fields())
             row.update(_invalid_chemical_space_fields())
             continue
-
-        fingerprint = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
         valid_items.append((index, fingerprint))
 
     if not valid_items:
@@ -143,7 +142,7 @@ def _add_chemical_space_coordinates(
 
 
 def _fingerprint_array(fingerprint: object) -> np.ndarray:
-    array = np.zeros((2048,), dtype=float)
+    array = np.zeros((MORGAN_FP_SIZE,), dtype=float)
     DataStructs.ConvertToNumpyArray(fingerprint, array)
     return array
 

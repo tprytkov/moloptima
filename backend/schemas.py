@@ -163,6 +163,33 @@ class UploadResponse(BaseModel):
     preview: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ChemicalSpaceProjectRequest(BaseModel):
+    upload_id: str = Field(..., min_length=32, max_length=32)
+
+
+class ChemicalSpaceNeighborRequest(ChemicalSpaceProjectRequest):
+    query_molecule_id: str = Field(..., min_length=1, max_length=200)
+    top_k: Literal[5, 10, 20, 50] = 10
+
+
+class ChemicalSpaceProjectResponse(BaseModel):
+    total_count: int
+    projected_count: int
+    excluded_count: int
+    points: list[dict[str, Any]]
+    excluded: list[dict[str, Any]]
+    metadata: dict[str, Any]
+
+
+class ChemicalSpaceNeighborResponse(BaseModel):
+    query: dict[str, Any]
+    top_k: int
+    neighbors: list[dict[str, Any]]
+    valid_candidate_count: int
+    excluded_count: int
+    metadata: dict[str, Any]
+
+
 class ImportJobCreateRequest(BaseModel):
     expected_file_count: int = Field(ge=0)
     smiles_text: str = ""

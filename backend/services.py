@@ -10,6 +10,7 @@ import json
 import math
 import os
 import shutil
+from functools import lru_cache
 from threading import RLock
 from pathlib import Path
 from uuid import uuid4
@@ -32,6 +33,7 @@ from molecular_prioritization.desirability import (
     TRANSFORM_TYPES,
 )
 from molecular_prioritization.pipeline import prioritize_csv
+from molecular_prioritization.chemical_space import nearest_neighbors, project_records
 from molecular_prioritization.molecule_inputs import (
     SourceInput,
     import_molecule_collection,
@@ -580,6 +582,65 @@ def _persist_molecule_collection(
         **summary,
         "preview": list(collection["records"])[:20],
     }
+
+
+def project_chemical_space(upload_id: str) -> dict[str, object]:
+    """Project the already-imported canonical collection without another upload."""
+
+    manifest_path = _molecule_collection_manifest_path(upload_id)
+    return _project_chemical_space_cached(str(manifest_path), manifest_path.stat().st_mtime_ns)
+
+
+def chemical_space_neighbors(upload_id: str, query_molecule_id: str, top_k: int) -> dict[str, object]:
+    """Return query-relative Tanimoto neighbors from the imported collection."""
+
+    try:
+        manifest_path = _molecule_collection_manifest_path(upload_id)
+        return _chemical_space_neighbors_cached(
+            str(manifest_path), manifest_path.stat().st_mtime_ns, query_molecule_id, top_k,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+def _load_molecule_collection_records(upload_id: str) -> list[dict[str, object]]:
+    return _read_molecule_collection_records(_molecule_collection_manifest_path(upload_id))
+
+
+def _molecule_collection_manifest_path(upload_id: str) -> Path:
+    if len(upload_id) != 32 or any(character not in "0123456789abcdef" for character in upload_id.lower()):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Molecule collection not found.")
+    manifest_path = UPLOAD_DIR / upload_id / "molecule_collection.json"
+    if not manifest_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Molecule collection not found.")
+    return manifest_path
+
+
+def _read_molecule_collection_records(manifest_path: Path) -> list[dict[str, object]]:
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        records = payload.get("records")
+        if not isinstance(records, list):
+            raise ValueError("records are unavailable")
+        return [dict(record) for record in records]
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Molecule collection is unreadable.") from exc
+
+
+@lru_cache(maxsize=4)
+def _project_chemical_space_cached(manifest_path: str, modified_ns: int) -> dict[str, object]:
+    del modified_ns
+    return project_records(_read_molecule_collection_records(Path(manifest_path)))
+
+
+@lru_cache(maxsize=32)
+def _chemical_space_neighbors_cached(
+    manifest_path: str, modified_ns: int, query_molecule_id: str, top_k: int,
+) -> dict[str, object]:
+    del modified_ns
+    return nearest_neighbors(
+        _read_molecule_collection_records(Path(manifest_path)), query_molecule_id, top_k,
+    )
 
 
 def _import_job_path(import_job_id: str) -> Path:

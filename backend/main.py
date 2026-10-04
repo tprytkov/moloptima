@@ -11,6 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend import services
 from backend.schemas import (
     CandidateSdfExportRequest,
+    ChemicalSpaceNeighborRequest,
+    ChemicalSpaceNeighborResponse,
+    ChemicalSpaceProjectRequest,
+    ChemicalSpaceProjectResponse,
     DockingConfigurationRequest,
     DockingConfigurationResponse,
     DockingReceptorResponse,
@@ -201,6 +205,18 @@ def get_molecule_structure(
 ) -> Response:
     svg = services.render_molecule_structure_svg(smiles, width=width, height=height)
     return Response(content=svg, media_type="image/svg+xml")
+
+
+@app.post("/api/chemical-space/project", response_model=ChemicalSpaceProjectResponse)
+def project_chemical_space(request: ChemicalSpaceProjectRequest) -> ChemicalSpaceProjectResponse:
+    return ChemicalSpaceProjectResponse(**services.project_chemical_space(request.upload_id))
+
+
+@app.post("/api/chemical-space/neighbors", response_model=ChemicalSpaceNeighborResponse)
+def get_chemical_space_neighbors(request: ChemicalSpaceNeighborRequest) -> ChemicalSpaceNeighborResponse:
+    return ChemicalSpaceNeighborResponse(**services.chemical_space_neighbors(
+        request.upload_id, request.query_molecule_id, request.top_k,
+    ))
 
 
 @app.post("/api/candidates/export-sdf")

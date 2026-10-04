@@ -126,6 +126,36 @@ def test_structure_endpoint_handles_missing_smiles_safely():
     assert response.status_code == 422
 
 
+def test_chemical_space_endpoints_use_existing_import_collection(tmp_path, monkeypatch):
+    configure_temp_job_storage(tmp_path, monkeypatch)
+    upload_id = "a" * 32
+    upload_dir = services.UPLOAD_DIR / upload_id
+    upload_dir.mkdir(parents=True)
+    (upload_dir / "molecule_collection.json").write_text(json.dumps({"records": [
+        {"molecule_id": "ethanol", "canonical_smiles": "CCO", "validation_status": "valid", "source_record": "row:1"},
+        {"molecule_id": "propanol", "canonical_smiles": "CCCO", "validation_status": "valid", "source_record": "row:2"},
+        {"molecule_id": "bad", "canonical_smiles": None, "validation_status": "invalid", "source_record": "row:3"},
+    ]}), encoding="utf-8")
+    client = TestClient(app)
+
+    projection = client.post("/api/chemical-space/project", json={"upload_id": upload_id})
+    neighbors = client.post("/api/chemical-space/neighbors", json={
+        "upload_id": upload_id, "query_molecule_id": "ethanol", "top_k": 5,
+    })
+
+    assert projection.status_code == 200
+    assert projection.json()["projected_count"] == 2
+    assert projection.json()["excluded_count"] == 1
+    assert neighbors.status_code == 200
+    assert neighbors.json()["neighbors"][0]["molecule_id"] == "propanol"
+    assert neighbors.json()["metadata"]["similarity_metric"] == "Tanimoto"
+
+
+def test_chemical_space_endpoint_rejects_unknown_collection():
+    response = TestClient(app).post("/api/chemical-space/project", json={"upload_id": "f" * 32})
+    assert response.status_code == 404
+
+
 def test_sdf_export_returns_sdf_for_valid_candidate():
     client = TestClient(app)
 

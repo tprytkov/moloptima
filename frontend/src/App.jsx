@@ -54,6 +54,7 @@ import AdmetPropertyTable, { AdmetFilterPanel } from './AdmetPropertyTable.jsx';
 import AdmetPlots from './AdmetPlots.jsx';
 import AdmetComparison from './AdmetComparison.jsx';
 import AdmetExportActions from './AdmetExportActions.jsx';
+import ChemicalSpaceWorkspace from './ChemicalSpaceWorkspace.jsx';
 import AdmetModelInfo from './AdmetModelInfo.jsx';
 import { normalizeAdmetAnalysis, searchAdmetMolecules } from './admetAnalysisData.js';
 import { endpointMetadataFromMolecules } from './admetModelMetadata.js';
@@ -190,18 +191,19 @@ export const PRIMARY_NAVIGATION = [
       { label: 'Molecules', step: 1, icon: UploadFileOutlinedIcon },
       { label: 'Receptor & Docking', step: 2, icon: HubOutlinedIcon },
       { label: 'ADMET', step: 3, icon: MedicationOutlinedIcon },
-      { label: 'Prioritization', step: 4, icon: ScienceOutlinedIcon },
-      { label: 'Results', step: 5, icon: FactCheckOutlinedIcon },
+      { label: 'Chemical Space', step: 4, icon: InsightsOutlinedIcon },
+      { label: 'Prioritization', step: 5, icon: ScienceOutlinedIcon },
+      { label: 'Results', step: 6, icon: FactCheckOutlinedIcon },
     ],
   },
   {
     section: 'ANALYSIS', items: [
-      { label: 'Analysis', step: 6, icon: InsightsOutlinedIcon },
+      { label: 'Analysis', step: 7, icon: InsightsOutlinedIcon },
     ],
   },
   {
     section: 'SYSTEM', items: [
-      { label: 'Settings', step: 7, icon: SettingsOutlinedIcon },
+      { label: 'Settings', step: 8, icon: SettingsOutlinedIcon },
     ],
   },
 ];
@@ -1052,6 +1054,10 @@ function ActivePage({
     );
   }
 
+  if (activeItem === 'Chemical Space') {
+    return <ChemicalSpaceWorkspace upload={uploadState.upload} admetRows={prioritizationState.result?.results ?? []} baseUrl={apiBaseUrl} />;
+  }
+
   if (activeItem === 'Prioritization' || activeItem === 'Molecular Prioritization') {
     return (
       <PrioritizationPage
@@ -1126,16 +1132,6 @@ function ActivePage({
       <RunComparisonPage
         runHistoryState={runHistoryState}
         onRefreshRunHistory={onRefreshRunHistory}
-      />
-    );
-  }
-
-  if (activeItem === 'Chemical Space') {
-    return (
-      <ChemicalSpacePage
-        latestRunState={latestRunState}
-        annotationsState={annotationsState}
-        onSaveReviewAnnotation={onSaveReviewAnnotation}
       />
     );
   }
