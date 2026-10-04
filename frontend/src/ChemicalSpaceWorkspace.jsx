@@ -6,10 +6,12 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { normalizeAdmetAnalysis } from './admetAnalysisData.js';
 import { numericAdmetPlotValue } from './admetPlotData.js';
+import ScaffoldWorkspace from './ScaffoldWorkspace.jsx';
 import {
   CHEMICAL_SPACE_TOP_K_OPTIONS, categoricalPointColor, numericPointColor,
   paddedChemicalSpaceDomain, projectChemicalSpacePoints, searchChemicalSpacePoints,
 } from './chemicalSpaceData.js';
+import { scaffoldColorPlan, scaffoldMembership, scaffoldPointColor } from './scaffoldData.js';
 
 const WIDTH = 900;
 const HEIGHT = 520;
@@ -54,7 +56,7 @@ function Detail({ point, baseUrl, admetMolecule }) {
   );
 }
 
-function MapCanvas({ points, selectedId, onSelect, colorMode, admetById }) {
+function MapCanvas({ points, selectedId, onSelect, colorMode, admetById, scaffoldByMolecule, scaffoldPlan, selectedScaffoldId }) {
   const canvasRef = useRef(null);
   const [hovered, setHovered] = useState(null);
   const projected = useMemo(() => projectChemicalSpacePoints(points, WIDTH, HEIGHT), [points]);
@@ -64,6 +66,7 @@ function MapCanvas({ points, selectedId, onSelect, colorMode, admetById }) {
   function color(point) {
     if (colorMode === 'source') return categoricalPointColor(sourceLabel(point));
     if (colorMode === 'status') return categoricalPointColor(point.validation_status || 'valid');
+    if (colorMode === 'scaffold') return scaffoldPointColor(scaffoldByMolecule.get(point.molecule_id), scaffoldPlan);
     return numericPointColor(numericAdmetPlotValue(admetById.get(point.molecule_id), colorMode), numericDomain);
   }
 
@@ -83,12 +86,13 @@ function MapCanvas({ points, selectedId, onSelect, colorMode, admetById }) {
       context.beginPath(); context.moveTo(42, y); context.lineTo(WIDTH - 42, y); context.stroke();
     }
     for (const point of projected) {
+      const inSelectedScaffold = selectedScaffoldId && scaffoldByMolecule.get(point.molecule_id) === selectedScaffoldId;
       const emphasized = point.molecule_id === selectedId || point.molecule_id === hovered?.molecule_id;
-      context.beginPath(); context.arc(point.screenX, point.screenY, emphasized ? 6 : 3, 0, Math.PI * 2);
+      context.beginPath(); context.arc(point.screenX, point.screenY, emphasized ? 6 : inSelectedScaffold ? 4.5 : 3, 0, Math.PI * 2);
       context.fillStyle = color(point); context.fill();
-      if (emphasized) { context.strokeStyle = '#172b36'; context.lineWidth = 2; context.stroke(); }
+      if (emphasized || inSelectedScaffold) { context.strokeStyle = '#172b36'; context.lineWidth = emphasized ? 2 : 1.25; context.stroke(); }
     }
-  }, [admetById, colorMode, hovered, numericDomain, projected, selectedId]);
+  }, [admetById, colorMode, hovered, numericDomain, projected, scaffoldByMolecule, scaffoldPlan, selectedId, selectedScaffoldId]);
 
   function nearest(event) {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -128,6 +132,7 @@ function MapCanvas({ points, selectedId, onSelect, colorMode, admetById }) {
 export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl = 'http://localhost:8000' }) {
   const [tab, setTab] = useState(0);
   const [projection, setProjection] = useState(null);
+  const [scaffoldData, setScaffoldData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
@@ -136,14 +141,32 @@ export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl
   const [topK, setTopK] = useState(10);
   const [neighbors, setNeighbors] = useState(null);
   const [neighborsLoading, setNeighborsLoading] = useState(false);
+  const [selectedScaffoldId, setSelectedScaffoldId] = useState('');
   const admet = useMemo(() => normalizeAdmetAnalysis(admetRows), [admetRows]);
   const admetById = useMemo(() => new Map(admet.molecules.map((molecule) => [molecule.moleculeId, molecule])), [admet]);
 
   useEffect(() => {
-    if (!upload?.upload_id) { setProjection(null); return; }
-    let active = true; setLoading(true); setError('');
-    requestJson(baseUrl, '/api/chemical-space/project', { upload_id: upload.upload_id })
-      .then((payload) => { if (active) { setProjection(payload); setSelectedId((current) => payload.points.some((point) => point.molecule_id === current) ? current : ''); } })
+    if (!upload?.upload_id) { setProjection(null); setScaffoldData(null); return; }
+    let active = true; setLoading(true); setError(''); setProjection(null); setScaffoldData(null);
+    Promise.allSettled([
+      requestJson(baseUrl, '/api/chemical-space/project', { upload_id: upload.upload_id }),
+      requestJson(baseUrl, '/api/chemical-space/scaffolds', { upload_id: upload.upload_id }),
+    ])
+      .then(([projectResult, scaffoldResult]) => {
+        if (!active) return;
+        if (projectResult.status === 'rejected') throw projectResult.reason;
+        const payload = projectResult.value;
+        setProjection(payload);
+        setSelectedId((current) => payload.points.some((point) => point.molecule_id === current) ? current : '');
+        if (scaffoldResult.status === 'fulfilled') {
+          const scaffolds = scaffoldResult.value;
+          setScaffoldData(scaffolds);
+          setSelectedScaffoldId((current) => scaffolds.scaffolds.some((group) => group.scaffold_id === current) ? current : '');
+        } else {
+          setSelectedScaffoldId('');
+          setError(`Scaffold organization is unavailable: ${scaffoldResult.reason.message}`);
+        }
+      })
       .catch((caught) => { if (active) setError(caught.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -162,40 +185,44 @@ export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl
   const visiblePoints = useMemo(() => searchChemicalSpacePoints(projection?.points || [], query), [projection, query]);
   const selected = projection?.points.find((point) => point.molecule_id === selectedId) || null;
   const admetColorAvailable = admet.molecules.length > 0;
+  const scaffoldByMolecule = useMemo(() => scaffoldMembership(scaffoldData?.scaffolds || []), [scaffoldData]);
+  const scaffoldPlan = useMemo(() => scaffoldColorPlan(scaffoldData?.scaffolds || []), [scaffoldData]);
 
   if (!upload?.upload_id) return <Alert severity="info">Import a molecule collection first. Chemical Space uses that current collection directly; no second upload is required.</Alert>;
   return (
     <Stack spacing={2.5}>
       <Box>
         <Typography variant="h1">Chemical Space</Typography>
-        <Typography color="text.secondary">Explore a descriptive Morgan-fingerprint projection and query-relative structural neighbors. This workspace does not infer activity, potency, applicability domain, confidence, or rank.</Typography>
+        <Typography color="text.secondary">Explore a descriptive Morgan-fingerprint projection, query-relative structural neighbors, and Bemis–Murcko scaffold organization. This workspace does not infer activity, potency, applicability domain, confidence, preference, or rank.</Typography>
       </Box>
       {error ? <Alert severity="error">{error}</Alert> : null}
       {loading ? <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={20} /><Typography>Projecting the current collection…</Typography></Stack> : null}
       {projection ? <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}><Chip label={`${projection.projected_count.toLocaleString()} projected`} /><Chip label={`${projection.excluded_count.toLocaleString()} invalid or unresolved excluded`} /><Chip label={`${projection.total_count.toLocaleString()} imported records`} /></Stack> : null}
-      <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chemical Space workspace views"><Tab label="Map" /><Tab label="Neighbors" /></Tabs>
+      <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chemical Space workspace views"><Tab label="Map" /><Tab label="Neighbors" /><Tab label="Scaffolds" /></Tabs>
       {projection && projection.projected_count === 0 ? <Alert severity="warning">No valid resolved structures are available to fingerprint. Excluded records remain listed in the import workflow.</Alert> : null}
       {projection?.projected_count ? (
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 2fr) minmax(280px, 1fr)' }, gap: 2 }}>
-          <Paper variant="outlined" sx={{ p: 2, minWidth: 0 }}>
+          <Paper variant="outlined" sx={{ p: 2, minWidth: 0, gridColumn: tab === 2 ? '1 / -1' : 'auto' }}>
             {tab === 0 ? <Stack spacing={2}>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
                 <TextField size="small" label="Search compounds" value={query} onChange={(event) => setQuery(event.target.value)} sx={{ flex: 1 }} />
-                <FormControl size="small" sx={{ minWidth: 220 }}><InputLabel id="chemical-color-label">Color points by</InputLabel><Select labelId="chemical-color-label" value={colorMode} label="Color points by" onChange={(event) => setColorMode(event.target.value)}><MenuItem value="source">Source</MenuItem><MenuItem value="status">Validation status</MenuItem>{ADMET_COLOR_OPTIONS.map(([key, label]) => <MenuItem key={key} value={key} disabled={!admetColorAvailable}>{label}{!admetColorAvailable ? ' · unavailable' : ''}</MenuItem>)}</Select></FormControl>
+                <FormControl size="small" sx={{ minWidth: 220 }}><InputLabel id="chemical-color-label">Color points by</InputLabel><Select labelId="chemical-color-label" value={colorMode} label="Color points by" onChange={(event) => setColorMode(event.target.value)}><MenuItem value="source">Source</MenuItem><MenuItem value="status">Validation status</MenuItem><MenuItem value="scaffold">Scaffold group</MenuItem>{ADMET_COLOR_OPTIONS.map(([key, label]) => <MenuItem key={key} value={key} disabled={!admetColorAvailable}>{label}{!admetColorAvailable ? ' · unavailable' : ''}</MenuItem>)}</Select></FormControl>
               </Stack>
               <Typography variant="body2" color="text.secondary">Showing {visiblePoints.length.toLocaleString()} of {projection.projected_count.toLocaleString()} projected records. Duplicate structures remain distinct points and may overlap exactly.</Typography>
-              {visiblePoints.length ? <MapCanvas points={visiblePoints} selectedId={selectedId} onSelect={setSelectedId} colorMode={colorMode} admetById={admetById} /> : <Alert severity="info">No projected compounds match this search.</Alert>}
-            </Stack> : <Stack spacing={2}>
+              {visiblePoints.length ? <MapCanvas points={visiblePoints} selectedId={selectedId} onSelect={setSelectedId} colorMode={colorMode} admetById={admetById} scaffoldByMolecule={scaffoldByMolecule} scaffoldPlan={scaffoldPlan} selectedScaffoldId={selectedScaffoldId} /> : <Alert severity="info">No projected compounds match this search.</Alert>}
+              {colorMode === 'scaffold' ? <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1}>{scaffoldPlan.legend.map((entry) => <Chip key={entry.key} size="small" label={entry.label} sx={{ borderLeft: `8px solid ${entry.color}` }} />)}<Typography variant="caption" color="text.secondary">The 12 largest ring scaffolds are colored individually; remaining groups use Other scaffolds. Colors are categorical and do not indicate preference.</Typography></Stack> : null}
+            </Stack> : tab === 1 ? <Stack spacing={2}>
               <FormControl size="small" sx={{ width: 180 }}><InputLabel id="neighbor-count-label">Neighbors shown</InputLabel><Select labelId="neighbor-count-label" value={topK} label="Neighbors shown" onChange={(event) => setTopK(Number(event.target.value))}>{CHEMICAL_SPACE_TOP_K_OPTIONS.map((value) => <MenuItem key={value} value={value}>Top {value}</MenuItem>)}</Select></FormControl>
               {!selectedId ? <Alert severity="info">Select a molecule on the Map to calculate query-relative neighbors.</Alert> : null}
               {selectedId && neighborsLoading ? <CircularProgress size={22} /> : null}
               {selectedId && !neighborsLoading && neighbors ? <Stack spacing={1}>{neighbors.neighbors.length ? neighbors.neighbors.map((neighbor, index) => <Paper key={`${neighbor.molecule_id}-${neighbor.source_index}`} variant="outlined" sx={{ p: 1.25, cursor: 'pointer' }} onClick={() => setSelectedId(neighbor.molecule_id)}><Stack direction="row" justifyContent="space-between" gap={2}><Box><Typography variant="body2" fontWeight={700}>{index + 1}. {neighbor.display_name || neighbor.molecule_id}</Typography><Typography variant="caption" color="text.secondary">{sourceLabel(neighbor)}{neighbor.duplicate_structure ? ' · duplicate structure retained' : ''}</Typography></Box><Typography variant="body2" fontWeight={700}>{neighbor.similarity.toFixed(3)}</Typography></Stack></Paper>) : <Alert severity="info">This collection has no other valid structures to compare.</Alert>}</Stack> : null}
-            </Stack>}
+            </Stack> : scaffoldData ? <ScaffoldWorkspace data={scaffoldData} selectedScaffoldId={selectedScaffoldId} selectedMoleculeId={selectedId} onSelectScaffold={setSelectedScaffoldId} onSelectMolecule={setSelectedId} onViewMap={(scaffoldId) => { setSelectedScaffoldId(scaffoldId); setColorMode('scaffold'); setTab(0); }} baseUrl={baseUrl} admetById={admetById} /> : null}
           </Paper>
-          <Detail point={selected} baseUrl={baseUrl} admetMolecule={selected ? admetById.get(selected.molecule_id) : null} />
+          {tab !== 2 ? <Detail point={selected} baseUrl={baseUrl} admetMolecule={selected ? admetById.get(selected.molecule_id) : null} /> : null}
         </Box>
       ) : null}
       {projection?.metadata ? <Accordion><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography fontWeight={700}>Method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">Representation: Morgan radius {projection.metadata.fingerprint_radius}, {projection.metadata.fingerprint_bits}-bit fingerprints · RDKit {projection.metadata.rdkit_version}.</Typography><Typography variant="body2">Similarity: {projection.metadata.similarity_metric}. Projection: {projection.metadata.projection_method} via {projection.metadata.projection_package} {projection.metadata.projection_package_version}, seed {projection.metadata.projection_seed}.</Typography><Typography variant="body2">Projection input: {projection.metadata.projection_input}.</Typography><Alert severity="info">{projection.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}
+      {scaffoldData?.metadata ? <Accordion><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography fontWeight={700}>Scaffold method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">{scaffoldData.metadata.method} via {scaffoldData.metadata.implementation} · RDKit {scaffoldData.metadata.rdkit_version} · algorithm {scaffoldData.metadata.algorithm_version}.</Typography><Typography variant="body2">{scaffoldData.metadata.canonicalization}. {scaffoldData.metadata.input_context}</Typography><Typography variant="body2">{scaffoldData.metadata.acyclic_policy} {scaffoldData.metadata.invalid_policy} {scaffoldData.metadata.duplicate_policy}</Typography><Alert severity="info">{scaffoldData.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}
     </Stack>
   );
 }

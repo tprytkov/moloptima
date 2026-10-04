@@ -142,6 +142,7 @@ def test_chemical_space_endpoints_use_existing_import_collection(tmp_path, monke
     neighbors = client.post("/api/chemical-space/neighbors", json={
         "upload_id": upload_id, "query_molecule_id": "ethanol", "top_k": 5,
     })
+    scaffolds = client.post("/api/chemical-space/scaffolds", json={"upload_id": upload_id})
 
     assert projection.status_code == 200
     assert projection.json()["projected_count"] == 2
@@ -149,6 +150,10 @@ def test_chemical_space_endpoints_use_existing_import_collection(tmp_path, monke
     assert neighbors.status_code == 200
     assert neighbors.json()["neighbors"][0]["molecule_id"] == "propanol"
     assert neighbors.json()["metadata"]["similarity_metric"] == "Tanimoto"
+    assert scaffolds.status_code == 200
+    assert scaffolds.json()["summary"]["molecule_count"] == 2
+    assert scaffolds.json()["summary"]["scaffold_count"] == 0
+    assert scaffolds.json()["summary"]["acyclic_count"] == 2
 
 
 def test_chemical_space_endpoint_rejects_unknown_collection():

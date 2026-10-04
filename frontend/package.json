@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node --test src/App.test.mjs src/AdmetResultsSection.test.mjs src/admetAnalysisData.test.mjs src/admetModelMetadata.test.mjs src/admetFilters.test.mjs src/admetPlotData.test.mjs src/admetComparisonUtils.test.mjs src/admetExport.test.mjs src/AdmetPropertyTable.test.mjs src/AdmetPlots.test.mjs src/AdmetComparisonUi.test.mjs src/ChemicalSpaceWorkspace.test.mjs src/chemicalSpaceData.test.mjs src/DockingResultsSection.test.mjs src/DockingSetup.test.mjs src/ReceptorViewer.test.mjs src/MoleculeInputPanel.test.mjs src/moleculeImportWorkflow.test.mjs src/PrioritizationAnalysisPanel.test.mjs src/PrioritizationExplanationSection.test.mjs src/PrioritizationSettings.test.mjs src/ResultsPackageDownloads.test.mjs src/jobWorkflow.test.mjs",
+    "test": "node --test src/App.test.mjs src/AdmetResultsSection.test.mjs src/admetAnalysisData.test.mjs src/admetModelMetadata.test.mjs src/admetFilters.test.mjs src/admetPlotData.test.mjs src/admetComparisonUtils.test.mjs src/admetExport.test.mjs src/AdmetPropertyTable.test.mjs src/AdmetPlots.test.mjs src/AdmetComparisonUi.test.mjs src/ChemicalSpaceWorkspace.test.mjs src/chemicalSpaceData.test.mjs src/ScaffoldWorkspace.test.mjs src/scaffoldData.test.mjs src/DockingResultsSection.test.mjs src/DockingSetup.test.mjs src/ReceptorViewer.test.mjs src/MoleculeInputPanel.test.mjs src/moleculeImportWorkflow.test.mjs src/PrioritizationAnalysisPanel.test.mjs src/PrioritizationExplanationSection.test.mjs src/PrioritizationSettings.test.mjs src/ResultsPackageDownloads.test.mjs src/jobWorkflow.test.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },

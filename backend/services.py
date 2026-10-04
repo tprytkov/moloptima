@@ -34,6 +34,7 @@ from molecular_prioritization.desirability import (
 )
 from molecular_prioritization.pipeline import prioritize_csv
 from molecular_prioritization.chemical_space import nearest_neighbors, project_records
+from molecular_prioritization.scaffolds import SCAFFOLD_ALGORITHM_VERSION, organize_scaffolds
 from molecular_prioritization.molecule_inputs import (
     SourceInput,
     import_molecule_collection,
@@ -603,6 +604,15 @@ def chemical_space_neighbors(upload_id: str, query_molecule_id: str, top_k: int)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
 
+def chemical_space_scaffolds(upload_id: str) -> dict[str, object]:
+    """Organize the already-imported collection by descriptive Murcko scaffold."""
+
+    manifest_path = _molecule_collection_manifest_path(upload_id)
+    return _chemical_space_scaffolds_cached(
+        str(manifest_path), manifest_path.stat().st_mtime_ns, SCAFFOLD_ALGORITHM_VERSION,
+    )
+
+
 def _load_molecule_collection_records(upload_id: str) -> list[dict[str, object]]:
     return _read_molecule_collection_records(_molecule_collection_manifest_path(upload_id))
 
@@ -641,6 +651,14 @@ def _chemical_space_neighbors_cached(
     return nearest_neighbors(
         _read_molecule_collection_records(Path(manifest_path)), query_molecule_id, top_k,
     )
+
+
+@lru_cache(maxsize=4)
+def _chemical_space_scaffolds_cached(
+    manifest_path: str, modified_ns: int, algorithm_version: str,
+) -> dict[str, object]:
+    del modified_ns, algorithm_version
+    return organize_scaffolds(_read_molecule_collection_records(Path(manifest_path)))
 
 
 def _import_job_path(import_job_id: str) -> Path:

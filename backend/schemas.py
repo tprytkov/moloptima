@@ -190,6 +190,13 @@ class ChemicalSpaceNeighborResponse(BaseModel):
     metadata: dict[str, Any]
 
 
+class ChemicalSpaceScaffoldResponse(BaseModel):
+    summary: dict[str, int]
+    scaffolds: list[dict[str, Any]]
+    excluded: list[dict[str, Any]]
+    metadata: dict[str, Any]
+
+
 class ImportJobCreateRequest(BaseModel):
     expected_file_count: int = Field(ge=0)
     smiles_text: str = ""

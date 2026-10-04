@@ -15,6 +15,7 @@ from backend.schemas import (
     ChemicalSpaceNeighborResponse,
     ChemicalSpaceProjectRequest,
     ChemicalSpaceProjectResponse,
+    ChemicalSpaceScaffoldResponse,
     DockingConfigurationRequest,
     DockingConfigurationResponse,
     DockingReceptorResponse,
@@ -217,6 +218,11 @@ def get_chemical_space_neighbors(request: ChemicalSpaceNeighborRequest) -> Chemi
     return ChemicalSpaceNeighborResponse(**services.chemical_space_neighbors(
         request.upload_id, request.query_molecule_id, request.top_k,
     ))
+
+
+@app.post("/api/chemical-space/scaffolds", response_model=ChemicalSpaceScaffoldResponse)
+def get_chemical_space_scaffolds(request: ChemicalSpaceProjectRequest) -> ChemicalSpaceScaffoldResponse:
+    return ChemicalSpaceScaffoldResponse(**services.chemical_space_scaffolds(request.upload_id))
 
 
 @app.post("/api/candidates/export-sdf")
