@@ -21,7 +21,7 @@ after(async () => vite?.close());
 test('primary navigation follows the scientific workflow and hides history tools', () => {
   const labels = module.PRIMARY_NAVIGATION.flatMap((group) => group.items.map((item) => item.label));
   assert.deepEqual(labels, [
-    'New Calculation', 'Molecules', 'Receptor & Docking', 'ADMET', 'Chemical Space',
+    'New Calculation', 'Molecules', 'Experimental Data', 'Receptor & Docking', 'ADMET', 'Chemical Space',
     'Prioritization', 'Results', 'Analysis', 'Settings',
   ]);
   assert.equal(labels.includes('Run History'), false);

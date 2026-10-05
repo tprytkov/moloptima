@@ -62,6 +62,11 @@ from molecular_prioritization.receptor import (
 )
 from molecular_prioritization.vina_docking import DockingCancelled
 from molecular_prioritization.scientific_endpoints import SCIENTIFIC_ENDPOINTS
+from molecular_prioritization.experimental_measurements import (
+    SCHEMA_VERSION as EXPERIMENTAL_SCHEMA_VERSION,
+    deterministic_identifier,
+    parse_experimental_delimited,
+)
 from backend import job_runner, receptor_store, results_package
 
 
@@ -73,6 +78,8 @@ JOB_OUTPUT_DIR = BACKEND_DIR / "job_outputs"
 JOB_METADATA_DIR = BACKEND_DIR / "job_metadata"
 JOB_ANNOTATION_DIR = BACKEND_DIR / "job_annotations"
 IMPORT_JOB_DIR = BACKEND_DIR / "import_jobs"
+EXPERIMENTAL_PREVIEW_DIR = BACKEND_DIR / "experimental_previews"
+EXPERIMENTAL_DATASET_DIR = BACKEND_DIR / "experimental_datasets"
 REQUIRED_COLUMNS = {"molecule_id", "smiles"}
 MAX_BATCH_SIZE = 1000
 MAX_IMPORT_BATCH_FILES = 250
@@ -635,6 +642,279 @@ def _read_molecule_collection_records(manifest_path: Path) -> list[dict[str, obj
         return [dict(record) for record in records]
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Molecule collection is unreadable.") from exc
+
+
+def preview_experimental_measurements(
+    file: UploadFile, *, upload_id: str, column_mapping: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Validate an experimental CSV/TSV and stage an inspectable, non-final preview."""
+
+    filename = Path(file.filename or "experimental_measurements.csv").name
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Experimental measurement file is empty.")
+    molecule_records = _load_molecule_collection_records(upload_id)
+    try:
+        parsed = parse_experimental_delimited(
+            content, filename, molecule_records, column_mapping=column_mapping,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    preview_id = uuid4().hex
+    preview_dir = EXPERIMENTAL_PREVIEW_DIR / preview_id
+    preview_dir.mkdir(parents=True, exist_ok=False)
+    dataset_id = deterministic_identifier(
+        "experimental-dataset",
+        EXPERIMENTAL_SCHEMA_VERSION,
+        upload_id,
+        parsed["source_sha256"],
+        parsed["column_mapping"],
+    )
+    manifest = {
+        **parsed,
+        "preview_id": preview_id,
+        "experimental_dataset_id": dataset_id,
+        "upload_id": upload_id,
+        "status": "preview",
+        "previewed_at": utc_timestamp(),
+        "source_file": {
+            "filename": filename,
+            "sha256": parsed["source_sha256"],
+            "size_bytes": len(content),
+            "format": Path(filename).suffix.lower().lstrip("."),
+        },
+    }
+    try:
+        source_dir = preview_dir / "source"
+        source_dir.mkdir()
+        (source_dir / filename).write_bytes(content)
+        _write_json_atomic(preview_dir / "preview.json", manifest)
+    except Exception:
+        shutil.rmtree(preview_dir, ignore_errors=True)
+        raise
+    return _public_experimental_payload(manifest, preview=True)
+
+
+def finalize_experimental_preview(preview_id: str) -> dict[str, object]:
+    """Atomically publish a fully validated preview as an immutable versioned dataset."""
+
+    preview_dir, manifest = _load_experimental_preview(preview_id)
+    if int(dict(manifest.get("summary") or {}).get("valid_measurements") or 0) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Experimental dataset has no valid linked measurements to finalize.",
+        )
+    dataset_id = str(manifest["experimental_dataset_id"])
+    final_dir = EXPERIMENTAL_DATASET_DIR / dataset_id
+    if final_dir.exists():
+        existing = _read_experimental_manifest(dataset_id)
+        shutil.rmtree(preview_dir, ignore_errors=True)
+        return _public_experimental_payload(existing)
+
+    staging_dir = preview_dir / f"finalized-{dataset_id}"
+    records = list(manifest.get("measurements") or [])
+    valid_records = [dict(record) for record in records if record.get("validation_status") == "valid"]
+    excluded_records = [dict(record) for record in records if record.get("validation_status") != "valid"]
+    finalized = {
+        **manifest,
+        "status": "finalized",
+        "finalized_at": utc_timestamp(),
+        "measurements": valid_records,
+        "excluded_records": excluded_records,
+        "record_counts": {
+            "source_rows": len(records),
+            "measurements": len(valid_records),
+            "excluded": len(excluded_records),
+        },
+    }
+    finalized.pop("preview_id", None)
+    try:
+        staging_dir.mkdir(parents=True, exist_ok=False)
+        source_dir = staging_dir / "source"
+        source_dir.mkdir()
+        for source_path in (preview_dir / "source").iterdir():
+            shutil.copy2(source_path, source_dir / source_path.name)
+        _write_json_atomic(staging_dir / "manifest.json", finalized)
+        _write_experimental_csv(staging_dir / "measurements.csv", valid_records)
+        _write_json_atomic(staging_dir / "excluded_records.json", {"records": excluded_records})
+        EXPERIMENTAL_DATASET_DIR.mkdir(parents=True, exist_ok=True)
+        staging_dir.replace(final_dir)
+    except Exception:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+    shutil.rmtree(preview_dir, ignore_errors=True)
+    return _public_experimental_payload(finalized)
+
+
+def get_experimental_dataset(dataset_id: str) -> dict[str, object]:
+    return _public_experimental_payload(_read_experimental_manifest(dataset_id))
+
+
+def list_experimental_measurements(
+    dataset_id: str, *, query: str = "", endpoint: str = "", linkage_status: str = "",
+    offset: int = 0, limit: int = 50,
+) -> dict[str, object]:
+    manifest = _read_experimental_manifest(dataset_id)
+    records = [dict(item) for item in list(manifest.get("measurements") or [])]
+    needle = query.strip().lower()
+    endpoint_filter = endpoint.strip().lower()
+    linkage_filter = linkage_status.strip().lower()
+    filtered = []
+    for record in records:
+        if endpoint_filter and str(record.get("endpoint_id") or "").lower() != endpoint_filter:
+            continue
+        if linkage_filter and str(dict(record.get("linkage") or {}).get("status") or "").lower() != linkage_filter:
+            continue
+        if needle:
+            searchable = " ".join([
+                str(record.get("molecule_id") or ""), str(record.get("endpoint_name") or ""),
+                str(dict(record.get("target") or {}).get("name") or ""),
+                str(record.get("assay_id") or ""), str(record.get("source") or ""),
+                " ".join(str(flag) for flag in list(record.get("quality_flags") or [])),
+            ]).lower()
+            if needle not in searchable:
+                continue
+        filtered.append(record)
+    return {
+        "experimental_dataset_id": dataset_id,
+        "total_count": len(records),
+        "filtered_count": len(filtered),
+        "offset": offset,
+        "limit": limit,
+        "measurements": filtered[offset:offset + limit],
+    }
+
+
+def export_experimental_measurements_csv(dataset_id: str) -> str:
+    manifest = _read_experimental_manifest(dataset_id)
+    buffer = io.StringIO()
+    fields = [
+        "measurement_id", "molecule_id", "structure_identity_id", "endpoint_name", "measurement_type",
+        "relation", "original_value", "original_unit", "normalized_value_molar", "normalized_unit",
+        "transformed_endpoint", "transformed_relation", "transformed_value", "target_identifier",
+        "target_name", "organism", "construct_or_isoform", "assay_id", "assay_protocol_version",
+        "assay_type", "assay_system", "biological_mode", "readout", "source", "source_record_id",
+        "replicate_id", "replicate_type", "replicate_count", "uncertainty_type", "uncertainty_value",
+        "uncertainty_lower", "uncertainty_upper", "confidence_level", "uncertainty_scale",
+        "linkage_status", "linkage_method", "quality_flags",
+    ]
+    writer = csv.DictWriter(buffer, fieldnames=fields, lineterminator="\n")
+    writer.writeheader()
+    for record in list(manifest.get("measurements") or []):
+        writer.writerow(_experimental_csv_row(dict(record)))
+    return buffer.getvalue()
+
+
+def _public_experimental_payload(manifest: dict[str, object], *, preview: bool = False) -> dict[str, object]:
+    records = list(manifest.get("measurements") or [])
+    excluded = list(manifest.get("excluded_records") or [])
+    return {
+        "preview_id": manifest.get("preview_id") if preview else None,
+        "experimental_dataset_id": manifest.get("experimental_dataset_id"),
+        "upload_id": manifest.get("upload_id"),
+        "status": manifest.get("status"),
+        "schema_version": manifest.get("schema_version"),
+        "normalization_version": manifest.get("normalization_version"),
+        "source_file": manifest.get("source_file"),
+        "column_mapping": manifest.get("column_mapping"),
+        "summary": manifest.get("summary"),
+        "record_counts": manifest.get("record_counts"),
+        "previewed_at": manifest.get("previewed_at"),
+        "finalized_at": manifest.get("finalized_at"),
+        "measurements": records[:50],
+        "excluded_records": excluded[:50] if not preview else [
+            record for record in records[:50] if record.get("validation_status") != "valid"
+        ],
+    }
+
+
+def _load_experimental_preview(preview_id: str) -> tuple[Path, dict[str, object]]:
+    if not _valid_hex_id(preview_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experimental preview not found.")
+    preview_dir = EXPERIMENTAL_PREVIEW_DIR / preview_id
+    path = preview_dir / "preview.json"
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experimental preview not found.")
+    try:
+        return preview_dir, json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Experimental preview is unreadable.") from exc
+
+
+def _read_experimental_manifest(dataset_id: str) -> dict[str, object]:
+    if not _valid_hex_id(dataset_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experimental dataset not found.")
+    path = EXPERIMENTAL_DATASET_DIR / dataset_id / "manifest.json"
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experimental dataset not found.")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != EXPERIMENTAL_SCHEMA_VERSION:
+            raise ValueError("unsupported schema")
+        return payload
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Experimental dataset is unreadable.") from exc
+
+
+def _write_experimental_csv(path: Path, records: list[dict[str, object]]) -> None:
+    export_rows = [_experimental_csv_row(record) for record in records]
+    fields = list(export_rows[0]) if export_rows else ["measurement_id"]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(export_rows)
+
+
+def _experimental_csv_row(record: dict[str, object]) -> dict[str, object]:
+    normalization = dict(record.get("normalization") or {})
+    target = dict(record.get("target") or {})
+    optional = dict(record.get("optional_metadata") or {})
+    uncertainty = dict(record.get("uncertainty") or {})
+    linkage = dict(record.get("linkage") or {})
+    return {
+        "measurement_id": record.get("measurement_id"),
+        "molecule_id": record.get("molecule_id"),
+        "structure_identity_id": record.get("structure_identity_id"),
+        "endpoint_name": record.get("endpoint_name"),
+        "measurement_type": record.get("measurement_type"),
+        "relation": record.get("relation"),
+        "original_value": record.get("original_value"),
+        "original_unit": record.get("original_unit"),
+        "normalized_value_molar": normalization.get("normalized_value_molar"),
+        "normalized_unit": normalization.get("normalized_unit"),
+        "transformed_endpoint": normalization.get("transformed_endpoint"),
+        "transformed_relation": normalization.get("transformed_relation"),
+        "transformed_value": normalization.get("transformed_value"),
+        "target_identifier": target.get("identifier"), "target_name": target.get("name"),
+        "organism": target.get("organism"), "construct_or_isoform": target.get("construct_or_isoform"),
+        "assay_id": record.get("assay_id"), "assay_protocol_version": record.get("assay_protocol_version"),
+        "assay_type": record.get("assay_type"), "assay_system": record.get("assay_system"),
+        "biological_mode": record.get("biological_mode"), "readout": record.get("readout"),
+        "source": record.get("source"), "source_record_id": record.get("source_record_id"),
+        "replicate_id": optional.get("replicate_id"), "replicate_type": optional.get("replicate_type"),
+        "replicate_count": record.get("replicate_count"), "uncertainty_type": uncertainty.get("type"),
+        "uncertainty_value": uncertainty.get("value"), "uncertainty_lower": uncertainty.get("lower"),
+        "uncertainty_upper": uncertainty.get("upper"), "confidence_level": uncertainty.get("confidence_level"),
+        "uncertainty_scale": uncertainty.get("scale"), "linkage_status": linkage.get("status"),
+        "linkage_method": linkage.get("method"),
+        "quality_flags": json.dumps(record.get("quality_flags") or [], sort_keys=True),
+    }
+
+
+def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _valid_hex_id(value: str) -> bool:
+    return len(value) == 32 and all(character in "0123456789abcdef" for character in value.lower())
 
 
 @lru_cache(maxsize=4)

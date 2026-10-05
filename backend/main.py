@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Literal
 
-from fastapi import FastAPI, File, Form, Query, Response, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -19,6 +20,8 @@ from backend.schemas import (
     DockingConfigurationRequest,
     DockingConfigurationResponse,
     DockingReceptorResponse,
+    ExperimentalDataResponse,
+    ExperimentalMeasurementListResponse,
     HealthResponse,
     ImportBatchResponse,
     ImportJobCreateRequest,
@@ -120,6 +123,64 @@ def finalize_molecule_import_job(import_job_id: str) -> UploadResponse:
 def cancel_molecule_import_job(import_job_id: str) -> Response:
     services.cancel_molecule_import_job(import_job_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/api/experimental-data/previews", response_model=ExperimentalDataResponse)
+def preview_experimental_data(
+    file: UploadFile = File(...),
+    upload_id: str = Form(...),
+    column_mapping: str = Form(default="{}"),
+) -> ExperimentalDataResponse:
+    try:
+        mapping = json.loads(column_mapping)
+        if not isinstance(mapping, dict) or any(not isinstance(key, str) or not isinstance(value, str) for key, value in mapping.items()):
+            raise ValueError
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Column mapping must be a JSON object of column names.") from exc
+    return ExperimentalDataResponse(**services.preview_experimental_measurements(
+        file, upload_id=upload_id, column_mapping=mapping,
+    ))
+
+
+@app.post(
+    "/api/experimental-data/previews/{preview_id}/finalize",
+    response_model=ExperimentalDataResponse,
+)
+def finalize_experimental_data(preview_id: str) -> ExperimentalDataResponse:
+    return ExperimentalDataResponse(**services.finalize_experimental_preview(preview_id))
+
+
+@app.get("/api/experimental-data/{dataset_id}", response_model=ExperimentalDataResponse)
+def get_experimental_data(dataset_id: str) -> ExperimentalDataResponse:
+    return ExperimentalDataResponse(**services.get_experimental_dataset(dataset_id))
+
+
+@app.get(
+    "/api/experimental-data/{dataset_id}/measurements",
+    response_model=ExperimentalMeasurementListResponse,
+)
+def get_experimental_measurements(
+    dataset_id: str,
+    query: str = Query(default="", max_length=200),
+    endpoint: str = Query(default="", max_length=100),
+    linkage_status: str = Query(default="", max_length=30),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> ExperimentalMeasurementListResponse:
+    return ExperimentalMeasurementListResponse(**services.list_experimental_measurements(
+        dataset_id, query=query, endpoint=endpoint, linkage_status=linkage_status,
+        offset=offset, limit=limit,
+    ))
+
+
+@app.get("/api/experimental-data/{dataset_id}/export.csv")
+def export_experimental_data(dataset_id: str) -> Response:
+    payload = services.export_experimental_measurements_csv(dataset_id)
+    return Response(
+        content=payload,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="experimental-{dataset_id}.csv"'},
+    )
 
 
 @app.post("/api/receptors/upload", response_model=ReceptorUploadResponse)

@@ -55,6 +55,7 @@ import AdmetPlots from './AdmetPlots.jsx';
 import AdmetComparison from './AdmetComparison.jsx';
 import AdmetExportActions from './AdmetExportActions.jsx';
 import ChemicalSpaceWorkspace from './ChemicalSpaceWorkspace.jsx';
+import ExperimentalDataWorkspace from './ExperimentalDataWorkspace.jsx';
 import AdmetModelInfo from './AdmetModelInfo.jsx';
 import { normalizeAdmetAnalysis, searchAdmetMolecules } from './admetAnalysisData.js';
 import { endpointMetadataFromMolecules } from './admetModelMetadata.js';
@@ -189,21 +190,22 @@ export const PRIMARY_NAVIGATION = [
   {
     section: 'WORKFLOW', items: [
       { label: 'Molecules', step: 1, icon: UploadFileOutlinedIcon },
-      { label: 'Receptor & Docking', step: 2, icon: HubOutlinedIcon },
-      { label: 'ADMET', step: 3, icon: MedicationOutlinedIcon },
-      { label: 'Chemical Space', step: 4, icon: InsightsOutlinedIcon },
-      { label: 'Prioritization', step: 5, icon: ScienceOutlinedIcon },
-      { label: 'Results', step: 6, icon: FactCheckOutlinedIcon },
+      { label: 'Experimental Data', step: 2, icon: ScienceOutlinedIcon },
+      { label: 'Receptor & Docking', step: 3, icon: HubOutlinedIcon },
+      { label: 'ADMET', step: 4, icon: MedicationOutlinedIcon },
+      { label: 'Chemical Space', step: 5, icon: InsightsOutlinedIcon },
+      { label: 'Prioritization', step: 6, icon: ScienceOutlinedIcon },
+      { label: 'Results', step: 7, icon: FactCheckOutlinedIcon },
     ],
   },
   {
     section: 'ANALYSIS', items: [
-      { label: 'Analysis', step: 7, icon: InsightsOutlinedIcon },
+      { label: 'Analysis', step: 8, icon: InsightsOutlinedIcon },
     ],
   },
   {
     section: 'SYSTEM', items: [
-      { label: 'Settings', step: 8, icon: SettingsOutlinedIcon },
+      { label: 'Settings', step: 9, icon: SettingsOutlinedIcon },
     ],
   },
 ];
@@ -1042,6 +1044,10 @@ function ActivePage({
         onNavigate={onNavigate}
       />
     );
+  }
+
+  if (activeItem === 'Experimental Data') {
+    return <ExperimentalDataWorkspace upload={uploadState.upload} baseUrl={apiBaseUrl} />;
   }
 
   if (activeItem === 'ADMET') {

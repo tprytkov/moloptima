@@ -220,6 +220,34 @@ class ImportBatchResponse(ImportJobResponse):
     batch_invalid_count: int
 
 
+class ExperimentalDataResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    preview_id: str | None = None
+    experimental_dataset_id: str
+    upload_id: str
+    status: Literal["preview", "finalized"]
+    schema_version: str
+    normalization_version: str
+    source_file: dict[str, Any]
+    column_mapping: dict[str, str]
+    summary: dict[str, Any]
+    record_counts: dict[str, int] | None = None
+    previewed_at: str | None = None
+    finalized_at: str | None = None
+    measurements: list[dict[str, Any]] = Field(default_factory=list)
+    excluded_records: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ExperimentalMeasurementListResponse(BaseModel):
+    experimental_dataset_id: str
+    total_count: int
+    filtered_count: int
+    offset: int
+    limit: int
+    measurements: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class ReceptorUploadResponse(BaseModel):
     receptor_upload_id: str
     status: str = "uploaded"
