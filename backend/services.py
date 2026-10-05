@@ -35,6 +35,7 @@ from molecular_prioritization.desirability import (
 from molecular_prioritization.pipeline import prioritize_csv
 from molecular_prioritization.chemical_space import nearest_neighbors, project_records
 from molecular_prioritization.scaffolds import SCAFFOLD_ALGORITHM_VERSION, organize_scaffolds
+from molecular_prioritization.matched_pairs import analyze_matched_pair_batch
 from molecular_prioritization.molecule_inputs import (
     SourceInput,
     import_molecule_collection,
@@ -672,6 +673,12 @@ def experimental_neighborhood_records(
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+def matched_pair_batch(query: dict[str, object], references: list[dict[str, object]]) -> dict[str, object]:
+    """Run bounded local structural transformation analysis without external lookup."""
+
+    return analyze_matched_pair_batch(query, references)
 
 
 def export_experimental_neighborhood_csv(source: str, source_compound_id: str) -> str:

@@ -40,9 +40,11 @@ test('experimental summary is descriptive and keeps censored records and ownersh
 });
 
 test('profile Markdown separates calculated, predicted, docking, prioritization, and known-analog experiments', () => {
-  const context = { searchStatus: 'completed', searchResult: { exact_match: true, exact_matches: [analog(1)], analogs: [] }, selectedAnalog: analog(1), recordsPayload: { source_total_count: 1, records: [record(0)] } };
+  const context = { searchStatus: 'completed', searchResult: { exact_match: true, exact_matches: [analog(1)], analogs: [] }, selectedAnalog: analog(1), recordsPayload: { source_total_count: 1, records: [record(0)] }, mmpPayload: { matched_pair_count: 1, results: [{ policy_version: 'moloptima-mmp-policy-v1', matched_pair: true, reference: { id: 'CHEMBL1' }, shared_core: { canonical_smiles: 'c1ccc([*:1])cc1' }, query_fragment: { canonical_smiles: 'C[*:1]' }, reference_fragment: { canonical_smiles: 'Cl[*:1]' }, transformation: { query_to_reference: 'C[*:1] >> Cl[*:1]', reference_to_query: 'Cl[*:1] >> C[*:1]' }, relationship: { tanimoto: 0.375, murcko_scaffold_relationship: 'Yes' }, provenance: { rdkit_version: '2026.03.3' } }] } };
   const markdown = buildCompoundProfileMarkdown(compound, { scaffold: { scaffoldId: 'scf-1', scaffoldSmiles: 'c1ccccc1', memberCount: 2 }, neighbors: [] }, context);
-  for (const heading of ['Selected compound', 'Calculated properties', 'Predicted ADMET', 'Docking', 'Prioritization', 'Structural context', 'Experimental analog context', 'Experimental records for known reference compound CHEMBL1', 'Scientific interpretation notes', 'Provenance']) assert.match(markdown, new RegExp(`## ${heading}`));
+  for (const heading of ['Selected compound', 'Calculated properties', 'Predicted ADMET', 'Docking', 'Prioritization', 'Structural context', 'Experimental analog context', 'Structural transformation', 'Experimental records for known reference compound CHEMBL1', 'Scientific interpretation notes', 'Provenance']) assert.match(markdown, new RegExp(`## ${heading}`));
+  assert.match(markdown, /C\[\*:1\] &gt;&gt; Cl\[\*:1\]|C\[\*:1\] >> Cl\[\*:1\]/);
+  assert.match(markdown, /moloptima-mmp-policy-v1/);
   assert.match(markdown, /belong to external reference compounds/);
   assert.match(markdown, /not establish equivalent biological activity/);
   assert.match(markdown, /Predicted ADMET values are model-derived predictions/);

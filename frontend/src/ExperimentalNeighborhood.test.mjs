@@ -10,10 +10,11 @@ let vite;
 let ExperimentalNeighborhood;
 let filterExperimentalRecords;
 let KnownAnalogTable;
+let StructuralTransformation;
 
 before(async () => {
   vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
-  ({ default: ExperimentalNeighborhood, filterExperimentalRecords, KnownAnalogTable } = await vite.ssrLoadModule('/src/ExperimentalNeighborhood.jsx'));
+  ({ default: ExperimentalNeighborhood, filterExperimentalRecords, KnownAnalogTable, StructuralTransformation } = await vite.ssrLoadModule('/src/ExperimentalNeighborhood.jsx'));
 });
 
 after(async () => vite?.close());
@@ -55,13 +56,36 @@ test('source contains bounded tables, exact/no-match, network states, provenance
     'Exact structure match found in ChEMBL', 'MolOptima Tanimoto', 'Same Murcko scaffold',
     'Compatibility', 'Censored', 'Retrieved', 'Prepare CSV for Experimental Data import',
     'ChEMBL is offline or unreachable', 'rate limited', 'maxHeight: 520', 'PAGE_SIZE = 25',
+    'Matched pair', 'Structural Transformation', '/api/matched-pairs/analyze-batch',
   ]) assert.match(source, new RegExp(phrase));
   assert.match(source, /target/);
   assert.match(source, /endpoint/);
   assert.match(source, /assayType/);
   assert.match(source, /organism/);
   assert.match(source, /source/);
+  assert.match(source, /mmpRequestIdentityRef/);
+  assert.match(source, /requestIdentity === mmpRequestIdentityRef\.current/);
   assert.doesNotMatch(source, /activity cliff|SALI|interpolated activity/i);
+});
+
+test('structural transformation renders direction, independent relationships, provenance, and neutral scope', () => {
+  const analysis = {
+    policy_version: 'moloptima-mmp-policy-v1', matched_pair: true,
+    shared_core: { canonical_smiles: 'c1ccc([*:1])cc1' },
+    query_fragment: { canonical_smiles: 'C[*:1]' }, reference_fragment: { canonical_smiles: 'Cl[*:1]' },
+    transformation: { display: 'C[attachment] → Cl[attachment]', query_to_reference: 'C[*:1] >> Cl[*:1]', attachment_label: '[*:1]' },
+    relationship: { tanimoto: 0.375, murcko_scaffold_relationship: 'Yes' }, provenance: { rdkit_version: '2026.03.3' },
+  };
+  const html = renderToStaticMarkup(React.createElement(StructuralTransformation, { analysis, baseUrl: 'http://localhost:8000' }));
+  for (const phrase of ['Structural Transformation', 'Shared core', 'Selected compound substituent', 'Known analog substituent', 'Tanimoto: 0.375', 'Policy: moloptima-mmp-policy-v1', 'RDKit: 2026.03.3']) assert.match(html, new RegExp(phrase));
+  assert.match(html, /not a reaction, activity trend, or transfer of experimental evidence/);
+  assert.doesNotMatch(html, /favorable|beneficial|potency-enhancing|expected EC50/i);
+});
+
+test('structural transformation no-match state preserves Tanimoto and scaffold independence', () => {
+  const html = renderToStaticMarkup(React.createElement(StructuralTransformation, { analysis: { policy_version: 'moloptima-mmp-policy-v1', matched_pair: false, reason: 'no_accepted_single_cut_common_core' }, baseUrl: '' }));
+  assert.match(html, /Matched molecular pair: No under moloptima-mmp-policy-v1/);
+  assert.match(html, /Tanimoto and scaffold context remain independent/);
 });
 
 test('known-analog table rendering and incremental selection remain bounded at 0, 10, 25, and 50 rows', (t) => {

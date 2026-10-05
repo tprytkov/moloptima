@@ -218,6 +218,28 @@ class ExperimentalNeighborhoodResponse(BaseModel):
     contract_version: str
 
 
+class MatchedPairMolecule(BaseModel):
+    id: str = Field(..., min_length=1, max_length=200)
+    smiles: str = Field(..., min_length=1, max_length=2000)
+    source: str = Field(default="external", min_length=1, max_length=100)
+
+
+class MatchedPairBatchRequest(BaseModel):
+    query: MatchedPairMolecule
+    references: list[MatchedPairMolecule] = Field(..., min_length=1, max_length=100)
+
+
+class MatchedPairBatchResponse(BaseModel):
+    policy_version: str
+    query_id: str
+    candidate_count: int
+    matched_pair_count: int
+    results: list[dict[str, Any]]
+    policy: dict[str, Any]
+    provenance: dict[str, Any]
+    scientific_note: str
+
+
 class ImportJobCreateRequest(BaseModel):
     expected_file_count: int = Field(ge=0)
     smiles_text: str = ""

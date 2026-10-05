@@ -4,6 +4,7 @@ export const PROFILE_SCIENTIFIC_NOTES = Object.freeze([
   'Predicted ADMET values are model-derived predictions. Probability is not confidence, uncertainty, or applicability domain.',
   'Docking scores are computational, protocol-dependent results, not experimental binding affinity.',
   'Experimental measurements in the Experimental Analog Context section belong to external reference compounds. Structural similarity provides context but does not establish equivalent biological activity for the selected MolOptima compound.',
+  'Matched-pair membership and structural transformations are structural context only. They do not establish a property effect, activity trend, reaction, or experimental support for the selected compound.',
 ]);
 
 export function resolveStructuralContext(scaffoldPayload, neighborPayload, moleculeId) {
@@ -26,6 +27,8 @@ export function summarizeExperimentalContext(context = {}) {
   const search = context.searchResult;
   const records = context.recordsPayload?.records || [];
   const all = search ? [...(search.exact_matches || []), ...(search.analogs || [])] : [];
+  const mmpResults = context.mmpPayload?.results || [];
+  const selectedMmp = mmpResults.find((result) => result.reference?.id === context.selectedAnalog?.source_compound_id) || null;
   return {
     status: context.searchStatus || 'not_run',
     exactMatch: search?.exact_match ?? null,
@@ -36,6 +39,8 @@ export function summarizeExperimentalContext(context = {}) {
     targetCount: new Set(records.map((record) => record.target?.identifier || record.target?.name).filter(Boolean)).size,
     censoredCount: records.filter((record) => record.quality_flags?.includes('censored_value')).length,
     selectedAnalog: context.selectedAnalog || null,
+    selectedMmp,
+    matchedPairCount: context.mmpPayload?.matched_pair_count ?? null,
     records,
   };
 }
@@ -90,6 +95,20 @@ export function buildCompoundProfileMarkdown(compound, structuralContext = {}, e
       ['Search status', experimental.status], ['Exact ChEMBL structure match', experimental.exactMatch === null ? 'Search not run' : experimental.exactMatch ? 'Yes' : 'No'],
       ['Structural neighbors returned', experimental.analogCount], ['Selected known analog', experimental.selectedAnalog?.source_compound_id],
       ['Experimental records loaded for known analog', experimental.recordCount], ['Targets represented', experimental.targetCount],
+    ]),
+    '', '## Structural transformation', markdownTable([
+      ['Matched molecular pair', experimental.selectedMmp ? (experimental.selectedMmp.matched_pair ? 'Yes' : 'No') : 'Not analyzed'],
+      ['MMP policy', experimental.selectedMmp?.policy_version],
+      ['No-match reason', experimental.selectedMmp?.matched_pair ? 'Not applicable' : experimental.selectedMmp?.reason?.replaceAll('_', ' ')],
+      ['Shared core', experimental.selectedMmp?.shared_core?.canonical_smiles],
+      ['Selected compound substituent', experimental.selectedMmp?.query_fragment?.canonical_smiles],
+      ['Known analog substituent', experimental.selectedMmp?.reference_fragment?.canonical_smiles],
+      ['Selected to known-reference direction', experimental.selectedMmp?.transformation?.query_to_reference],
+      ['Reverse direction', experimental.selectedMmp?.transformation?.reference_to_query],
+      ['Independent Tanimoto', experimental.selectedMmp?.relationship?.tanimoto],
+      ['Independent Murcko scaffold relationship', experimental.selectedMmp?.relationship?.murcko_scaffold_relationship],
+      ['RDKit version', experimental.selectedMmp?.provenance?.rdkit_version],
+      ['Scientific scope', 'Structural substituent relationship only; no reaction or property-effect inference'],
     ]),
   ];
   if (experimental.selectedAnalog) {

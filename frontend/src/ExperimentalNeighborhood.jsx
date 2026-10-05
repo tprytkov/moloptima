@@ -6,16 +6,17 @@ import {
 } from '@mui/material';
 
 const PAGE_SIZE = 25;
+const EMPTY_MMP_MAP = new Map();
 const SCIENTIFIC_NOTE = 'Experimental measurements shown here belong to known reference compounds, not to the selected MolOptima compound. Structural similarity provides context but does not establish equivalent biological activity.';
 
-async function postJson(baseUrl, path, body) {
+async function postJson(baseUrl, path, body, offlineMessage = 'ChEMBL is unreachable; check the network connection.') {
   let response;
   try {
     response = await fetch(`${baseUrl}${path}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
   } catch (cause) {
-    const error = new Error('ChEMBL is unreachable; check the network connection.');
+    const error = new Error(offlineMessage);
     error.code = 'offline';
     error.cause = cause;
     throw error;
@@ -53,11 +54,11 @@ function structureUrl(baseUrl, smiles, width = 280, height = 190) {
   return `${baseUrl}/api/molecules/structure?${new URLSearchParams({ smiles, width: String(width), height: String(height) })}`;
 }
 
-function StructureCard({ baseUrl, label, name, smiles }) {
+function StructureCard({ baseUrl, label, name, smiles, nameVariant = 'h3' }) {
   return (
     <Paper variant="outlined" sx={{ p: 1.5, minWidth: 0, flex: 1 }}>
       <Typography variant="overline">{label}</Typography>
-      <Typography variant="h3" sx={{ overflowWrap: 'anywhere' }}>{name}</Typography>
+      <Typography variant={nameVariant} sx={{ overflowWrap: 'anywhere' }}>{name}</Typography>
       {smiles ? <Box component="img" src={structureUrl(baseUrl, smiles)} alt={`2D structure for ${name}`} sx={{ width: '100%', maxWidth: 280, bgcolor: '#fff', border: '1px solid', borderColor: 'divider', borderRadius: 1 }} /> : null}
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', overflowWrap: 'anywhere' }}>{smiles || 'Structure unavailable'}</Typography>
     </Paper>
@@ -75,7 +76,7 @@ function failureMessage(code, message) {
   return labels[code] || message;
 }
 
-export function KnownAnalogTable({ analogs, selectedId, onSelect, sortMode }) {
+export function KnownAnalogTable({ analogs, selectedId, onSelect, sortMode, mmpById = EMPTY_MMP_MAP, mmpLoading = false }) {
   const ordered = useMemo(() => [...analogs].sort((left, right) => {
     if (sortMode === 'records') return (right.experimental_record_count || 0) - (left.experimental_record_count || 0) || left.source_compound_id.localeCompare(right.source_compound_id);
     if (sortMode === 'targets') return (right.target_count || 0) - (left.target_count || 0) || left.source_compound_id.localeCompare(right.source_compound_id);
@@ -85,11 +86,12 @@ export function KnownAnalogTable({ analogs, selectedId, onSelect, sortMode }) {
   return (
     <TableContainer sx={{ maxHeight: 520 }}>
       <Table stickyHeader size="small" aria-label="Known experimentally characterized analogs">
-        <TableHead><TableRow><TableCell>Known compound</TableCell><TableCell align="right">MolOptima Tanimoto</TableCell><TableCell>Same Murcko scaffold</TableCell><TableCell align="right">Records</TableCell><TableCell align="right">Targets</TableCell><TableCell /></TableRow></TableHead>
+        <TableHead><TableRow><TableCell>Known compound</TableCell><TableCell align="right">MolOptima Tanimoto</TableCell><TableCell>Same Murcko scaffold</TableCell><TableCell>Matched pair</TableCell><TableCell align="right">Records</TableCell><TableCell align="right">Targets</TableCell><TableCell /></TableRow></TableHead>
         <TableBody>{ordered.map((analog) => <TableRow key={analog.source_compound_id} selected={analog.source_compound_id === selectedId}>
           <TableCell><Typography variant="body2" fontWeight={700}>{analog.preferred_name || analog.source_compound_id}</Typography><Typography variant="caption" sx={{ overflowWrap: 'anywhere' }}>{analog.source_compound_id}</Typography></TableCell>
           <TableCell align="right">{analog.moloptima_tanimoto.toFixed(3)}</TableCell>
           <TableCell>{analog.same_murcko_scaffold}</TableCell>
+          <TableCell>{mmpLoading ? 'Analyzing…' : mmpById.has(analog.source_compound_id) ? (mmpById.get(analog.source_compound_id).matched_pair ? 'Yes' : 'No') : 'Not analyzed'}</TableCell>
           <TableCell align="right">{analog.experimental_record_count ?? 'Load'}</TableCell>
           <TableCell align="right">{analog.target_count ?? 'Load'}</TableCell>
           <TableCell><Button size="small" variant={analog.source_compound_id === selectedId ? 'contained' : 'outlined'} onClick={() => onSelect(analog)}>Inspect records</Button></TableCell>
@@ -97,6 +99,29 @@ export function KnownAnalogTable({ analogs, selectedId, onSelect, sortMode }) {
       </Table>
     </TableContainer>
   );
+}
+
+export function StructuralTransformation({ analysis, baseUrl }) {
+  if (!analysis) return <Alert severity="info">Structural transformation analysis is not available for this reference.</Alert>;
+  if (!analysis.matched_pair) return <Alert severity="info">Matched molecular pair: No under {analysis.policy_version}. Reason: {String(analysis.reason || 'no accepted relationship').replaceAll('_', ' ')}. Tanimoto and scaffold context remain independent.</Alert>;
+  return <Paper variant="outlined" sx={{ p: 2 }} aria-label="Structural Transformation"><Stack spacing={1.5}>
+    <Box><Typography variant="overline">Matched Molecular Pair</Typography><Typography variant="h3">Structural Transformation</Typography></Box>
+    <Alert severity="info">This is a structural substituent relationship, not a reaction, activity trend, or transfer of experimental evidence.</Alert>
+    <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}>
+      <StructureCard baseUrl={baseUrl} label="Shared core" name="Core with mapped attachment" smiles={analysis.shared_core.canonical_smiles} nameVariant="h5" />
+      <StructureCard baseUrl={baseUrl} label="Selected compound substituent" name="Query fragment" smiles={analysis.query_fragment.canonical_smiles} nameVariant="h5" />
+      <StructureCard baseUrl={baseUrl} label="Known analog substituent" name="Reference fragment" smiles={analysis.reference_fragment.canonical_smiles} nameVariant="h5" />
+    </Stack>
+    <Typography fontWeight={700}>{analysis.transformation.display}</Typography>
+    <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>Canonical direction: {analysis.transformation.query_to_reference}</Typography>
+    <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1}>
+      <Chip label={`Tanimoto: ${analysis.relationship?.tanimoto?.toFixed(3) ?? 'Unavailable'}`} />
+      <Chip label={`Murcko scaffold: ${analysis.relationship?.murcko_scaffold_relationship || 'Unavailable'}`} />
+      <Chip label={`Policy: ${analysis.policy_version}`} />
+      <Chip label={`RDKit: ${analysis.provenance?.rdkit_version || 'Unavailable'}`} />
+    </Stack>
+    <Typography variant="caption" color="text.secondary">Attachment label {analysis.transformation.attachment_label} marks the corresponding connection point; it does not describe a synthetic reaction.</Typography>
+  </Stack></Paper>;
 }
 
 export function ExperimentalRecordTable({ records }) {
@@ -115,29 +140,51 @@ export default function ExperimentalNeighborhood({ upload, queryMolecule, baseUr
   const [selectedAnalog, setSelectedAnalog] = useState(null);
   const [recordsPayload, setRecordsPayload] = useState(null);
   const [recordsLoading, setRecordsLoading] = useState(false);
+  const [mmpPayload, setMmpPayload] = useState(null);
+  const [mmpLoading, setMmpLoading] = useState(false);
+  const [mmpError, setMmpError] = useState('');
   const [filters, setFilters] = useState({ query: '', target: '', endpoint: '', assayType: '', organism: '', source: '' });
   const [page, setPage] = useState(0);
   const deferredQuery = useDeferredValue(filters.query);
   const requestIdentityRef = useRef(0);
+  const mmpRequestIdentityRef = useRef(0);
   const contextIdentity = `${upload?.upload_id || ''}:${queryMolecule?.molecule_id || ''}`;
 
   useEffect(() => {
     requestIdentityRef.current += 1;
-    setView(0); setSearchResult(null); setSelectedAnalog(null); setRecordsPayload(null); setError(null);
-    setSearching(false); setRecordsLoading(false); setPage(0);
+    mmpRequestIdentityRef.current += 1;
+    setView(0); setSearchResult(null); setSelectedAnalog(null); setRecordsPayload(null); setMmpPayload(null); setError(null); setMmpError('');
+    setSearching(false); setRecordsLoading(false); setMmpLoading(false); setPage(0);
   }, [contextIdentity]);
 
   useEffect(() => {
     onContextChange({
-      contextIdentity, searchResult, selectedAnalog, recordsPayload,
+      contextIdentity, searchResult, selectedAnalog, recordsPayload, mmpPayload,
       searchStatus: searching ? 'searching' : error ? (error.code === 'offline' ? 'offline' : 'failed') : searchResult ? 'completed' : 'not_run',
     });
-  }, [contextIdentity, error, onContextChange, recordsPayload, searchResult, searching, selectedAnalog]);
+  }, [contextIdentity, error, mmpPayload, onContextChange, recordsPayload, searchResult, searching, selectedAnalog]);
+
+  async function analyzeKnownPairs(payload) {
+    const known = [...(payload.exact_matches || []), ...(payload.analogs || [])];
+    if (!known.length) { setMmpPayload({ results: [], candidate_count: 0, matched_pair_count: 0 }); return; }
+    const requestIdentity = ++mmpRequestIdentityRef.current;
+    setMmpLoading(true); setMmpError('');
+    try {
+      const analysis = await postJson(baseUrl, '/api/matched-pairs/analyze-batch', {
+        query: { id: queryMolecule.molecule_id, source: 'moloptima', smiles: queryMolecule.canonical_smiles },
+        references: known.map((analog) => ({ id: analog.source_compound_id, source: 'chembl', smiles: analog.canonical_smiles })),
+      }, 'The local structural transformation endpoint is unreachable.');
+      if (requestIdentity === mmpRequestIdentityRef.current) setMmpPayload(analysis);
+    } catch (caught) {
+      if (requestIdentity === mmpRequestIdentityRef.current) setMmpError(caught.message);
+    } finally { if (requestIdentity === mmpRequestIdentityRef.current) setMmpLoading(false); }
+  }
 
   async function runSearch(refresh = false) {
     if (!upload?.upload_id || !queryMolecule?.molecule_id) return;
     const requestIdentity = ++requestIdentityRef.current;
-    setSearching(true); setError(null); setSelectedAnalog(null); setRecordsPayload(null); setView(0);
+    mmpRequestIdentityRef.current += 1;
+    setSearching(true); setError(null); setMmpError(''); setMmpPayload(null); setSelectedAnalog(null); setRecordsPayload(null); setView(0);
     try {
       const payload = await postJson(baseUrl, '/api/experimental-neighborhood/search', {
         upload_id: upload.upload_id, molecule_id: queryMolecule.molecule_id,
@@ -145,6 +192,7 @@ export default function ExperimentalNeighborhood({ upload, queryMolecule, baseUr
       });
       if (requestIdentity !== requestIdentityRef.current) return;
       setSearchResult(payload);
+      void analyzeKnownPairs(payload);
     } catch (caught) {
       if (requestIdentity !== requestIdentityRef.current) return;
       setError({ code: caught.code, message: failureMessage(caught.code, caught.message) });
@@ -186,9 +234,11 @@ export default function ExperimentalNeighborhood({ upload, queryMolecule, baseUr
   const pageCount = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
   const visibleRecords = filteredRecords.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const allKnown = searchResult ? [...(searchResult.exact_matches || []), ...(searchResult.analogs || [])] : [];
+  const mmpById = useMemo(() => new Map((mmpPayload?.results || []).map((result) => [result.reference.id, result])), [mmpPayload]);
+  const selectedMmp = selectedAnalog ? mmpById.get(selectedAnalog.source_compound_id) : null;
   const analogsWithRecords = allKnown.filter((analog) => Number(analog.experimental_record_count) > 0).length;
   const representedTargets = new Set(records.map((record) => record.target?.identifier || record.target?.name).filter(Boolean)).size;
-  const sameScaffoldCount = allKnown.filter((analog) => String(analog.same_murcko_scaffold).toLowerCase().startsWith('same')).length;
+  const sameScaffoldCount = allKnown.filter((analog) => ['yes', 'same scaffold', 'no ring scaffold'].includes(String(analog.same_murcko_scaffold).toLowerCase())).length;
   const highestSimilarity = allKnown.length ? Math.max(...allKnown.map((analog) => Number(analog.moloptima_tanimoto) || 0)).toFixed(3) : 'Not available';
 
   if (!queryMolecule) return <Alert severity="info">Select a molecule on the Chemical Space map, then open Experimental Neighborhood.</Alert>;
@@ -219,17 +269,19 @@ export default function ExperimentalNeighborhood({ upload, queryMolecule, baseUr
             <Chip label={`Structural neighbors: ${searchResult.analogs.length}`} />
             <Chip label={`Highest retrieved Tanimoto: ${highestSimilarity}`} />
             <Chip label={`Same-scaffold neighbors: ${sameScaffoldCount}`} />
+            <Chip label={`Matched pairs: ${mmpLoading ? 'Analyzing…' : mmpPayload?.matched_pair_count ?? 'Not analyzed'}`} />
             <Chip label={`Analogs with loaded records: ${analogsWithRecords}`} />
             <Chip label={`Targets in selected records: ${representedTargets}`} />
           </Stack>
         </Paper>
+        {mmpError ? <Alert severity="warning">Structural transformation analysis is unavailable: {mmpError}. The ChEMBL search result remains available.</Alert> : null}
         {!allKnown.length ? <Alert severity="info">ChEMBL returned no exact matches or structural analogs for this bounded query.</Alert> : null}
         <Tabs value={view} onChange={(_, value) => setView(value)} aria-label="Experimental Neighborhood views"><Tab label="Known Analogs" /><Tab label="Experimental Records" /></Tabs>
         {view === 0 ? <Stack spacing={1.5}>
           <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1}><Stack direction="row" useFlexGap flexWrap="wrap" spacing={1}><Chip label={`${searchResult.exact_matches.length} exact`} /><Chip label={`${searchResult.analogs.length} structural neighbors`} /><Chip label={`Source retrieval threshold ${searchResult.search_provenance.source_query_threshold}%`} /></Stack><FormControl size="small" sx={{ minWidth: 210 }}><InputLabel id="analog-sort-label">Order analogs by</InputLabel><Select labelId="analog-sort-label" label="Order analogs by" value={sortMode} onChange={(event) => setSortMode(event.target.value)}><MenuItem value="similarity">MolOptima Tanimoto</MenuItem><MenuItem value="records">Experimental record count</MenuItem><MenuItem value="targets">Target count</MenuItem><MenuItem value="source_id">Source compound ID</MenuItem></Select></FormControl></Stack>
           <Typography variant="caption" color="text.secondary">The source threshold is only a ChEMBL retrieval parameter, not a MolOptima scientific analog cutoff. Similarities below are recalculated locally.</Typography>
-          {searchResult.exact_matches.length ? <><Typography variant="h3">Exact structure matches</Typography><KnownAnalogTable analogs={searchResult.exact_matches} selectedId={selectedAnalog?.source_compound_id} onSelect={inspectAnalog} sortMode={sortMode} /></> : null}
-          {searchResult.analogs.length ? <><Typography variant="h3">Structural neighbors</Typography><KnownAnalogTable analogs={searchResult.analogs} selectedId={selectedAnalog?.source_compound_id} onSelect={inspectAnalog} sortMode={sortMode} /></> : null}
+          {searchResult.exact_matches.length ? <><Typography variant="h3">Exact structure matches</Typography><KnownAnalogTable analogs={searchResult.exact_matches} selectedId={selectedAnalog?.source_compound_id} onSelect={inspectAnalog} sortMode={sortMode} mmpById={mmpById} mmpLoading={mmpLoading} /></> : null}
+          {searchResult.analogs.length ? <><Typography variant="h3">Structural neighbors</Typography><KnownAnalogTable analogs={searchResult.analogs} selectedId={selectedAnalog?.source_compound_id} onSelect={inspectAnalog} sortMode={sortMode} mmpById={mmpById} mmpLoading={mmpLoading} /></> : null}
         </Stack> : <Stack spacing={2}>
           {!selectedAnalog ? <Alert severity="info">Choose a known compound in Known Analogs to retrieve its assay-level experimental records.</Alert> : null}
           {recordsLoading ? <Stack direction="row" spacing={1}><CircularProgress size={22} /><Typography>Retrieving assay-level records…</Typography></Stack> : null}
@@ -240,11 +292,13 @@ export default function ExperimentalNeighborhood({ upload, queryMolecule, baseUr
               ['Identifier', queryMolecule.molecule_id, selectedAnalog.source_compound_id],
               ['Query-relative Tanimoto', '1.0 to self', selectedAnalog.moloptima_tanimoto?.toFixed(3) || 'Unavailable'],
               ['Murcko scaffold relationship', 'Selected scaffold', selectedAnalog.same_murcko_scaffold || 'Unavailable'],
+              ['Matched molecular pair', 'Query under versioned structural policy', mmpLoading ? 'Analyzing…' : selectedMmp ? (selectedMmp.matched_pair ? 'Yes' : `No · ${String(selectedMmp.reason).replaceAll('_', ' ')}`) : 'Not analyzed'],
               ['Predicted ADMET', 'See selected-compound profile', 'Not computed by this workflow'],
               ['Experimental measurements', 'None assigned by Experimental Neighborhood', recordsPayload ? `${recordsPayload.returned_count} known-analog records loaded` : 'Not retrieved'],
               ['Docking', 'See selected-compound profile', 'Not computed by this workflow'],
             ].map(([attribute, selectedValue, analogValue]) => <TableRow key={attribute}><TableCell>{attribute}</TableCell><TableCell>{selectedValue}</TableCell><TableCell>{analogValue}</TableCell></TableRow>)}
           </TableBody></Table></TableContainer> : null}
+          {selectedAnalog ? <StructuralTransformation analysis={selectedMmp} baseUrl={baseUrl} /> : null}
           {recordsPayload ? <>
             <Stack direction={{ xs: 'column', sm: 'row' }} useFlexGap flexWrap="wrap" spacing={1}><Chip label={`${recordsPayload.returned_count} records loaded`} /><Chip label={`${recordsPayload.targets.length} targets`} /><Chip label={`${recordsPayload.normalization_summary.normalized} normalized`} /><Chip label={`${recordsPayload.normalization_summary.censored} censored`} />{recordsPayload.truncated ? <Chip color="warning" label={`Bounded result · ${recordsPayload.source_total_count} source records`} /> : null}</Stack>
             {!records.length ? <Alert severity="info">This known compound has no experimental records in the bounded ChEMBL response.</Alert> : null}

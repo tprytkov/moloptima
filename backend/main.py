@@ -34,6 +34,8 @@ from backend.schemas import (
     JobHistoryResponse,
     JobResponse,
     LatestJobResponse,
+    MatchedPairBatchRequest,
+    MatchedPairBatchResponse,
     ParetoAnalysisRequest,
     ParetoAnalysisResponse,
     PrioritizationRequest,
@@ -304,6 +306,13 @@ def get_experimental_neighborhood_records(
 ) -> ExperimentalNeighborhoodResponse:
     return ExperimentalNeighborhoodResponse(**services.experimental_neighborhood_records(
         request.source, request.source_compound_id, request.limit, request.refresh,
+    ))
+
+
+@app.post("/api/matched-pairs/analyze-batch", response_model=MatchedPairBatchResponse)
+def analyze_matched_pairs(request: MatchedPairBatchRequest) -> MatchedPairBatchResponse:
+    return MatchedPairBatchResponse(**services.matched_pair_batch(
+        request.query.model_dump(), [reference.model_dump() for reference in request.references],
     ))
 
 

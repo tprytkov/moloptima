@@ -29,6 +29,7 @@ export function ProfileAvailabilityOverview({ compound, structuralContext, exper
       <Chip label={`Prioritization · ${prioritizationAvailable ? 'Result available' : 'Prioritization result not available'}`} />
       <Chip label={`Structural context · ${structuralContext.status === 'available' ? 'Available' : 'Loading or unavailable'}`} />
       <Chip label={`Experimental — known analog · ${experimental.status === 'not_run' ? 'Search not run' : experimental.status}`} />
+      <Chip label={`Matched pair · ${experimental.selectedMmp ? (experimental.selectedMmp.matched_pair ? 'Yes' : 'No under current policy') : 'Not analyzed'}`} />
     </Stack>
     <Typography variant="body2" color="text.secondary">Availability labels report whether evidence exists; they are not quality judgments. Missing evidence is not negative evidence.</Typography>
   </Stack></Paper>;
