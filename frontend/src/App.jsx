@@ -56,6 +56,7 @@ import AdmetComparison from './AdmetComparison.jsx';
 import AdmetExportActions from './AdmetExportActions.jsx';
 import ChemicalSpaceWorkspace from './ChemicalSpaceWorkspace.jsx';
 import ExperimentalDataWorkspace from './ExperimentalDataWorkspace.jsx';
+import CompoundProfileIntegration from './CompoundProfileIntegration.jsx';
 import AdmetModelInfo from './AdmetModelInfo.jsx';
 import { normalizeAdmetAnalysis, searchAdmetMolecules } from './admetAnalysisData.js';
 import { endpointMetadataFromMolecules } from './admetModelMetadata.js';
@@ -404,16 +405,21 @@ function App() {
           return;
         }
         if (payload.job) {
-          const latestJob = latestJobMetadata(payload.job);
+          const completeMetadata = payload.job.job_id
+            ? await apiRequest(`/api/jobs/${payload.job.job_id}`).catch(() => ({}))
+            : {};
+          if (!isMounted) return;
+          const hydratedJob = { ...payload.job, ...completeMetadata, results: payload.job.results };
+          const latestJob = latestJobMetadata(hydratedJob);
           setLatestRunState({
             job: latestJob,
-            result: payload.job,
+            result: hydratedJob,
             loading: false,
             error: '',
           });
           setPrioritizationState({
             job: latestJob,
-            result: payload.job,
+            result: hydratedJob,
             loading: false,
             error: '',
           });
@@ -1095,6 +1101,7 @@ function ActivePage({
     return (
       <ResultsWorkflowPage
         prioritizationState={prioritizationState}
+        upload={uploadState.upload}
         annotationsState={annotationsState}
         onSaveReviewAnnotation={onSaveReviewAnnotation}
       />
@@ -1430,7 +1437,7 @@ export function AdmetWorkflowPage({
   );
 }
 
-export function ResultsWorkflowPage({ prioritizationState, annotationsState, onSaveReviewAnnotation }) {
+export function ResultsWorkflowPage({ prioritizationState, upload, annotationsState, onSaveReviewAnnotation }) {
   const rows = prioritizationState.result?.results ?? [];
   const [filters, setFilters] = useState(defaultEvidenceFilters);
   const filtered = useMemo(() => applyEvidenceFilters(rows, filters), [rows, filters]);
@@ -1447,6 +1454,7 @@ export function ResultsWorkflowPage({ prioritizationState, annotationsState, onS
   const profileIdentity = profile
     ? `${profile.profile_id || 'unknown'} / ${profile.profile_version || 'unknown'} / ${formatScientificPresentationValue(profile.status || 'status unavailable')} / ${prioritizationState.result?.prioritization_profile_sha256 || prioritizationState.job?.prioritization_profile_sha256 || 'SHA unavailable'}`
     : 'Not used or unavailable';
+  const profileUpload = upload || (prioritizationState.job?.upload_id ? { upload_id: prioritizationState.job.upload_id } : null);
   const hasPartialFailures = rows.length > 0 && (
     validCount < rows.length
     || admetCompleted < validCount
@@ -1494,7 +1502,7 @@ export function ResultsWorkflowPage({ prioritizationState, annotationsState, onS
         <CandidateExportPanel rows={filtered} />
       </> : null}
       {!rows.length ? <Alert severity="info">No result rows are available for the current calculation.</Alert> : null}
-      {selected ? <CompoundDetailPanel compound={selected} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} onClose={() => setSelectedKey('')} containerRef={detailRef} /> : null}
+      {selected ? <CompoundDetailPanel compound={selected} upload={profileUpload} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} onClose={() => setSelectedKey('')} containerRef={detailRef} /> : null}
       {prioritizationState.job ? <ResultsPackageDownloads apiBaseUrl={apiBaseUrl} jobId={prioritizationState.job.job_id} analysisMode={single ? 'single_compound' : 'library'} /> : null}
     </Stack>
   );
@@ -4185,7 +4193,7 @@ export function compoundDetailSummarySections(compound) {
   ];
 }
 
-export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAnnotation, onClose, containerRef }) {
+export function CompoundDetailPanel({ compound, upload, annotationsState, onSaveReviewAnnotation, onClose, containerRef }) {
   return (
     <Card
       ref={containerRef}
@@ -4203,20 +4211,15 @@ export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAn
         <Stack spacing={2.5}>
           <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5}>
             <Stack spacing={0.5}>
-              <Typography id="compound-detail-heading" variant="h2">Compound Detail</Typography>
+              <Typography id="compound-detail-heading" variant="h2">MolOptima Compound Profile</Typography>
               <Typography color="text.secondary">
                 {formatDetailValue(compound.molecule_id)}
               </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
+                Selected from {formatDetailValue(compound.source_filename || compound.source_type)}{compound.source_record ? ` · record ${compound.source_record}` : ''}
+              </Typography>
             </Stack>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} alignItems={{ sm: 'center' }}>
-              <Button
-                variant="outlined"
-                aria-label="Download compound detail as Markdown report"
-                startIcon={<DownloadOutlinedIcon />}
-                onClick={() => downloadCompoundMarkdownReport(compound)}
-              >
-                Download Markdown Report
-              </Button>
               <Chip
                 label={isFalseValue(compound.valid_molecule) ? 'Invalid molecule' : 'Valid molecule'}
                 color={isFalseValue(compound.valid_molecule) ? 'warning' : 'success'}
@@ -4229,15 +4232,28 @@ export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAn
               ) : null}
             </Stack>
           </Stack>
-          <ReviewAnnotationControls
-            compound={compound}
-            annotationsState={annotationsState}
-            onSaveReviewAnnotation={onSaveReviewAnnotation}
-          />
-          <StructurePreview compound={compound} />
-          <AdmetResultsSection compound={compound} />
-          <DockingResultsSection compound={compound} />
-          <PrioritizationExplanationSection compound={compound} />
+          <CompoundProfileIntegration compound={compound} upload={upload} baseUrl={apiBaseUrl}>
+            <ReviewAnnotationControls
+              compound={compound}
+              annotationsState={annotationsState}
+              onSaveReviewAnnotation={onSaveReviewAnnotation}
+            />
+            <Box component="section" aria-label="Selected compound identity and structure">
+              <Typography variant="overline">Calculated</Typography>
+              <StructurePreview compound={compound} />
+            </Box>
+            <Box component="section" aria-label="Predicted ADMET evidence">
+              <Typography variant="overline">Predicted</Typography>
+              <AdmetResultsSection compound={compound} />
+            </Box>
+            <Box component="section" aria-label="Structure-based computational evidence">
+              <Typography variant="overline">Docking</Typography>
+              {compound.docking_result ? <DockingResultsSection compound={compound} /> : <Alert severity="info">No docking result available. Missing evidence is not negative evidence.</Alert>}
+            </Box>
+            <Box component="section" aria-label="Prioritization evidence">
+              <Typography variant="overline">Prioritization</Typography>
+              {compound.prioritization || compound.prioritization_v2 ? <PrioritizationExplanationSection compound={compound} /> : <Alert severity="info">Prioritization result not available. Missing evidence is not negative evidence.</Alert>}
+            </Box>
 
           <Box
             sx={{
@@ -4381,6 +4397,7 @@ export function CompoundDetailPanel({ compound, annotationsState, onSaveReviewAn
             />
           </Box>
           </Box>
+          </CompoundProfileIntegration>
         </Stack>
       </CardContent>
     </Card>

@@ -214,7 +214,7 @@ test('Results export and Compound Detail actions expose meaningful accessible na
     compound: { molecule_id: 'cmpd-1', canonical_smiles: '', valid_molecule: true },
     annotationsState: {}, onSaveReviewAnnotation: () => {}, onClose: () => {},
   }));
-  assert.match(detailHtml, /aria-label="Download compound detail as Markdown report"/);
+  assert.match(detailHtml, /aria-label="Download integrated compound profile as Markdown report"/);
   assert.match(detailHtml, /aria-label="Close compound detail"/);
   assert.match(detailHtml, /tabindex="-1"/);
   assert.match(detailHtml, /aria-labelledby="compound-detail-heading"/);

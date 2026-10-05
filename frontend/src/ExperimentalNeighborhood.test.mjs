@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { readFile } from 'node:fs/promises';
+import { performance } from 'node:perf_hooks';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
@@ -8,10 +9,11 @@ import { createServer } from 'vite';
 let vite;
 let ExperimentalNeighborhood;
 let filterExperimentalRecords;
+let KnownAnalogTable;
 
 before(async () => {
   vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
-  ({ default: ExperimentalNeighborhood, filterExperimentalRecords } = await vite.ssrLoadModule('/src/ExperimentalNeighborhood.jsx'));
+  ({ default: ExperimentalNeighborhood, filterExperimentalRecords, KnownAnalogTable } = await vite.ssrLoadModule('/src/ExperimentalNeighborhood.jsx'));
 });
 
 after(async () => vite?.close());
@@ -60,4 +62,24 @@ test('source contains bounded tables, exact/no-match, network states, provenance
   assert.match(source, /organism/);
   assert.match(source, /source/);
   assert.doesNotMatch(source, /activity cliff|SALI|interpolated activity/i);
+});
+
+test('known-analog table rendering and incremental selection remain bounded at 0, 10, 25, and 50 rows', (t) => {
+  const timings = {};
+  const analogs = Array.from({ length: 50 }, (_, index) => ({
+    source_compound_id: `CHEMBL${index}`, preferred_name: `Reference ${index}`,
+    moloptima_tanimoto: 0.9 - index / 100, same_murcko_scaffold: index % 2 ? 'Same scaffold' : 'Different scaffold',
+    experimental_record_count: index, target_count: index % 7,
+  }));
+  renderToStaticMarkup(React.createElement(KnownAnalogTable, { analogs: analogs.slice(0, 10), selectedId: '', onSelect() {}, sortMode: 'similarity' }));
+  for (const count of [0, 10, 25, 50]) {
+    const start = performance.now();
+    for (let iteration = 0; iteration < 3; iteration += 1) renderToStaticMarkup(React.createElement(KnownAnalogTable, { analogs: analogs.slice(0, count), selectedId: '', onSelect() {}, sortMode: 'similarity' }));
+    timings[`${count}_analogs_render_ms`] = (performance.now() - start) / 3;
+  }
+  const selectionStart = performance.now();
+  renderToStaticMarkup(React.createElement(KnownAnalogTable, { analogs, selectedId: 'CHEMBL49', onSelect() {}, sortMode: 'similarity' }));
+  timings['50_analogs_incremental_selection_render_ms'] = performance.now() - selectionStart;
+  t.diagnostic(`Batch 12 render benchmark ${JSON.stringify(timings)}`);
+  Object.values(timings).forEach((milliseconds) => assert.ok(milliseconds < 5000));
 });
