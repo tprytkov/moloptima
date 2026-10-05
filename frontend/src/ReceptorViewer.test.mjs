@@ -28,6 +28,7 @@ function fakeViewer() {
     renderCount: 0, zoomToCount: 0, resizeCount: 0,
     view: [0, 0, 0, 10, 0, 0, 0, 1], setViewCount: 0,
     removeAllModels() { this.models = []; },
+    removeModel(model) { this.models = this.models.filter((item) => item !== model); },
     addModel(text, format) {
       const model = { text, format };
       this.models.push(model);
@@ -89,6 +90,13 @@ test('switching or clearing ligand updates identity without stale metadata', () 
   assert.equal(module.viewerLegendPresentation(I33, validBox()).ligand, 'I33 · Chain A · Residue 603');
   assert.equal(module.viewerLegendPresentation(second, validBox()).ligand, 'I34 · Chain B · Residue 602');
   assert.equal(module.viewerLegendPresentation(null, validBox()).ligand, 'None');
+});
+
+test('docked ligand legend identifies the generated molecule and selected Vina mode', () => {
+  assert.equal(
+    module.viewerLegendPresentation(null, validBox(), { moleculeId: 'gen_4311', mode: 3 }).ligand,
+    'gen_4311 · Mode 3',
+  );
 });
 
 test('box dimension edits update legend and invalid values show Not defined', () => {
@@ -182,6 +190,56 @@ test('same-receptor artifact identity replaces the model while preserving the ca
   assert.deepEqual(viewer.view, camera);
   assert.equal(viewer.setViewCount, 1);
   assert.equal(viewer.zoomToCount, 1);
+});
+
+test('docked ligand remains a separate highlighted model and mode replacement preserves receptor and camera', () => {
+  const viewer = fakeViewer();
+  viewer.addModel = function addModel(text, format) {
+    const model = {
+      text, format, styles: [],
+      setStyle(selection, style) { this.styles.push({ operation: 'set', selection, style }); },
+      addStyle(selection, style) { this.styles.push({ operation: 'add', selection, style }); },
+    };
+    this.models.push(model);
+    return model;
+  };
+  const receptor = module.replaceReceptorModel(viewer, { text: 'RECEPTOR', format: 'pdbqt' });
+  const camera = [2, 4, 6, 30, 0, 0, 0, 1];
+  viewer.view = camera;
+  const modeOne = module.replaceDockedLigandModel(viewer, null, { text: 'MODE 1', format: 'pdbqt' });
+  assert.deepEqual(viewer.models, [receptor, modeOne]);
+  assert.deepEqual(modeOne.styles[0].style, module.SELECTED_LIGAND_STYLE);
+  assert.deepEqual(modeOne.styles[1], {
+    operation: 'add', selection: { elem: 'C' }, style: module.DOCKED_LIGAND_CARBON_STYLE,
+  });
+  const modeTwo = module.replaceDockedLigandModel(viewer, modeOne, { text: 'MODE 2', format: 'pdbqt' });
+  assert.deepEqual(viewer.models, [receptor, modeTwo]);
+  assert.equal(viewer.models[0], receptor);
+  assert.deepEqual(viewer.view, camera);
+  assert.equal(viewer.zoomToCount, 1);
+  assert.equal(viewer.setViewCount, 2);
+});
+
+test('docked-pose context changes only receptor cartoon opacity and never applies ligand style to it', () => {
+  const viewer = fakeViewer();
+  const receptor = {
+    styles: [],
+    setStyle(selection, style) { this.styles.push({ operation: 'set', selection, style }); },
+    addStyle(selection, style) { this.styles.push({ operation: 'add', selection, style }); },
+  };
+  module.renderResidueHighlights(viewer, [], null, receptor, true);
+  assert.deepEqual(receptor.styles[0].style, module.DOCKED_RECEPTOR_STYLE);
+  assert.equal(module.DOCKED_RECEPTOR_STYLE.cartoon.opacity, 0.58);
+  assert.ok(!receptor.styles.some(({ style }) => style === module.DOCKED_LIGAND_CARBON_STYLE));
+});
+
+test('clearing a compound pose removes only the ligand model', () => {
+  const viewer = fakeViewer();
+  const receptor = viewer.addModel('RECEPTOR', 'pdbqt');
+  const ligand = viewer.addModel('LIGAND', 'pdbqt');
+  const cleared = module.replaceDockedLigandModel(viewer, ligand, null);
+  assert.equal(cleared, null);
+  assert.deepEqual(viewer.models, [receptor]);
 });
 
 test('renders an existing valid box immediately after delayed viewer creation', async () => {

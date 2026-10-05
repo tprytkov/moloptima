@@ -1,7 +1,13 @@
-import React from 'react';
+import React, {
+  useEffect, useMemo, useRef, useState,
+} from 'react';
 import {
-  Alert, Box, Chip, Divider, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography,
+  Alert, Box, Chip, CircularProgress, Divider, MenuItem, Stack, Table, TableBody, TableCell,
+  TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
+import ReceptorViewer from './ReceptorViewer.jsx';
+import { fetchReceptorStructure } from './DockingSetup.jsx';
+import { fetchDockingPoseArtifact, selectVinaPoseMode } from './dockingPose.js';
 
 function valueOrUnavailable(value) {
   return value === null || value === undefined || value === '' ? 'Not available' : String(value);
@@ -47,9 +53,15 @@ function Metric({ label, value, detail }) {
   );
 }
 
-export default function DockingResultsSection({ compound }) {
-  const result = compound?.docking_result;
-  if (!result || typeof result !== 'object') return null;
+function requestStateFor(state, key) {
+  return state.key === key ? state : { key, status: 'idle', data: null, error: '' };
+}
+
+export default function DockingResultsSection({
+  compound, jobId = '', apiBaseUrl = 'http://localhost:8000',
+}) {
+  const hasResult = Boolean(compound?.docking_result && typeof compound.docking_result === 'object');
+  const result = hasResult ? compound.docking_result : {};
   const success = result.status === 'success';
   const configuration = result.docking_configuration || {};
   const modes = Array.isArray(result.modes)
@@ -65,6 +77,123 @@ export default function DockingResultsSection({ compound }) {
   const moleculeIdentity = compound?.molecule_id || result.molecule_id || compound?.canonical_smiles;
   const poseFile = result.pose_file || result.pose_path;
   const poseAvailable = Boolean(result.pose_available || poseFile);
+  const defaultMode = modes.some((mode) => mode.mode === result.best_mode)
+    ? result.best_mode : (modes[0]?.mode ?? 1);
+  const [selectedMode, setSelectedMode] = useState(defaultMode);
+  const effectiveMode = modes.some((mode) => Number(mode.mode) === Number(selectedMode))
+    ? Number(selectedMode) : Number(defaultMode);
+  const [poseState, setPoseState] = useState({ key: '', status: 'idle', data: null, error: '' });
+  const [receptorState, setReceptorState] = useState({ key: '', status: 'idle', data: null, error: '' });
+  const [viewerError, setViewerError] = useState('');
+  const [ligandRenderMs, setLigandRenderMs] = useState(null);
+  const poseRequestRef = useRef(0);
+  const receptorRequestRef = useRef(0);
+  const viewerRef = useRef(null);
+  const focusedPoseKeyRef = useRef('');
+  const receptorKey = `${result.receptor_id || ''}:${result.prepared_receptor_sha256 || ''}`;
+  const poseKey = `${jobId}:${moleculeIdentity || ''}:${receptorKey}:${poseFile || ''}:${result.pose_sha256 || ''}`;
+  const currentPoseState = requestStateFor(poseState, poseKey);
+  const currentReceptorState = requestStateFor(receptorState, receptorKey);
+  const box = useMemo(() => ({
+    centerX: configuration.center_x,
+    centerY: configuration.center_y,
+    centerZ: configuration.center_z,
+    sizeX: configuration.size_x,
+    sizeY: configuration.size_y,
+    sizeZ: configuration.size_z,
+  }), [
+    configuration.center_x, configuration.center_y, configuration.center_z,
+    configuration.size_x, configuration.size_y, configuration.size_z,
+  ]);
+
+  useEffect(() => {
+    setSelectedMode(defaultMode);
+  }, [defaultMode, moleculeIdentity, poseFile]);
+
+  useEffect(() => {
+    const requestId = poseRequestRef.current + 1;
+    poseRequestRef.current = requestId;
+    if (!success || !poseAvailable || !poseFile) {
+      setPoseState({ key: poseKey, status: 'idle', data: null, error: '' });
+      return undefined;
+    }
+    if (!jobId) {
+      setPoseState({
+        key: poseKey, status: 'error', data: null,
+        error: 'Pose visualization is unavailable because this result has no job context.',
+      });
+      return undefined;
+    }
+    const controller = new AbortController();
+    setPoseState({ key: poseKey, status: 'loading', data: null, error: '' });
+    fetchDockingPoseArtifact(
+      apiBaseUrl, jobId, poseFile, result.pose_sha256, controller.signal,
+    ).then((data) => {
+      if (!controller.signal.aborted && poseRequestRef.current === requestId) {
+        setPoseState({ key: poseKey, status: 'ready', data, error: '' });
+      }
+    }).catch((error) => {
+      if (!controller.signal.aborted && poseRequestRef.current === requestId) {
+        setPoseState({ key: poseKey, status: 'error', data: null, error: error.message });
+      }
+    });
+    return () => controller.abort();
+  }, [apiBaseUrl, jobId, poseAvailable, poseFile, poseKey, result.pose_sha256, success]);
+
+  useEffect(() => {
+    const requestId = receptorRequestRef.current + 1;
+    receptorRequestRef.current = requestId;
+    if (!success || !result.receptor_id || !result.prepared_receptor_sha256) {
+      setReceptorState({
+        key: receptorKey, status: 'error', data: null,
+        error: 'Prepared receptor visualization metadata is unavailable.',
+      });
+      return undefined;
+    }
+    const controller = new AbortController();
+    const receptor = {
+      receptor_id: result.receptor_id,
+      docking_ready: true,
+      docking_receptor_sha256: result.prepared_receptor_sha256,
+      preparation_id: result.preparation_id || '',
+    };
+    setReceptorState({ key: receptorKey, status: 'loading', data: null, error: '' });
+    fetchReceptorStructure(apiBaseUrl, receptor, controller.signal).then((data) => {
+      if (!controller.signal.aborted && receptorRequestRef.current === requestId) {
+        setReceptorState({ key: receptorKey, status: 'ready', data, error: '' });
+      }
+    }).catch((error) => {
+      if (!controller.signal.aborted && receptorRequestRef.current === requestId) {
+        setReceptorState({ key: receptorKey, status: 'error', data: null, error: error.message });
+      }
+    });
+    return () => controller.abort();
+  }, [apiBaseUrl, receptorKey, result.preparation_id, result.prepared_receptor_sha256, result.receptor_id, success]);
+
+  const modeSelection = useMemo(() => {
+    if (currentPoseState.status !== 'ready') return { pose: null, metadata: null, error: '' };
+    try {
+      const selected = selectVinaPoseMode(currentPoseState.data.models, modes, effectiveMode);
+      return { ...selected, error: '' };
+    } catch (error) {
+      return { pose: null, metadata: null, error: error.message };
+    }
+  }, [currentPoseState, effectiveMode, modes]);
+  const dockedLigand = modeSelection.pose ? {
+    text: modeSelection.pose.text,
+    format: 'pdbqt',
+    identity: {
+      moleculeId: moleculeIdentity,
+      poseSha256: currentPoseState.data.sha256,
+      mode: effectiveMode,
+    },
+  } : null;
+  const displayedMode = modeSelection.metadata
+    || modes.find((mode) => Number(mode.mode) === effectiveMode)
+    || null;
+  const poseError = currentPoseState.error || modeSelection.error;
+
+  if (!hasResult) return null;
 
   return (
     <Box component="section" aria-label="Vina docking results" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: { xs: 1.5, sm: 2 } }}>
@@ -80,11 +209,61 @@ export default function DockingResultsSection({ compound }) {
         </Stack>
         {success ? (
           <>
-            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 1 }}>
-              <Metric label="Best Vina affinity" value={bestAffinity} detail="kcal/mol" />
-              <Metric label="Best pose" value={result.best_mode} detail="Vina mode" />
+            <Stack direction={{ xs: 'column', sm: 'row' }} gap={1.5} alignItems={{ sm: 'center' }}>
+              <TextField
+                select
+                size="small"
+                label="Displayed docking mode"
+                value={effectiveMode}
+                onChange={(event) => setSelectedMode(Number(event.target.value))}
+                disabled={!modes.length}
+                sx={{ minWidth: 240 }}
+              >
+                {modes.map((mode) => (
+                  <MenuItem key={mode.mode} value={mode.mode}>
+                    Mode {mode.mode} · {valueOrUnavailable(mode.affinity_kcal_mol)} kcal/mol
+                  </MenuItem>
+                ))}
+              </TextField>
+              {currentPoseState.status === 'loading' || currentReceptorState.status === 'loading'
+                ? <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={18} /><Typography variant="body2">Loading validated docking artifacts…</Typography></Stack>
+                : null}
+            </Stack>
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(4, minmax(0, 1fr))' }, gap: 1 }}>
+              <Metric label="Displayed Vina affinity" value={displayedMode?.affinity_kcal_mol} detail="kcal/mol" />
+              <Metric label="Displayed pose" value={displayedMode?.mode} detail={displayedMode?.mode === result.best_mode ? 'Best Vina mode' : 'Vina mode'} />
+              <Metric label="RMSD lower / upper" value={displayedMode ? `${valueOrUnavailable(displayedMode.rmsd_lb)} / ${valueOrUnavailable(displayedMode.rmsd_ub)}` : null} detail="Å" />
               <Metric label="Poses returned" value={returnedModeCount} detail={`${valueOrUnavailable(requestedNumModes)} requested`} />
             </Box>
+            {currentReceptorState.status === 'ready' ? (
+              <Box data-testid="docked-pose-viewer">
+                <ReceptorViewer
+                  ref={viewerRef}
+                  structure={currentReceptorState.data}
+                  dockedLigand={dockedLigand}
+                  box={box}
+                  showBox
+                  selectedResidues={[]}
+                  selectedLigand={null}
+                  onError={(error) => setViewerError(error.message || String(error))}
+                  onLigandRender={({ durationMs, mode }) => {
+                    setLigandRenderMs(durationMs);
+                    if (mode !== null && focusedPoseKeyRef.current !== poseKey) {
+                      viewerRef.current?.focusBox();
+                      focusedPoseKeyRef.current = poseKey;
+                    }
+                  }}
+                />
+              </Box>
+            ) : null}
+            {currentReceptorState.error ? <Alert severity="warning">{currentReceptorState.error}</Alert> : null}
+            {poseError ? <Alert severity="warning">{poseError}</Alert> : null}
+            {viewerError ? <Alert severity="warning">Docking viewer unavailable: {viewerError}</Alert> : null}
+            {currentPoseState.status === 'ready' ? (
+              <Typography variant="caption" color="text.secondary" data-testid="pose-performance">
+                Pose artifact fetched in {currentPoseState.data.fetchDurationMs.toFixed(1)} ms; parsed in {currentPoseState.data.parseDurationMs.toFixed(1)} ms; latest ligand-model update {ligandRenderMs === null ? 'pending' : `${ligandRenderMs.toFixed(1)} ms`}.
+              </Typography>
+            ) : null}
             <Typography variant="body2">
               All returned Vina poses are retained. The most favorable (most negative) affinity is used for prioritization.
             </Typography>
@@ -130,8 +309,8 @@ export default function DockingResultsSection({ compound }) {
                     </TableHead>
                     <TableBody>
                       {modes.map((mode) => (
-                        <TableRow key={`${mode.mode}-${mode.pose_model ?? ''}`} selected={mode.mode === result.best_mode}>
-                          <TableCell>{valueOrUnavailable(mode.mode)}{mode.mode === result.best_mode ? ' (best)' : ''}</TableCell>
+                        <TableRow key={`${mode.mode}-${mode.pose_model ?? ''}`} selected={Number(mode.mode) === effectiveMode}>
+                          <TableCell>{valueOrUnavailable(mode.mode)}{mode.mode === result.best_mode ? ' (best)' : ''}{Number(mode.mode) === effectiveMode ? ' (displayed)' : ''}</TableCell>
                           <TableCell>{valueOrUnavailable(mode.affinity_kcal_mol)}</TableCell>
                           <TableCell>{valueOrUnavailable(mode.rmsd_lb)}</TableCell>
                           <TableCell>{valueOrUnavailable(mode.rmsd_ub)}</TableCell>

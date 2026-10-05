@@ -4,11 +4,16 @@ import React, {
 import { Box, Typography } from '@mui/material';
 
 const RECEPTOR_STYLE = { cartoon: { color: 'spectrum' } };
+export const DOCKED_RECEPTOR_STYLE = { cartoon: { color: 'spectrum', opacity: 0.58 } };
 const HETERO_STYLE = { stick: { radius: 0.13, colorscheme: 'Jmol' } };
 const SELECTION_STYLE = { stick: { radius: 0.28, color: '#df6c3b' } };
 export const SELECTED_LIGAND_STYLE = {
-  stick: { radius: 0.4, colorscheme: 'Jmol' },
-  sphere: { scale: 0.38, colorscheme: 'Jmol' },
+  stick: { radius: 0.48, colorscheme: 'Jmol' },
+  sphere: { scale: 0.58, colorscheme: 'Jmol' },
+};
+export const DOCKED_LIGAND_CARBON_STYLE = {
+  stick: { radius: 0.48, color: '#df6c3b' },
+  sphere: { scale: 0.58, color: '#df6c3b' },
 };
 export const VINA_BOX_SOLID_STYLE = { color: '#df6c3b', opacity: 0.08, wireframe: false };
 export const VINA_BOX_EDGE_STYLE = {
@@ -70,16 +75,45 @@ export function receptorStructureIdentity(structure) {
   ].join(':');
 }
 
+export function dockedLigandStructureIdentity(structure) {
+  if (!structure) return '';
+  const identity = structure.identity ?? {};
+  return [
+    identity.moleculeId || '', identity.poseSha256 || '', identity.mode || '',
+  ].join(':');
+}
+
+function setModelStyle(model, fallbackViewer, selection, style, operation = 'setStyle') {
+  if (model && typeof model[operation] === 'function') model[operation](selection, style);
+  else fallbackViewer[operation](selection, style);
+}
+
 export function replaceReceptorModel(viewer, structure, onAtomSelect = () => {}, options = {}) {
   const preservedView = options.preserveCamera && typeof viewer.getView === 'function'
     ? viewer.getView() : null;
   viewer.removeAllModels();
   const model = viewer.addModel(structure.text, structure.format);
-  viewer.setStyle({}, RECEPTOR_STYLE);
-  viewer.addStyle({ hetflag: true }, HETERO_STYLE);
+  setModelStyle(model, viewer, {}, RECEPTOR_STYLE);
+  setModelStyle(model, viewer, { hetflag: true }, HETERO_STYLE, 'addStyle');
   viewer.setClickable({}, true, onAtomSelect);
   if (preservedView && typeof viewer.setView === 'function') viewer.setView(preservedView);
   else viewer.zoomTo();
+  viewer.render();
+  return model;
+}
+
+export function replaceDockedLigandModel(viewer, previousModel, structure) {
+  const preservedView = typeof viewer.getView === 'function' ? viewer.getView() : null;
+  if (previousModel && typeof viewer.removeModel === 'function') viewer.removeModel(previousModel);
+  if (!structure) {
+    if (preservedView && typeof viewer.setView === 'function') viewer.setView(preservedView);
+    viewer.render();
+    return null;
+  }
+  const model = viewer.addModel(structure.text, structure.format || 'pdbqt');
+  setModelStyle(model, viewer, {}, SELECTED_LIGAND_STYLE);
+  setModelStyle(model, viewer, { elem: 'C' }, DOCKED_LIGAND_CARBON_STYLE, 'addStyle');
+  if (preservedView && typeof viewer.setView === 'function') viewer.setView(preservedView);
   viewer.render();
   return model;
 }
@@ -141,10 +175,12 @@ export function formatLegendDimension(value) {
   return (Math.round((value + Number.EPSILON) * 100) / 100).toFixed(2);
 }
 
-export function viewerLegendPresentation(selectedLigand, box) {
+export function viewerLegendPresentation(selectedLigand, box, dockedLigand = null) {
   const vinaBox = toVinaBoxSpec(box);
   return {
-    ligand: selectedLigand
+    ligand: dockedLigand
+      ? `${dockedLigand.moleculeId || 'Docked ligand'} · Mode ${dockedLigand.mode ?? '–'}`
+      : selectedLigand
       ? `${selectedLigand.residue_name || '–'} · Chain ${selectedLigand.chain || '–'} · Residue ${selectedLigand.residue_number ?? '–'}`
       : 'None',
     searchVolume: vinaBox
@@ -153,8 +189,8 @@ export function viewerLegendPresentation(selectedLigand, box) {
   };
 }
 
-export function ViewerLegend({ selectedLigand, box }) {
-  const presentation = viewerLegendPresentation(selectedLigand, box);
+export function ViewerLegend({ selectedLigand, box, dockedLigand }) {
+  const presentation = viewerLegendPresentation(selectedLigand, box, dockedLigand);
   return (
     <Box
       component="aside"
@@ -219,15 +255,20 @@ export function ViewerLegend({ selectedLigand, box }) {
   );
 }
 
-export function renderResidueHighlights(viewer, selectedResidues = [], selectedLigand = null) {
-  viewer.setStyle({}, RECEPTOR_STYLE);
-  viewer.addStyle({ hetflag: true }, HETERO_STYLE);
-  selectedResidues.forEach((residue) => viewer.addStyle(
+export function renderResidueHighlights(
+  viewer, selectedResidues = [], selectedLigand = null, receptorModel = null, showDockedLigand = false,
+) {
+  setModelStyle(receptorModel, viewer, {}, showDockedLigand ? DOCKED_RECEPTOR_STYLE : RECEPTOR_STYLE);
+  setModelStyle(receptorModel, viewer, { hetflag: true }, HETERO_STYLE, 'addStyle');
+  selectedResidues.forEach((residue) => setModelStyle(receptorModel, viewer,
     { chain: residue.chain, resi: residue.residueNumber, resn: residue.residueName },
     SELECTION_STYLE,
+    'addStyle',
   ));
   const selectedLigandAtoms = ligandSelection(selectedLigand);
-  if (selectedLigandAtoms) viewer.addStyle(selectedLigandAtoms, SELECTED_LIGAND_STYLE);
+  if (selectedLigandAtoms) setModelStyle(
+    receptorModel, viewer, selectedLigandAtoms, SELECTED_LIGAND_STYLE, 'addStyle',
+  );
   viewer.render();
 }
 
@@ -247,19 +288,27 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
   showBox = true,
   selectedResidues,
   selectedLigand,
+  dockedLigand,
   onAtomSelect,
+  onLigandRender,
   onError,
 }, ref) {
   const hostRef = useRef(null);
   const viewerRef = useRef(null);
+  const receptorModelRef = useRef(null);
+  const ligandModelRef = useRef(null);
   const boxShapeRef = useRef(null);
   const onAtomSelectRef = useRef(onAtomSelect);
+  const onLigandRenderRef = useRef(onLigandRender);
   const onErrorRef = useRef(onError);
   const renderedReceptorIdRef = useRef('');
   const [viewerGeneration, setViewerGeneration] = useState(0);
   const artifactIdentity = receptorStructureIdentity(structure);
+  const dockedLigandIdentity = dockedLigandStructureIdentity(dockedLigand);
+  const hasDockedLigand = Boolean(dockedLigand);
 
   useEffect(() => { onAtomSelectRef.current = onAtomSelect; }, [onAtomSelect]);
+  useEffect(() => { onLigandRenderRef.current = onLigandRender; }, [onLigandRender]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
 
   useImperativeHandle(ref, () => ({
@@ -293,6 +342,8 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
     return () => {
       disposed = true;
       boxShapeRef.current = null;
+      receptorModelRef.current = null;
+      ligandModelRef.current = null;
       if (viewer) viewer.clear();
       viewerRef.current = null;
     };
@@ -302,14 +353,30 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
     const viewer = viewerRef.current;
     if (!viewer || !structure) return;
     const receptorId = structure.identity?.receptorId || '';
-    replaceReceptorModel(
+    receptorModelRef.current = replaceReceptorModel(
       viewer,
       structure,
       (atom) => onAtomSelectRef.current?.(atom),
       { preserveCamera: Boolean(receptorId && receptorId === renderedReceptorIdRef.current) },
     );
+    ligandModelRef.current = null;
     renderedReceptorIdRef.current = receptorId;
   }, [artifactIdentity, viewerGeneration]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const started = performance.now();
+    ligandModelRef.current = replaceDockedLigandModel(
+      viewer,
+      ligandModelRef.current,
+      structure ? dockedLigand : null,
+    );
+    onLigandRenderRef.current?.({
+      durationMs: performance.now() - started,
+      mode: dockedLigand?.identity?.mode ?? null,
+    });
+  }, [artifactIdentity, dockedLigandIdentity, viewerGeneration]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -324,8 +391,10 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !structure) return;
-    renderResidueHighlights(viewer, selectedResidues, selectedLigand);
-  }, [selectedResidues, selectedLigand, artifactIdentity, viewerGeneration]);
+    renderResidueHighlights(
+      viewer, selectedResidues, selectedLigand, receptorModelRef.current, hasDockedLigand,
+    );
+  }, [selectedResidues, selectedLigand, hasDockedLigand, artifactIdentity, viewerGeneration]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -347,7 +416,7 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
           bgcolor: '#f7f9fb',
         }}
       />
-      <ViewerLegend selectedLigand={selectedLigand} box={box} />
+      <ViewerLegend selectedLigand={selectedLigand} dockedLigand={dockedLigand?.identity} box={box} />
       {!structure ? (
         <Box sx={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}>
           <Typography color="text.secondary">Upload a PDB or prepared PDBQT to view the receptor.</Typography>

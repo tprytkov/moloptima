@@ -1303,7 +1303,7 @@ export function DockingWorkflowPage({
           </Box>
         </Paper>
       ) : <Alert severity="info">No docking results are available for the current calculation.</Alert>}
-      {selected ? <DockingResultsSection compound={selected} /> : null}
+      {selected ? <DockingResultsSection compound={selected} jobId={prioritizationState.job?.job_id} apiBaseUrl={apiBaseUrl} /> : null}
     </Stack>
   );
 }
@@ -1495,6 +1495,7 @@ export function ResultsWorkflowPage({ prioritizationState, upload, annotationsSt
         compound={rows.find((row) => isTrueValue(row.valid_molecule)) ?? rows[0]}
         profile={profile}
         profileSha256={prioritizationState.result?.prioritization_profile_sha256 || prioritizationState.job?.prioritization_profile_sha256}
+        jobId={prioritizationState.job?.job_id}
       /> : null}
       {rows.length && !single ? <>
         <EvidenceFilterPanel rows={rows} filteredRows={filtered} filters={filters} onChange={setFilters} onReset={() => setFilters(defaultEvidenceFilters)} exportFilename="moloptima-results.csv" />
@@ -1502,13 +1503,13 @@ export function ResultsWorkflowPage({ prioritizationState, upload, annotationsSt
         <CandidateExportPanel rows={filtered} />
       </> : null}
       {!rows.length ? <Alert severity="info">No result rows are available for the current calculation.</Alert> : null}
-      {selected ? <CompoundDetailPanel compound={selected} upload={profileUpload} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} onClose={() => setSelectedKey('')} containerRef={detailRef} /> : null}
+      {selected ? <CompoundDetailPanel compound={selected} upload={profileUpload} jobId={prioritizationState.job?.job_id} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} onClose={() => setSelectedKey('')} containerRef={detailRef} /> : null}
       {prioritizationState.job ? <ResultsPackageDownloads apiBaseUrl={apiBaseUrl} jobId={prioritizationState.job.job_id} analysisMode={single ? 'single_compound' : 'library'} /> : null}
     </Stack>
   );
 }
 
-export function SingleCompoundAssessment({ compound, profile, profileSha256 }) {
+export function SingleCompoundAssessment({ compound, profile, profileSha256, jobId }) {
   const interpretation = compound.prioritization_v2 || {};
   const provenance = interpretation.provenance || {};
   return (
@@ -1535,7 +1536,7 @@ export function SingleCompoundAssessment({ compound, profile, profileSha256 }) {
             ]} />
           </Box>
           <Box><Typography variant="h2" sx={{ mb: 1 }}>ADMET</Typography><AdmetResultsSection compound={compound} /></Box>
-          <Box><Typography variant="h2" sx={{ mb: 1 }}>Docking</Typography><DockingResultsSection compound={compound} /></Box>
+          <Box><Typography variant="h2" sx={{ mb: 1 }}>Docking</Typography><DockingResultsSection compound={compound} jobId={jobId} apiBaseUrl={apiBaseUrl} /></Box>
           <Box><Typography variant="h2" sx={{ mb: 1 }}>Profile Interpretation</Typography>
             <DetailTable title="Selected profile context" rows={[
               ['Profile ID', provenance.profile_id || profile?.profile_id],
@@ -2664,6 +2665,7 @@ function ChemicalSpacePage({ latestRunState, annotationsState, onSaveReviewAnnot
       {selectedCompound && (
         <CompoundDetailPanel
           compound={selectedCompound}
+          jobId={latestRunState.job?.job_id}
           annotationsState={annotationsState}
           onSaveReviewAnnotation={onSaveReviewAnnotation}
         />
@@ -4193,7 +4195,7 @@ export function compoundDetailSummarySections(compound) {
   ];
 }
 
-export function CompoundDetailPanel({ compound, upload, annotationsState, onSaveReviewAnnotation, onClose, containerRef }) {
+export function CompoundDetailPanel({ compound, upload, jobId, annotationsState, onSaveReviewAnnotation, onClose, containerRef }) {
   return (
     <Card
       ref={containerRef}
@@ -4248,7 +4250,7 @@ export function CompoundDetailPanel({ compound, upload, annotationsState, onSave
             </Box>
             <Box component="section" aria-label="Structure-based computational evidence">
               <Typography variant="overline">Docking</Typography>
-              {compound.docking_result ? <DockingResultsSection compound={compound} /> : <Alert severity="info">No docking result available. Missing evidence is not negative evidence.</Alert>}
+              {compound.docking_result ? <DockingResultsSection compound={compound} jobId={jobId} apiBaseUrl={apiBaseUrl} /> : <Alert severity="info">No docking result available. Missing evidence is not negative evidence.</Alert>}
             </Box>
             <Box component="section" aria-label="Prioritization evidence">
               <Typography variant="overline">Prioritization</Typography>

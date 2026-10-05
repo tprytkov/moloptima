@@ -44,9 +44,11 @@ test('shows scientific docking result and receptor provenance', () => {
       num_modes: 9, exhaustiveness: 8, seed: 2025,
     },
   });
-  assert.match(html, /Best Vina affinity/);
+  assert.match(html, /Displayed Vina affinity/);
   assert.match(html, /-8\.3/);
-  assert.match(html, /Best pose/);
+  assert.match(html, /Displayed pose/);
+  assert.match(html, /Displayed docking mode/);
+  assert.match(html, /RMSD lower \/ upper/);
   assert.match(html, /most favorable \(most negative\) affinity is used for prioritization/);
   assert.match(html, /Returned Vina poses \(3\)/);
   assert.match(html, /RMSD lower bound \(Å\)/);
