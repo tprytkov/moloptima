@@ -67,6 +67,11 @@ from molecular_prioritization.experimental_measurements import (
     deterministic_identifier,
     parse_experimental_delimited,
 )
+from biopharma_intelligence.known_analogs import (
+    KnownSourceError,
+    retrieve_experimental_records,
+    search_known_analogs,
+)
 from backend import job_runner, receptor_store, results_package
 
 
@@ -618,6 +623,90 @@ def chemical_space_scaffolds(upload_id: str) -> dict[str, object]:
     return _chemical_space_scaffolds_cached(
         str(manifest_path), manifest_path.stat().st_mtime_ns, SCAFFOLD_ALGORITHM_VERSION,
     )
+
+
+def experimental_neighborhood_search(
+    upload_id: str, molecule_id: str, source: str, max_analogs: int, refresh: bool,
+) -> dict[str, object]:
+    """Run an explicit online exact/analog search for one imported molecule."""
+
+    if source.lower() != "chembl":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unsupported known-compound source.")
+    records = _load_molecule_collection_records(upload_id)
+    selected = None
+    for index, record in enumerate(records):
+        stable_id = str(record.get("molecule_id") or f"compound_{index + 1:03d}")
+        if stable_id == molecule_id:
+            selected = {
+                **record,
+                "molecule_id": stable_id,
+                "display_name": str(record.get("original_molecule_id") or stable_id),
+            }
+            break
+    if selected is None or str(selected.get("validation_status") or "").lower() != "valid":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Selected molecule is not a valid member of this collection.")
+    try:
+        return search_known_analogs(selected, max_analogs=max_analogs, refresh=refresh)
+    except KnownSourceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+def experimental_neighborhood_records(
+    source: str, source_compound_id: str, limit: int, refresh: bool,
+) -> dict[str, object]:
+    """Retrieve bounded assay-level records for one explicitly selected known compound."""
+
+    if source.lower() != "chembl":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unsupported known-compound source.")
+    try:
+        return retrieve_experimental_records(source_compound_id, limit=limit, refresh=refresh)
+    except KnownSourceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+def export_experimental_neighborhood_csv(source: str, source_compound_id: str) -> str:
+    """Prepare reviewed public records as a Batch 10B-compatible CSV without persisting them."""
+
+    payload = experimental_neighborhood_records(source, source_compound_id, 500, False)
+    fields = [
+        "smiles", "endpoint", "value", "unit", "relation", "target_identifier", "target_name",
+        "organism", "assay_id", "assay_type", "assay_system", "readout", "source",
+        "source_record_id", "citation", "comments",
+    ]
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fields, lineterminator="\n")
+    writer.writeheader()
+    for record in list(payload.get("records") or []):
+        target = dict(record.get("target") or {})
+        writer.writerow({
+            "smiles": record.get("canonical_smiles"),
+            "endpoint": record.get("endpoint_name"),
+            "value": record.get("original_value"),
+            "unit": record.get("original_unit"),
+            "relation": record.get("relation"),
+            "target_identifier": target.get("identifier"),
+            "target_name": target.get("name"),
+            "organism": target.get("organism"),
+            "assay_id": record.get("assay_id"),
+            "assay_type": record.get("assay_type"),
+            "assay_system": record.get("assay_system"),
+            "readout": record.get("readout"),
+            "source": record.get("source"),
+            "source_record_id": record.get("source_record_id"),
+            "citation": record.get("publication_reference"),
+            "comments": "Prepared from Experimental Neighborhood; import explicitly after the analog exists in the molecule collection.",
+        })
+    return buffer.getvalue()
 
 
 def _load_molecule_collection_records(upload_id: str) -> list[dict[str, object]]:

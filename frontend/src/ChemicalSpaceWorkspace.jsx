@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Accordion, AccordionDetails, AccordionSummary, Alert, Box, Chip, CircularProgress,
-  FormControl, InputLabel, MenuItem, Paper, Select, Stack, Tab, Tabs, TextField, Typography,
+  Button, FormControl, InputLabel, MenuItem, Paper, Select, Stack, Tab, Tabs, TextField, Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { normalizeAdmetAnalysis } from './admetAnalysisData.js';
 import { numericAdmetPlotValue } from './admetPlotData.js';
 import ScaffoldWorkspace from './ScaffoldWorkspace.jsx';
+import ExperimentalNeighborhood from './ExperimentalNeighborhood.jsx';
 import {
   CHEMICAL_SPACE_TOP_K_OPTIONS, categoricalPointColor, numericPointColor,
   paddedChemicalSpaceDomain, projectChemicalSpacePoints, searchChemicalSpacePoints,
@@ -38,7 +39,7 @@ function sourceLabel(point) {
   return point.source_filename || point.source_type || 'Entered SMILES';
 }
 
-function Detail({ point, baseUrl, admetMolecule }) {
+function Detail({ point, baseUrl, admetMolecule, onFindAnalogs }) {
   if (!point) return <Alert severity="info">Select a point to inspect its imported identity and structure.</Alert>;
   const params = new URLSearchParams({ smiles: point.canonical_smiles, width: '300', height: '220' });
   return (
@@ -51,6 +52,7 @@ function Detail({ point, baseUrl, admetMolecule }) {
         <Typography variant="body2" color="text.secondary">Source: {sourceLabel(point)}{point.source_record ? ` · ${point.source_record}` : ''}</Typography>
         <Typography variant="body2" color="text.secondary">Validation: {point.validation_status || 'valid'}{point.duplicate_structure ? ' · duplicate structure retained' : ''}</Typography>
         <Typography variant="caption" color="text.secondary">{admetMolecule ? 'ADMET results are available for optional map coloring.' : 'No ADMET result is linked; chemical-space analysis remains available.'}</Typography>
+        <Button variant="outlined" onClick={onFindAnalogs}>Find experimental analogs</Button>
       </Stack>
     </Paper>
   );
@@ -198,11 +200,11 @@ export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl
       {error ? <Alert severity="error">{error}</Alert> : null}
       {loading ? <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={20} /><Typography>Projecting the current collection…</Typography></Stack> : null}
       {projection ? <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}><Chip label={`${projection.projected_count.toLocaleString()} projected`} /><Chip label={`${projection.excluded_count.toLocaleString()} invalid or unresolved excluded`} /><Chip label={`${projection.total_count.toLocaleString()} imported records`} /></Stack> : null}
-      <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chemical Space workspace views"><Tab label="Map" /><Tab label="Neighbors" /><Tab label="Scaffolds" /></Tabs>
+      <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chemical Space workspace views" variant="scrollable" scrollButtons="auto"><Tab label="Map" /><Tab label="Neighbors" /><Tab label="Scaffolds" /><Tab label="Experimental Neighborhood" /></Tabs>
       {projection && projection.projected_count === 0 ? <Alert severity="warning">No valid resolved structures are available to fingerprint. Excluded records remain listed in the import workflow.</Alert> : null}
       {projection?.projected_count ? (
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 2fr) minmax(280px, 1fr)' }, gap: 2 }}>
-          <Paper variant="outlined" sx={{ p: 2, minWidth: 0, gridColumn: tab === 2 ? '1 / -1' : 'auto' }}>
+          <Paper variant="outlined" sx={{ p: 2, minWidth: 0, gridColumn: tab >= 2 ? '1 / -1' : 'auto' }}>
             {tab === 0 ? <Stack spacing={2}>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
                 <TextField size="small" label="Search compounds" value={query} onChange={(event) => setQuery(event.target.value)} sx={{ flex: 1 }} />
@@ -216,9 +218,9 @@ export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl
               {!selectedId ? <Alert severity="info">Select a molecule on the Map to calculate query-relative neighbors.</Alert> : null}
               {selectedId && neighborsLoading ? <CircularProgress size={22} /> : null}
               {selectedId && !neighborsLoading && neighbors ? <Stack spacing={1}>{neighbors.neighbors.length ? neighbors.neighbors.map((neighbor, index) => <Paper key={`${neighbor.molecule_id}-${neighbor.source_index}`} variant="outlined" sx={{ p: 1.25, cursor: 'pointer' }} onClick={() => setSelectedId(neighbor.molecule_id)}><Stack direction="row" justifyContent="space-between" gap={2}><Box><Typography variant="body2" fontWeight={700}>{index + 1}. {neighbor.display_name || neighbor.molecule_id}</Typography><Typography variant="caption" color="text.secondary">{sourceLabel(neighbor)}{neighbor.duplicate_structure ? ' · duplicate structure retained' : ''}</Typography></Box><Typography variant="body2" fontWeight={700}>{neighbor.similarity.toFixed(3)}</Typography></Stack></Paper>) : <Alert severity="info">This collection has no other valid structures to compare.</Alert>}</Stack> : null}
-            </Stack> : scaffoldData ? <ScaffoldWorkspace data={scaffoldData} selectedScaffoldId={selectedScaffoldId} selectedMoleculeId={selectedId} onSelectScaffold={setSelectedScaffoldId} onSelectMolecule={setSelectedId} onViewMap={(scaffoldId) => { setSelectedScaffoldId(scaffoldId); setColorMode('scaffold'); setTab(0); }} baseUrl={baseUrl} admetById={admetById} /> : null}
+            </Stack> : tab === 2 ? (scaffoldData ? <ScaffoldWorkspace data={scaffoldData} selectedScaffoldId={selectedScaffoldId} selectedMoleculeId={selectedId} onSelectScaffold={setSelectedScaffoldId} onSelectMolecule={setSelectedId} onViewMap={(scaffoldId) => { setSelectedScaffoldId(scaffoldId); setColorMode('scaffold'); setTab(0); }} baseUrl={baseUrl} admetById={admetById} /> : null) : <ExperimentalNeighborhood key={selected?.molecule_id || 'no-selection'} upload={upload} queryMolecule={selected} baseUrl={baseUrl} />}
           </Paper>
-          {tab !== 2 ? <Detail point={selected} baseUrl={baseUrl} admetMolecule={selected ? admetById.get(selected.molecule_id) : null} /> : null}
+          {tab < 2 ? <Detail point={selected} baseUrl={baseUrl} admetMolecule={selected ? admetById.get(selected.molecule_id) : null} onFindAnalogs={() => setTab(3)} /> : null}
         </Box>
       ) : null}
       {projection?.metadata ? <Accordion><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography fontWeight={700}>Method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">Representation: Morgan radius {projection.metadata.fingerprint_radius}, {projection.metadata.fingerprint_bits}-bit fingerprints · RDKit {projection.metadata.rdkit_version}.</Typography><Typography variant="body2">Similarity: {projection.metadata.similarity_metric}. Projection: {projection.metadata.projection_method} via {projection.metadata.projection_package} {projection.metadata.projection_package_version}, seed {projection.metadata.projection_seed}.</Typography><Typography variant="body2">Projection input: {projection.metadata.projection_input}.</Typography><Alert severity="info">{projection.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}

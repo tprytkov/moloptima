@@ -197,6 +197,27 @@ class ChemicalSpaceScaffoldResponse(BaseModel):
     metadata: dict[str, Any]
 
 
+class ExperimentalNeighborhoodSearchRequest(BaseModel):
+    upload_id: str = Field(..., min_length=32, max_length=32)
+    molecule_id: str = Field(..., min_length=1, max_length=200)
+    source: Literal["chembl"] = "chembl"
+    max_analogs: Literal[10, 25, 50] = 25
+    refresh: bool = False
+
+
+class ExperimentalNeighborhoodRecordsRequest(BaseModel):
+    source: Literal["chembl"] = "chembl"
+    source_compound_id: str = Field(..., pattern=r"^CHEMBL\d+$")
+    limit: Literal[100, 500, 1000] = 500
+    refresh: bool = False
+
+
+class ExperimentalNeighborhoodResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    contract_version: str
+
+
 class ImportJobCreateRequest(BaseModel):
     expected_file_count: int = Field(ge=0)
     smiles_text: str = ""

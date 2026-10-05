@@ -20,11 +20,14 @@ test('workspace has an explicit no-import state without requesting another uploa
   assert.match(html, /no second upload is required/);
 });
 
-test('workspace establishes descriptive Map, Neighbors, and Scaffolds controls', async () => {
+test('workspace establishes descriptive Map, Neighbors, Scaffolds, and Experimental Neighborhood controls', async () => {
   const source = await (await import('node:fs/promises')).readFile(new URL('./ChemicalSpaceWorkspace.jsx', import.meta.url), 'utf8');
   assert.match(source, /label="Map"/);
   assert.match(source, /label="Neighbors"/);
   assert.match(source, /label="Scaffolds"/);
+  assert.match(source, /label="Experimental Neighborhood"/);
+  assert.match(source, /Find experimental analogs/);
+  assert.match(source, /setTab\(3\)/);
   assert.match(source, /\/api\/chemical-space\/scaffolds/);
   assert.match(source, /Scaffold group/);
   assert.match(source, /CHEMICAL_SPACE_TOP_K_OPTIONS/);

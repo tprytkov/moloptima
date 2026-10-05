@@ -22,6 +22,9 @@ from backend.schemas import (
     DockingReceptorResponse,
     ExperimentalDataResponse,
     ExperimentalMeasurementListResponse,
+    ExperimentalNeighborhoodRecordsRequest,
+    ExperimentalNeighborhoodResponse,
+    ExperimentalNeighborhoodSearchRequest,
     HealthResponse,
     ImportBatchResponse,
     ImportJobCreateRequest,
@@ -284,6 +287,37 @@ def get_chemical_space_neighbors(request: ChemicalSpaceNeighborRequest) -> Chemi
 @app.post("/api/chemical-space/scaffolds", response_model=ChemicalSpaceScaffoldResponse)
 def get_chemical_space_scaffolds(request: ChemicalSpaceProjectRequest) -> ChemicalSpaceScaffoldResponse:
     return ChemicalSpaceScaffoldResponse(**services.chemical_space_scaffolds(request.upload_id))
+
+
+@app.post("/api/experimental-neighborhood/search", response_model=ExperimentalNeighborhoodResponse)
+def search_experimental_neighborhood(
+    request: ExperimentalNeighborhoodSearchRequest,
+) -> ExperimentalNeighborhoodResponse:
+    return ExperimentalNeighborhoodResponse(**services.experimental_neighborhood_search(
+        request.upload_id, request.molecule_id, request.source, request.max_analogs, request.refresh,
+    ))
+
+
+@app.post("/api/experimental-neighborhood/records", response_model=ExperimentalNeighborhoodResponse)
+def get_experimental_neighborhood_records(
+    request: ExperimentalNeighborhoodRecordsRequest,
+) -> ExperimentalNeighborhoodResponse:
+    return ExperimentalNeighborhoodResponse(**services.experimental_neighborhood_records(
+        request.source, request.source_compound_id, request.limit, request.refresh,
+    ))
+
+
+@app.get("/api/experimental-neighborhood/records/export.csv")
+def export_experimental_neighborhood_records(
+    source: Literal["chembl"] = Query("chembl"),
+    source_compound_id: str = Query(..., pattern=r"^CHEMBL\d+$"),
+) -> Response:
+    content = services.export_experimental_neighborhood_csv(source, source_compound_id)
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{source_compound_id}-experimental-records.csv"'},
+    )
 
 
 @app.post("/api/candidates/export-sdf")
