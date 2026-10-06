@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import sys
+import threading
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+from uuid import uuid4
 
 from molecular_prioritization.bbb_predictor import (
     CHEMBERTA_BBB_MODEL_ID,
@@ -21,11 +27,43 @@ APP_DATA_DIR = PROJECT_ROOT / "app_data"
 MODEL_CACHE_DIR = APP_DATA_DIR / "model_cache"
 HUGGINGFACE_CACHE_DIR = MODEL_CACHE_DIR / "huggingface"
 PUBLIC_LOOKUP_CACHE_DIR = APP_DATA_DIR / "public_lookup_cache"
-MANIFEST_DIR = APP_DATA_DIR / "manifests"
+TEMPLATE_MANIFEST_DIR = APP_DATA_DIR / "manifests"
+MODEL_MANIFEST_TEMPLATE_PATH = TEMPLATE_MANIFEST_DIR / "model_manifest.json"
+PUBLIC_DATA_MANIFEST_TEMPLATE_PATH = TEMPLATE_MANIFEST_DIR / "public_data_manifest.json"
+RUN_MANIFEST_TEMPLATE_PATH = TEMPLATE_MANIFEST_DIR / "run_manifest.json"
+RUNTIME_DATA_ROOT_ENV = "MOLOPTIMA_RUNTIME_DATA_ROOT"
+
+
+def resolve_runtime_data_root(
+    *,
+    environ: dict[str, str] | None = None,
+    platform: str | None = None,
+    home: Path | None = None,
+) -> Path:
+    """Resolve writable, application-owned state without depending on the checkout."""
+
+    values = os.environ if environ is None else environ
+    override = str(values.get(RUNTIME_DATA_ROOT_ENV) or "").strip()
+    if override:
+        return Path(override).expanduser()
+    current_platform = sys.platform if platform is None else platform
+    user_home = Path.home() if home is None else home
+    if current_platform == "win32":
+        base = values.get("APPDATA") or values.get("LOCALAPPDATA")
+        return (Path(base) if base else user_home / "AppData" / "Roaming") / "MolOptima" / "runtime"
+    if current_platform == "darwin":
+        return user_home / "Library" / "Application Support" / "MolOptima" / "runtime"
+    base = values.get("XDG_DATA_HOME")
+    return (Path(base) if base else user_home / ".local" / "share") / "MolOptima" / "runtime"
+
+
+RUNTIME_DATA_ROOT = resolve_runtime_data_root()
+MANIFEST_DIR = RUNTIME_DATA_ROOT / "manifests"
 MODEL_MANIFEST_PATH = MANIFEST_DIR / "model_manifest.json"
 PUBLIC_DATA_MANIFEST_PATH = MANIFEST_DIR / "public_data_manifest.json"
 RUN_MANIFEST_PATH = MANIFEST_DIR / "run_manifest.json"
 PUBLIC_SOURCES = ("PubChem", "ChEMBL", "SureChEMBL")
+_MANIFEST_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -59,6 +97,7 @@ def ensure_app_data_dirs() -> None:
         MODEL_CACHE_DIR,
         HUGGINGFACE_CACHE_DIR,
         PUBLIC_LOOKUP_CACHE_DIR,
+        MANIFEST_DIR.parent,
         MANIFEST_DIR,
     ):
         path.mkdir(parents=True, exist_ok=True)
@@ -76,10 +115,38 @@ def read_manifest(path: Path) -> dict[str, object]:
 
 
 def write_manifest(path: Path, payload: dict[str, object]) -> None:
-    ensure_app_data_dirs()
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    """Atomically replace one runtime manifest in its destination directory."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    with _MANIFEST_LOCK:
+        try:
+            with temporary.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            with suppress(FileNotFoundError):
+                temporary.unlink()
+
+
+def read_runtime_manifest(path: Path, template_path: Path) -> dict[str, object]:
+    """Read runtime state, seeding it once from a legacy/template manifest when absent."""
+
+    with _MANIFEST_LOCK:
+        if path.exists():
+            return read_manifest(path)
+        seed = read_manifest(template_path)
+        if seed:
+            write_manifest(path, seed)
+        return seed
+
+
+def run_record_path(job_id: str) -> Path:
+    safe_job_id = re.sub(r"[^A-Za-z0-9._-]+", "-", job_id).strip("-._") or "run"
+    return RUN_MANIFEST_PATH.parent / "runs" / f"{safe_job_id}.json"
 
 
 def bbb_cache_root() -> Path:
@@ -335,72 +402,77 @@ def update_run_manifest(
     output_file: str,
     rows: list[dict[str, object]],
 ) -> dict[str, object]:
-    existing = read_manifest(RUN_MANIFEST_PATH)
-    runs = existing.get("runs") if isinstance(existing.get("runs"), dict) else {}
-    statuses = bbb_status_values(rows)
-    pubchem_statuses = row_status_values(rows, "pubchem_lookup_status")
-    chembl_statuses = row_status_values(rows, "chembl_lookup_status")
-    patent_statuses = row_status_values(rows, "patent_lookup_status")
-    public_lookup_requested = any(
-        status not in {"", "not_requested"} for status in pubchem_statuses
-    ) or any(status not in {"", "not_requested"} for status in chembl_statuses) or any(
-        status not in {"", "not_requested"} for status in patent_statuses
-    )
-    model_available = "model_available" in statuses
-    placeholder_used = any(status != "model_available" for status in statuses) or not model_available
-    run = {
-        "timestamp": utc_timestamp(),
-        "selected_bbb_model_path": relative_path(bbb_cache_root()),
-        "actual_bbb_model_status": "model_available" if model_available else "model_unavailable",
-        "bbb_model_status_values": statuses,
-        "fallback_placeholder_used": placeholder_used,
-        "public_lookup_requested": public_lookup_requested,
-        "pubchem_lookup_status_values": pubchem_statuses,
-        "chembl_lookup_status_values": chembl_statuses,
-        "patent_lookup_status_values": patent_statuses,
-        "public_lookup_source_statuses": {
-            "PubChem": summarize_pubchem_source(rows),
-            "ChEMBL": summarize_chembl_source(rows),
-            "SureChEMBL": summarize_patent_source(rows),
-        },
-        "output_file": output_file,
-        "row_count": len(rows),
-    }
-    runs[job_id] = run
-    payload = {
-        "latest_run": job_id,
-        "runs": runs,
-    }
-    write_manifest(RUN_MANIFEST_PATH, payload)
-    update_model_manifest(
-        build_bbb_model_record(
-            actual_status=run["actual_bbb_model_status"],
-            loaded=model_available,
-            error_message="" if model_available else "BBB/ChemBERTa model was unavailable for latest run.",
+    with _MANIFEST_LOCK:
+        existing = read_runtime_manifest(RUN_MANIFEST_PATH, RUN_MANIFEST_TEMPLATE_PATH)
+        prior_runs = existing.get("runs") if isinstance(existing.get("runs"), dict) else {}
+        runs = dict(prior_runs)
+        statuses = bbb_status_values(rows)
+        pubchem_statuses = row_status_values(rows, "pubchem_lookup_status")
+        chembl_statuses = row_status_values(rows, "chembl_lookup_status")
+        patent_statuses = row_status_values(rows, "patent_lookup_status")
+        public_lookup_requested = any(
+            status not in {"", "not_requested"} for status in pubchem_statuses
+        ) or any(status not in {"", "not_requested"} for status in chembl_statuses) or any(
+            status not in {"", "not_requested"} for status in patent_statuses
         )
-    )
-    pubchem_source = summarize_pubchem_source(rows)
-    chembl_source = summarize_chembl_source(rows)
-    patent_source = summarize_patent_source(rows)
-    update_public_data_manifest(
-        pubchem_status=pubchem_source["status"],
-        pubchem_last_successful_lookup=pubchem_source["last_successful_lookup"],
-        pubchem_error_message=pubchem_source["error_message"],
-        chembl_status=chembl_source["status"],
-        chembl_last_successful_lookup=chembl_source["last_successful_lookup"],
-        chembl_error_message=chembl_source["error_message"],
-        surechembl_status=patent_source["status"],
-        surechembl_last_successful_lookup=patent_source["last_successful_lookup"],
-        surechembl_error_message=patent_source["error_message"],
-    )
-    return payload
+        model_available = "model_available" in statuses
+        placeholder_used = any(status != "model_available" for status in statuses) or not model_available
+        run = {
+            "timestamp": utc_timestamp(),
+            "selected_bbb_model_path": relative_path(bbb_cache_root()),
+            "actual_bbb_model_status": "model_available" if model_available else "model_unavailable",
+            "bbb_model_status_values": statuses,
+            "fallback_placeholder_used": placeholder_used,
+            "public_lookup_requested": public_lookup_requested,
+            "pubchem_lookup_status_values": pubchem_statuses,
+            "chembl_lookup_status_values": chembl_statuses,
+            "patent_lookup_status_values": patent_statuses,
+            "public_lookup_source_statuses": {
+                "PubChem": summarize_pubchem_source(rows),
+                "ChEMBL": summarize_chembl_source(rows),
+                "SureChEMBL": summarize_patent_source(rows),
+            },
+            "output_file": output_file,
+            "row_count": len(rows),
+        }
+        runs[job_id] = run
+        payload = {
+            "latest_run": job_id,
+            "runs": runs,
+        }
+        write_manifest(run_record_path(job_id), run)
+        write_manifest(RUN_MANIFEST_PATH, payload)
+        update_model_manifest(
+            build_bbb_model_record(
+                actual_status=run["actual_bbb_model_status"],
+                loaded=model_available,
+                error_message="" if model_available else "BBB/ChemBERTa model was unavailable for latest run.",
+            )
+        )
+        pubchem_source = summarize_pubchem_source(rows)
+        chembl_source = summarize_chembl_source(rows)
+        patent_source = summarize_patent_source(rows)
+        update_public_data_manifest(
+            pubchem_status=pubchem_source["status"],
+            pubchem_last_successful_lookup=pubchem_source["last_successful_lookup"],
+            pubchem_error_message=pubchem_source["error_message"],
+            chembl_status=chembl_source["status"],
+            chembl_last_successful_lookup=chembl_source["last_successful_lookup"],
+            chembl_error_message=chembl_source["error_message"],
+            surechembl_status=patent_source["status"],
+            surechembl_last_successful_lookup=patent_source["last_successful_lookup"],
+            surechembl_error_message=patent_source["error_message"],
+        )
+        return payload
 
 
 def current_status_payload() -> dict[str, object]:
     ensure_app_data_dirs()
     model_manifest = update_model_manifest()
-    public_manifest = read_manifest(PUBLIC_DATA_MANIFEST_PATH) or update_public_data_manifest()
-    run_manifest = read_manifest(RUN_MANIFEST_PATH)
+    public_manifest = read_runtime_manifest(
+        PUBLIC_DATA_MANIFEST_PATH, PUBLIC_DATA_MANIFEST_TEMPLATE_PATH,
+    ) or update_public_data_manifest()
+    run_manifest = read_runtime_manifest(RUN_MANIFEST_PATH, RUN_MANIFEST_TEMPLATE_PATH)
     return {
         "model_manifest": model_manifest,
         "public_data_manifest": public_manifest,
@@ -412,5 +484,5 @@ def refresh_source_status_payload() -> dict[str, object]:
     return {
         "model_manifest": update_model_manifest(),
         "public_data_manifest": update_public_data_manifest(),
-        "run_manifest": read_manifest(RUN_MANIFEST_PATH),
+        "run_manifest": read_runtime_manifest(RUN_MANIFEST_PATH, RUN_MANIFEST_TEMPLATE_PATH),
     }

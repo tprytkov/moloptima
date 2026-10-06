@@ -34,6 +34,21 @@ def wait_for_job(client: TestClient, job_id: str, timeout: float = 5.0) -> dict[
 
 def configure_temp_app_data(tmp_path: Path, monkeypatch):
     app_data = tmp_path / "app_data"
+    template_dir = tmp_path / "tracked_manifest_templates"
+    runtime_root = tmp_path / "runtime"
+    template_dir.mkdir(parents=True, exist_ok=True)
+    for name, payload in {
+        "model_manifest.json": {"last_checked": "", "models": {}},
+        "public_data_manifest.json": {
+            "last_checked": "",
+            "sources": {
+                source: {"source_name": source, "status": "not_requested"}
+                for source in services.model_sources.PUBLIC_SOURCES
+            },
+        },
+        "run_manifest.json": {"latest_run": None, "runs": {}},
+    }.items():
+        (template_dir / name).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     monkeypatch.setattr(services.model_sources, "APP_DATA_DIR", app_data)
     monkeypatch.setattr(services.model_sources, "MODEL_CACHE_DIR", app_data / "model_cache")
     monkeypatch.setattr(
@@ -46,21 +61,38 @@ def configure_temp_app_data(tmp_path: Path, monkeypatch):
         "PUBLIC_LOOKUP_CACHE_DIR",
         app_data / "public_lookup_cache",
     )
-    monkeypatch.setattr(services.model_sources, "MANIFEST_DIR", app_data / "manifests")
+    monkeypatch.setattr(services.model_sources, "TEMPLATE_MANIFEST_DIR", template_dir)
+    monkeypatch.setattr(
+        services.model_sources,
+        "MODEL_MANIFEST_TEMPLATE_PATH",
+        template_dir / "model_manifest.json",
+    )
+    monkeypatch.setattr(
+        services.model_sources,
+        "PUBLIC_DATA_MANIFEST_TEMPLATE_PATH",
+        template_dir / "public_data_manifest.json",
+    )
+    monkeypatch.setattr(
+        services.model_sources,
+        "RUN_MANIFEST_TEMPLATE_PATH",
+        template_dir / "run_manifest.json",
+    )
+    monkeypatch.setattr(services.model_sources, "RUNTIME_DATA_ROOT", runtime_root)
+    monkeypatch.setattr(services.model_sources, "MANIFEST_DIR", runtime_root / "manifests")
     monkeypatch.setattr(
         services.model_sources,
         "MODEL_MANIFEST_PATH",
-        app_data / "manifests" / "model_manifest.json",
+        runtime_root / "manifests" / "model_manifest.json",
     )
     monkeypatch.setattr(
         services.model_sources,
         "PUBLIC_DATA_MANIFEST_PATH",
-        app_data / "manifests" / "public_data_manifest.json",
+        runtime_root / "manifests" / "public_data_manifest.json",
     )
     monkeypatch.setattr(
         services.model_sources,
         "RUN_MANIFEST_PATH",
-        app_data / "manifests" / "run_manifest.json",
+        runtime_root / "manifests" / "run_manifest.json",
     )
     monkeypatch.setenv("MOLOPTIMA_BBB_MODEL_CACHE", str(app_data / "model_cache" / "huggingface"))
 

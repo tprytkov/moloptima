@@ -303,7 +303,11 @@ def test_desktop_packaging_uses_explicit_scientific_runtime_resource_allowlist()
         entry for entry in package["build"]["extraResources"] if entry["from"] == "../app_data"
     )
     assert model_resources["to"] == "moloptima-app/app_data"
-    assert model_resources["filter"] == ["**/.gitkeep", "model_resources/admet/**/*"]
+    assert model_resources["filter"] == [
+        "**/.gitkeep",
+        "manifests/*.json",
+        "model_resources/admet/**/*",
+    ]
 
     resource = next(
         entry for entry in package["build"]["extraResources"] if entry["from"] == "../resources"

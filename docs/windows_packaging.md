@@ -234,6 +234,11 @@ The packaged app:
 - Shows a clear startup error if Python is unavailable, points to a non-existent file, or the backend cannot become healthy.
 - Starts FastAPI with `python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000`.
 - Loads the built React frontend from packaged resources.
+- Passes a per-user writable runtime root to the backend at
+  `app.getPath('userData')/runtime` (normally `%APPDATA%\MolOptima\runtime` on
+  Windows). Mutable model/source/run manifests are written under its `manifests`
+  directory; packaged `app_data/manifests/*.json` files are immutable seed templates.
+  `MOLOPTIMA_RUNTIME_DATA_ROOT` overrides this location when explicitly configured.
 - Keeps API calls pointed at `http://localhost:8000`.
 - Uses the same local app data, backend metadata, run history, annotations, and export behavior as the browser and Electron development workflows.
 - Uses optional PubChem, ChEMBL, and SureChEMBL internet calls only when those lookups are enabled.

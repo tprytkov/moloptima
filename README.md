@@ -75,7 +75,7 @@ molecular_prioritization/  Python/RDKit prioritization pipeline
 biopharma_intelligence/    Local identity and similarity checks
 data/demo_inputs/          Public-safe demo molecule CSVs
 data/reference_compounds/  Small local known-compound reference table
-app_data/                  App-managed model cache, lookup cache, and manifests
+app_data/                  Tracked templates plus development caches/resources
 tests/                     Pytest suite
 docs/                      Project docs and screenshots
 ```
@@ -241,11 +241,23 @@ Relevant environment variables:
 - `MOLOPTIMA_OBABEL_PATH`: path to the local Open Babel executable used for ligand PDBQT conversion (`MOLOPTIMA_OBABEL_EXECUTABLE` remains a compatibility alias).
 - `MOLOPTIMA_VINA_TIMEOUT_SECONDS`: per-molecule Vina timeout; defaults to 1800 seconds.
 
-Manifests:
+Tracked manifest templates (immutable during normal execution):
 
 - `app_data/manifests/model_manifest.json`
 - `app_data/manifests/public_data_manifest.json`
 - `app_data/manifests/run_manifest.json`
+
+Mutable copies are seeded from those templates and stored outside the source tree. The
+default is `%APPDATA%\MolOptima\runtime\manifests` on Windows,
+`~/Library/Application Support/MolOptima/runtime/manifests` on macOS, and
+`$XDG_DATA_HOME/MolOptima/runtime/manifests` (or
+`~/.local/share/MolOptima/runtime/manifests`) on Linux. Packaged desktop launches use
+Electron's per-user application-data directory. `MOLOPTIMA_RUNTIME_DATA_ROOT` can
+override the runtime root for development, testing, or managed installations. An
+existing tracked manifest is copied as a non-destructive initial seed only when its
+runtime counterpart does not yet exist; subsequent updates are atomic and occur only
+in runtime storage. Run provenance also has one artifact per job under
+`manifests/runs/`.
 
 The Settings page exposes model cache status, latest run model status, and public data-source status. PubChem exact identity lookup, ChEMBL public bioactivity context, and SureChEMBL public patent-associated evidence signals are available only when explicitly enabled for a run. They use app-managed caches at `app_data/public_lookup_cache/pubchem`, `app_data/public_lookup_cache/chembl`, and `app_data/public_lookup_cache/surechembl`. SureChEMBL returned record counts may include broad or indirect public document associations for the structure/query.
 

@@ -106,6 +106,10 @@ function getBbbCacheRoot() {
   return process.env.MOLOPTIMA_BBB_MODEL_CACHE || path.join(getProjectRoot(), 'app_data', 'model_cache', 'huggingface');
 }
 
+function getRuntimeDataRoot() {
+  return process.env.MOLOPTIMA_RUNTIME_DATA_ROOT || path.join(app.getPath('userData'), 'runtime');
+}
+
 function pathStatus(targetPath) {
   if (!targetPath) {
     return 'not configured';
@@ -136,12 +140,14 @@ async function checkBackendHealth() {
 
 async function collectDiagnostics() {
   const appDataPath = path.join(getProjectRoot(), 'app_data');
+  const runtimeDataPath = getRuntimeDataRoot();
   const appDataFolders = [
     appDataPath,
     path.join(appDataPath, 'model_cache'),
     path.join(appDataPath, 'model_cache', 'huggingface'),
     path.join(appDataPath, 'public_lookup_cache'),
-    path.join(appDataPath, 'manifests'),
+    runtimeDataPath,
+    path.join(runtimeDataPath, 'manifests'),
   ];
 
   const pythonConfigured = Boolean(process.env.MOLOPTIMA_PYTHON);
@@ -168,6 +174,7 @@ async function collectDiagnostics() {
     moloptimaPythonOverridesBundled: pythonRuntime.envOverridesBundled,
     backendStartupCommand: pythonRuntime.commandPreview,
     projectRoot: getProjectRoot(),
+    runtimeDataRoot: runtimeDataPath,
     backendUrl,
     frontendUrl: process.env.MOLOPTIMA_FRONTEND_URL || (app.isPackaged ? packagedFrontendPath : frontendUrl),
     appDataFolders: appDataFolders.map((folderPath) => `${folderPath}: ${pathStatus(folderPath)}`),
@@ -194,6 +201,7 @@ function formatDiagnostics(diagnostics) {
     `MOLOPTIMA_PYTHON overrides bundled runtime: ${diagnostics.moloptimaPythonOverridesBundled}`,
     `Backend startup command: ${diagnostics.backendStartupCommand}`,
     `Project root: ${diagnostics.projectRoot}`,
+    `Mutable runtime data root: ${diagnostics.runtimeDataRoot}`,
     `Backend URL: ${diagnostics.backendUrl}`,
     `Frontend target: ${diagnostics.frontendUrl}`,
     '',
@@ -318,6 +326,10 @@ function startBackend() {
     '--port',
     '8000',
   ], {
+    env: {
+      ...process.env,
+      MOLOPTIMA_RUNTIME_DATA_ROOT: getRuntimeDataRoot(),
+    },
     onStderr: (message) => {
       lastBackendStderr = message.slice(-2000);
     },

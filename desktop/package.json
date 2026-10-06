@@ -74,6 +74,7 @@
         "to": "moloptima-app/app_data",
         "filter": [
           "**/.gitkeep",
+          "manifests/*.json",
           "model_resources/admet/**/*"
         ]
       },
