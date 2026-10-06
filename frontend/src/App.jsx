@@ -5622,6 +5622,8 @@ export function ScientificRuntimePanel({ runtimeState, onRefresh }) {
               <Typography variant="body2" color="text.secondary">Runtime source: {formatRuntimeSource(chemprop.runtime_source)}</Typography>
             </RuntimeCard>
             <RuntimeCard title="Receptor Preparation" status={receptor.status} refreshing={receptor.refreshing}>
+              <Typography variant="body2">{dependencyText('PDBFixer', receptor.pdbfixer)}</Typography>
+              <Typography variant="body2">{dependencyText('OpenMM', receptor.openmm)}</Typography>
               <Typography variant="body2">{dependencyText('Meeko', receptor.meeko)}</Typography>
               <Typography variant="body2">{dependencyText('Gemmi', receptor.gemmi)}</Typography>
               <Typography variant="body2" color="text.secondary">Hydrogen completion does not establish pH-correct protonation.</Typography>

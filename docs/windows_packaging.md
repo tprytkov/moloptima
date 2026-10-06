@@ -91,6 +91,7 @@ electron-builder
 
 - Node.js and npm for frontend and Electron packaging.
 - A local Conda/Python environment with MolOptima backend dependencies, RDKit, FastAPI, and Uvicorn.
+- An isolated receptor-repair runtime containing PDBFixer 1.12.0 and OpenMM 8.6.1, supplied by the packaged receptor-preparation resource or `MOLOPTIMA_RECEPTOR_REPAIR_PYTHON` during development.
 - `MOLOPTIMA_PYTHON` set to that environment's `python.exe` when running the packaged app, unless a future bundled runtime is supplied.
 
 Example:

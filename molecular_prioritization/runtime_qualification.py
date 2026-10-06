@@ -85,6 +85,8 @@ def _checking_component_snapshots() -> dict[str, dict[str, object]]:
             "status": "checking", "runtime_source": "pending",
             "meeko": {"status": "checking", "version": None},
             "gemmi": {"status": "checking", "version": None},
+            "pdbfixer": {"status": "checking", "version": None},
+            "openmm": {"status": "checking", "version": None},
         },
         "docking": {
             "status": "checking",
@@ -300,6 +302,9 @@ def _receptor_runtime_status() -> dict[str, object]:
     packages = runtime.get("packages", {})
     meeko = packages.get("meeko") if isinstance(packages, Mapping) else None
     gemmi = packages.get("gemmi") if isinstance(packages, Mapping) else None
+    repair = runtime.get("repair_runtime", {})
+    pdbfixer = repair.get("pdbfixer_version") if isinstance(repair, Mapping) else None
+    openmm = repair.get("openmm_version") if isinstance(repair, Mapping) else None
     if runtime.get("available"):
         status = "available"
     elif meeko is not None or gemmi is not None:
@@ -308,9 +313,12 @@ def _receptor_runtime_status() -> dict[str, object]:
         status = "unavailable"
     return {
         "status": status,
-        "runtime_source": "application_process",
+        "runtime_source": "application_process_and_isolated_repair_runtime",
         "meeko": {"status": "available" if meeko == MEEKO_VERSION else status, "version": meeko},
         "gemmi": {"status": "available" if gemmi == GEMMI_VERSION else status, "version": gemmi},
+        "pdbfixer": {"status": "available" if repair.get("available") else status, "version": pdbfixer},
+        "openmm": {"status": "available" if repair.get("available") else status, "version": openmm},
+        "repair_runtime_source": repair.get("resolution_source"),
         "hydrogen_preparation": runtime.get("hydrogen_preparation", {}),
         "reason": runtime.get("reason", ""),
     }

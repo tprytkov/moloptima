@@ -138,22 +138,34 @@ Single-compound analysis reports compound-level properties, predictions, optiona
 
 ## 9. Receptor & Docking
 
-### Receptor workflow
+### Preparing a Receptor for Docking
 
-1. Select and upload a receptor PDB for visualization and preparation. Advanced users may instead attach an already prepared PDBQT, which is preserved unchanged and validated.
-2. For a PDB, inspect detected protein chains, waters, hetero groups, and alternate locations.
-3. Select at least one chain. MolOptima removes all detected waters in the current preparation workflow. Explicitly choose **Keep** or **Exclude** for every hetero group and select each alternate-location conformer.
-4. Select **Prepare Receptor**. MolOptima uses Meeko/RDKit residue templates to produce and validate a rigid PDBQT receptor. It does not repair missing residues, optimize hydrogens with Reduce2, or determine a biologically correct pH-dependent protonation state.
-5. Confirm that **Prepared receptor PDBQT** is ready.
+1. Select and upload a receptor PDB. Inspect the detected protein chains, waters, hetero groups, and alternate locations.
+2. Explicitly choose **Use a bound reference ligand** or **Enter docking box coordinates manually**.
+3. Select at least one protein chain, choose **Keep** or **Exclude** for every hetero group, and resolve each alternate-location choice. Waters are removed and recorded.
+4. Inspect the receptor and translucent search box together, then select **Prepare Receptor**.
+5. MolOptima removes any explicitly selected reference-ligand copies, repairs the protein, validates that repair, reassembles retained hetero groups, runs Meeko, validates the result, and saves the PDBQT.
+6. Confirm that **Prepared receptor PDBQT** is ready. The saved receptor is reused for docking; it is not regenerated for every ligand.
 
-The receptor viewer displays the loaded structure and the translucent Vina search box. The available binding-site center methods are:
+In **Use a bound reference ligand** mode, select the ligand by residue name, chain, residue number, and atom count. If symmetry-related copies exist, explicitly select the complete removal set. MolOptima calculates the starting box from the selected copy's heavy-atom limits:
 
-- **Bound ligand** — use the centroid of a detected non-water ligand;
-- **Selected residue region** — use the centroid of residues selected in the viewer;
-- **Selected atom** — use a clicked atom's coordinates; and
-- **Manual coordinates** — enter the X, Y, and Z center directly.
+`center X = (x min + x max) / 2`
 
-Enter positive X, Y, and Z box dimensions in ångströms. Region and ligand selections can also be fitted with explicit padding. The docking search box defines the region searched by Vina. It is not itself a physical binding-pocket definition.
+`box size X = (x max - x min) + 2 × padding`
+
+The same calculation applies to Y and Z. The default padding is 4 Å, meaning 4 Å on each side and 8 Å total added to an axis span. Changing padding recalculates from the original ligand coordinates. All six center and size values remain editable, and **Reset ligand box (4 Å)** restores the ligand-derived starting values. The selected ligand defines a starting search region; it does not prove that the pocket or dimensions are biologically optimal.
+
+For the qualified 9IIR example, the reference is chain A, YLI 601, with all five YLI 601 copies in chains A–E selected for removal. At 4.0 Å padding the initial center is X 135.2005, Y 144.1640, Z 140.0455, and the initial size is X 13.593 Å, Y 12.854 Å, Z 21.093 Å. These values are specific to that structure and remain editable.
+
+In **Enter docking box coordinates manually** mode, enter center X/Y/Z and positive size X/Y/Z values. Centers may be zero or negative. The center controls search-region location, while size controls its extent. A box that is too small can exclude relevant poses; an unnecessarily large box increases search space and computational cost. No ligand is automatically removed in manual mode. The box is stored separately from the receptor, so box-only edits do not rerun receptor preparation.
+
+MolOptima checks the protein for missing heavy atoms. Under the versioned conservative policy, PDBFixer reconstructs supported missing side-chain heavy atoms in existing standard residues from computational templates. MolOptima does not automatically rebuild missing loops or whole residues, add terminal atoms, replace nonstandard residues, add solvent or membrane, add repair-stage hydrogens, or minimize the receptor. Missing residue blocks or missing backbone atoms stop preparation for review. Added atoms are computational reconstructions, not experimentally observed coordinates.
+
+The immutable artifact sequence is: original receptor → ligand-removed receptor when applicable → protein before repair → repaired protein/reassembled receptor → Meeko input → saved PDBQT. The original upload is never overwritten. Provenance records ligand coordinates and removal scope, repair additions, observed-atom displacement, clashes, hetero-group decisions, tool versions, hashes, and the final PDBQT identity.
+
+The downstream Meeko/RDKit stage completes the AutoDock/Vina representation. It does not optimize hydrogens with Reduce2 or establish biologically correct pH-dependent protonation. A prepared receptor and its docking box are reproducible computational inputs, not experimental validation.
+
+The receptor viewer displays the loaded structure and translucent Vina search box. Enter positive X, Y, and Z dimensions in ångströms. Blank or invalid fields cannot produce a valid configuration.
 
 Advanced Vina settings include exhaustiveness, worker count, number of modes, energy range, and random seed. After the receptor, center, and positive dimensions are ready, select **Confirm Docking Setup** and run docking from the workflow page.
 
@@ -340,7 +352,7 @@ The installed release is designed to use its bundled runtimes. Ordinary users sh
 - Vina score is not experimental binding free energy.
 - Model applicability depends on the molecule's similarity and relevance to each model's training domain.
 - Ensemble dispersion is uncertainty/context, not experimental confidence.
-- Receptor preparation does not establish the biologically correct protonation state or repair missing structure.
+- Receptor preparation does not establish the biologically correct protonation state; it repairs only supported missing side-chain heavy atoms and does not rebuild missing loops or whole residues.
 - Public identity, bioactivity, and patent-context data can be incomplete or unavailable.
 - Predictions should be confirmed experimentally where appropriate.
 - MolOptima prioritization is decision support, not a final experimental determination.

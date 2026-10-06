@@ -123,6 +123,7 @@ Model and native-tool behavior:
 - `MOLOPTIMA_ADMET_RELEASE_ROOT` — first-priority frozen ADMET model-release root.
 - `MOLOPTIMA_GMC_PYTHON`, `MOLOPTIMA_GMC_RUNNER` — GMC-MPNN family overrides.
 - `MOLOPTIMA_CHEMPROP_PYTHON`, `MOLOPTIMA_CHEMPROP_RUNNER` — Chemprop family overrides.
+- `MOLOPTIMA_RECEPTOR_REPAIR_PYTHON` — isolated PDBFixer 1.12.0/OpenMM 8.6.1 interpreter used by conservative receptor repair.
 - `MOLOPTIMA_BBB_MODEL_CACHE` — cache-root override for the legacy Hugging Face BBB cache diagnostics.
 - `MOLOPTIMA_ALLOW_MODEL_DOWNLOAD=1` — explicitly permits download for that legacy cache path; normal loading is otherwise offline/fail-closed.
 - `MOLOPTIMA_VINA_PATH` — Vina executable override; `MOLOPTIMA_VINA_EXECUTABLE` is the compatibility alias.

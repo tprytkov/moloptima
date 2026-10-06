@@ -19,10 +19,13 @@ from molecular_prioritization.receptor import (
     validate_receptor_pdb,
 )
 from molecular_prioritization.receptor_preparation import (
+    GEMMI_VERSION,
+    MEEKO_VERSION,
     ReceptorPreparationError,
     prepare_receptor,
     receptor_preparation_runtime_status,
 )
+from molecular_prioritization.receptor_repair import OPENMM_VERSION, PDBFIXER_VERSION
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -164,6 +167,26 @@ def prepare_stored_receptor(receptor_id: str, values: dict[str, object]) -> dict
     original_path = (resource_dir / str(original_relative)).resolve()
     if resource_dir not in original_path.parents or not original_path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored source PDB is missing.")
+    signature_payload = {
+        "source_receptor_sha256": metadata.get("source_receptor_sha256"),
+        "selected_chains": sorted(values.get("selected_chains") or []),
+        "water_policy": values.get("water_policy"),
+        "hetero_choices": dict(sorted(dict(values.get("hetero_choices") or {}).items())),
+        "altloc_choices": dict(sorted(dict(values.get("altloc_choices") or {}).items())),
+        "pocket_definition_method": values.get("pocket_definition_method"),
+        "reference_ligand_id": values.get("reference_ligand_id") or values.get("bound_ligand_id"),
+        "ligand_removal_ids": sorted(values.get("ligand_removal_ids") or []),
+        "repair_policy": "side_chain_heavy_atoms_only_no_missing_residues_no_terminals",
+        "tool_versions": {"pdbfixer": PDBFIXER_VERSION, "openmm": OPENMM_VERSION, "meeko": MEEKO_VERSION, "gemmi": GEMMI_VERSION},
+    }
+    preparation_signature = hashlib.sha256(json.dumps(signature_payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if metadata.get("preparation_signature") == preparation_signature and metadata.get("prepared_pdbqt"):
+        try:
+            prepared_receptor_path(receptor_id)
+            metadata["preparation_reused"] = True
+            return metadata
+        except HTTPException:
+            pass
     preparation_id = uuid4().hex
     output_dir = resource_dir / "preparations" / preparation_id / "receptor"
     try:
@@ -177,6 +200,10 @@ def prepare_stored_receptor(receptor_id: str, values: dict[str, object]) -> dict
             hetero_choices=dict(values.get("hetero_choices") or {}),
             altloc_choices=dict(values.get("altloc_choices") or {}),
             bound_ligand_id=str(values.get("bound_ligand_id") or ""),
+            pocket_definition_method=str(values.get("pocket_definition_method") or ""),
+            reference_ligand_id=str(values.get("reference_ligand_id") or values.get("bound_ligand_id") or ""),
+            ligand_removal_ids=list(values.get("ligand_removal_ids") or []),
+            pocket_config=dict(values.get("pocket_box") or {}),
         )
     except (ReceptorPreparationError, OSError, ValueError) as exc:
         metadata.update({
@@ -194,10 +221,12 @@ def prepare_stored_receptor(receptor_id: str, values: dict[str, object]) -> dict
         "docking_receptor_sha256": artifact.prepared_receptor_sha256,
         "docking_size_bytes": artifact.size_bytes,
         "preparation_id": preparation_id,
+        "preparation_signature": preparation_signature,
+        "preparation_reused": False,
         "preparation_status": "valid",
         "preparation_error": None,
-        "preparation_method": "moloptima_meeko_rigid",
-        "preparation_tool": "Meeko",
+        "preparation_method": "moloptima_pdbfixer_conservative_meeko_rigid",
+        "preparation_tool": "PDBFixer/OpenMM + Meeko",
         "preparation_tool_version": provenance["meeko_version"],
         "preparation_warnings": provenance["warnings"],
         "preparation_provenance": _relative_to_resource(resource_dir, result["provenance_file"]),
@@ -286,17 +315,26 @@ def save_configuration(values: dict[str, object]) -> dict[str, object]:
     config_values = dict(values)
     method = str(config_values.pop("center_method", "manual")).strip()
     selected_ligand_id = str(config_values.pop("selected_ligand_id", "") or "").strip()
-    if method == "bound_ligand" and selected_ligand_id:
+    if method in {"bound_ligand", "reference_ligand"} and selected_ligand_id:
         ligand = next(
             (item for item in metadata.get("bound_ligands", []) if item.get("ligand_id") == selected_ligand_id),
             None,
         )
         if ligand is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Selected bound ligand was not found.")
+        default_box = ligand.get("default_box", {})
         centroid = ligand["centroid"]
         for name in ("center_x", "center_y", "center_z"):
             if config_values.get(name) is None:
-                config_values[name] = centroid[name]
+                config_values[name] = default_box.get(name, centroid[name])
+        padding = config_values.pop("padding", None)
+        if padding is not None:
+            bounds = ligand.get("heavy_atom_bounds", {})
+            for axis in ("x", "y", "z"):
+                if bounds:
+                    config_values[f"size_{axis}"] = float(bounds[f"max_{axis}"]) - float(bounds[f"min_{axis}"]) + 2 * float(padding)
+    else:
+        config_values.pop("padding", None)
     try:
         config = VinaBoxConfig.from_mapping(config_values)
     except ReceptorValidationError as exc:

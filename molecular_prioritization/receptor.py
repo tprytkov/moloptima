@@ -153,6 +153,12 @@ class BoundLigand:
     center_x: float
     center_y: float
     center_z: float
+    min_x: float
+    min_y: float
+    min_z: float
+    max_x: float
+    max_y: float
+    max_z: float
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -166,6 +172,19 @@ class BoundLigand:
                 "center_x": self.center_x,
                 "center_y": self.center_y,
                 "center_z": self.center_z,
+            },
+            "heavy_atom_bounds": {
+                "min_x": self.min_x, "min_y": self.min_y, "min_z": self.min_z,
+                "max_x": self.max_x, "max_y": self.max_y, "max_z": self.max_z,
+            },
+            "default_box": {
+                "center_x": (self.min_x + self.max_x) / 2,
+                "center_y": (self.min_y + self.max_y) / 2,
+                "center_z": (self.min_z + self.max_z) / 2,
+                "size_x": self.max_x - self.min_x + 8.0,
+                "size_y": self.max_y - self.min_y + 8.0,
+                "size_z": self.max_z - self.min_z + 8.0,
+                "padding": 4.0,
             },
         }
 
@@ -371,6 +390,9 @@ def identify_bound_ligands(atoms: Iterable[ReceptorAtom]) -> list[BoundLigand]:
         ):
             continue
         ligand_id = ":".join((residue_name, chain or "_", residue_number or "_", insertion_code or "_"))
+        heavy = [atom for atom in group if atom.element not in {"H", "D"}]
+        if not heavy:
+            continue
         atom_count = len(group)
         ligands.append(BoundLigand(
             ligand_id=ligand_id, residue_name=residue_name, chain=chain,
@@ -379,6 +401,8 @@ def identify_bound_ligands(atoms: Iterable[ReceptorAtom]) -> list[BoundLigand]:
             center_x=sum(atom.x for atom in group) / atom_count,
             center_y=sum(atom.y for atom in group) / atom_count,
             center_z=sum(atom.z for atom in group) / atom_count,
+            min_x=min(atom.x for atom in heavy), min_y=min(atom.y for atom in heavy), min_z=min(atom.z for atom in heavy),
+            max_x=max(atom.x for atom in heavy), max_y=max(atom.y for atom in heavy), max_z=max(atom.z for atom in heavy),
         ))
     return ligands
 

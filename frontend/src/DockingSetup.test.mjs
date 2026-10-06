@@ -26,11 +26,9 @@ test('renders the professional receptor upload and explicit box workflow', () =>
   assert.match(html, /final PDBQT retains the explicit polar\/donor hydrogens/i);
   assert.match(html, /nonpolar hydrogens are not retained as independent docking atoms/);
   assert.match(html, /Upload a PDB to display chains, waters, hetero groups, and alternate locations/);
-  assert.match(html, /Binding-site definition/);
-  assert.match(html, /Bound ligand/);
-  assert.match(html, /Selected atom/);
-  assert.match(html, /Selected residue region/);
-  assert.match(html, /Manual coordinates/);
+  assert.match(html, /How do you want to define the docking pocket\?/);
+  assert.match(html, /Use a bound reference ligand/);
+  assert.match(html, /Enter docking box coordinates manually/);
   assert.match(html, /Center X/);
   assert.match(html, /Size X/);
   assert.match(html, /updates immediately/);
@@ -281,7 +279,7 @@ test('different receptor clears box, selections, highlights, and receptor prepar
   assert.deepEqual(next.box, {
     centerX: '', centerY: '', centerZ: '', sizeX: '', sizeY: '', sizeZ: '',
   });
-  assert.equal(next.method, 'manual');
+  assert.equal(next.method, '');
   assert.equal(next.selectedAtom, null);
   assert.deepEqual(next.selectedResidues, []);
   assert.equal(next.selectedLigandId, '');
@@ -302,10 +300,10 @@ test('same receptor preparation preserves one authoritative box and clears unmap
   const current = populatedReceptorState();
   const next = module.transitionReceptorScopedState(current, source, prepared);
   assert.deepEqual(next.box, current.box);
-  assert.equal(next.method, 'manual');
+  assert.equal(next.method, 'selected_region');
   assert.equal(next.selectedAtom, null);
   assert.deepEqual(next.selectedResidues, []);
-  assert.equal(next.selectedLigandId, '');
+  assert.equal(next.selectedLigandId, 'LIG:A:401:_');
   assert.deepEqual(next.selectedChains, current.selectedChains);
   assert.deepEqual(next.heteroChoices, current.heteroChoices);
   assert.deepEqual(next.altlocChoices, current.altlocChoices);

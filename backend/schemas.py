@@ -324,6 +324,10 @@ class ReceptorPreparationRequest(BaseModel):
     hetero_choices: dict[str, bool] = Field(default_factory=dict)
     altloc_choices: dict[str, str] = Field(default_factory=dict)
     bound_ligand_id: str = Field(default="", max_length=200)
+    pocket_definition_method: Literal["reference_ligand", "manual"] | None = None
+    reference_ligand_id: str = Field(default="", max_length=200)
+    ligand_removal_ids: list[str] = Field(default_factory=list, max_length=100)
+    pocket_box: dict[str, float] | None = None
 
 
 class ReceptorPreparationRuntimeResponse(BaseModel):
@@ -339,7 +343,8 @@ class ReceptorPreparationRuntimeResponse(BaseModel):
 
 class DockingConfigurationRequest(BaseModel):
     receptor_id: str = Field(..., min_length=32, max_length=32)
-    center_method: Literal["bound_ligand", "atom_or_residue", "manual"]
+    center_method: Literal["reference_ligand", "bound_ligand", "atom_or_residue", "manual"]
+    padding: float | None = Field(default=None, ge=0, le=50, allow_inf_nan=False)
     selected_ligand_id: str = ""
     center_x: float | None = None
     center_y: float | None = None

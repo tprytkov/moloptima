@@ -21,6 +21,7 @@ export const RECEPTOR_STATE_POLICY = Object.freeze({
   heteroChoices: 'clear on receptor ID change; preserve for same-receptor artifact change',
   altlocChoices: 'clear on receptor ID change; preserve for same-receptor artifact change',
   pocketGroupId: 'clear on receptor ID change; preserve for same-receptor artifact change',
+  ligandRemovalIds: 'clear on receptor ID change; preserve for same-receptor artifact change',
   confirmed: 'clear whenever receptor metadata is refreshed',
 });
 
@@ -44,9 +45,9 @@ export function classifyReceptorTransition(previousReceptor, nextReceptor) {
 
 export function createReceptorScopedState(overrides = {}) {
   return {
-    method: 'manual', selectedAtom: null, selectedResidues: [], selectedLigandId: '',
+    method: '', selectedAtom: null, selectedResidues: [], selectedLigandId: '',
     box: { ...EMPTY_BOX }, confirmed: null, selectedChains: [], heteroChoices: {},
-    altlocChoices: {}, pocketGroupId: '', ...overrides,
+    altlocChoices: {}, pocketGroupId: '', ligandRemovalIds: [], ...overrides,
   };
 }
 
@@ -90,10 +91,8 @@ export function transitionReceptorScopedState(current, previousReceptor, nextRec
   if (transition.artifactChanged) {
     return {
       ...current,
-      method: 'manual',
       selectedAtom: null,
       selectedResidues: [],
-      selectedLigandId: '',
       heteroChoices,
       confirmed: null,
     };
@@ -185,13 +184,25 @@ export async function fetchReceptorStructure(apiBaseUrl, receptor, signal) {
   return { text: await response.text(), format, identity };
 }
 
-export function preparationPayload(selectedChains, heteroChoices, altlocChoices, pocketGroupId = '') {
-  return {
+export function preparationPayload(selectedChains, heteroChoices, altlocChoices, pocketGroupId = '', method = 'manual', ligandRemovalIds = [], box = EMPTY_BOX, padding = '4') {
+  const base = {
     selected_chains: selectedChains,
     water_policy: 'remove_all',
     hetero_choices: Object.fromEntries(Object.entries(heteroChoices).map(([key, value]) => [key, value === 'keep'])),
     altloc_choices: altlocChoices,
     bound_ligand_id: pocketGroupId,
+  };
+  if (arguments.length <= 4) return base;
+  return {
+    ...base,
+    pocket_definition_method: method === 'reference_ligand' ? 'reference_ligand' : 'manual',
+    reference_ligand_id: method === 'reference_ligand' ? pocketGroupId : '',
+    ligand_removal_ids: ligandRemovalIds,
+    pocket_box: {
+      center_x: numericOrNull(box.centerX), center_y: numericOrNull(box.centerY), center_z: numericOrNull(box.centerZ),
+      size_x: numericOrNull(box.sizeX), size_y: numericOrNull(box.sizeY), size_z: numericOrNull(box.sizeZ),
+      ...(method === 'reference_ligand' ? { padding: numericOrNull(padding) } : {}),
+    },
   };
 }
 
@@ -288,7 +299,8 @@ export function configurationPayload(receptorId, method, selectedLigandId, box, 
   const centerMethod = ['selected_atom', 'selected_region'].includes(method) ? 'atom_or_residue' : method;
   return {
     receptor_id: receptorId, center_method: centerMethod,
-    selected_ligand_id: method === 'bound_ligand' ? selectedLigandId : '',
+    selected_ligand_id: ['bound_ligand', 'reference_ligand'].includes(method) ? selectedLigandId : '',
+    ...(['bound_ligand', 'reference_ligand'].includes(method) ? { padding: numericOrNull(advanced.padding) } : {}),
     center_x: numericOrNull(box.centerX), center_y: numericOrNull(box.centerY), center_z: numericOrNull(box.centerZ),
     size_x: numericOrNull(box.sizeX), size_y: numericOrNull(box.sizeY), size_z: numericOrNull(box.sizeZ),
     exhaustiveness: numericOrNull(advanced.exhaustiveness), num_modes: numericOrNull(advanced.numModes),
@@ -316,7 +328,7 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
   const [receptorState, setReceptorState] = useState(() => createReceptorScopedState());
   const {
     method, selectedAtom, selectedResidues, selectedLigandId, box, confirmed,
-    selectedChains, heteroChoices, altlocChoices, pocketGroupId,
+    selectedChains, heteroChoices, altlocChoices, pocketGroupId, ligandRemovalIds,
   } = receptorState;
   const setReceptorField = (field, value) => setReceptorState((current) => ({
     ...current,
@@ -331,6 +343,7 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
   const setSelectedChains = (value) => setReceptorField('selectedChains', value);
   const setAltlocChoices = (value) => setReceptorField('altlocChoices', value);
   const setPocketGroupId = (value) => setReceptorField('pocketGroupId', value);
+  const setLigandRemovalIds = (value) => setReceptorField('ligandRemovalIds', value);
   const viewerRef = useRef(null);
   const receptorRef = useRef(null);
   const requestGuardRef = useRef(null);
@@ -376,6 +389,9 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
   const boundLigands = receptor?.bound_ligands ?? [];
   const inventory = receptor?.structure_inventory ?? null;
   const selectedLigand = selectedLigandForId(boundLigands, selectedLigandId);
+  const matchingLigands = selectedLigand
+    ? boundLigands.filter((ligand) => ligand.residue_name === selectedLigand.residue_name && ligand.residue_number === selectedLigand.residue_number)
+    : [];
   const selectedRegionAtoms = useMemo(() => {
     const viewer = viewerRef.current;
     if (!viewer) return [];
@@ -384,7 +400,10 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
   const readiness = dockingReadiness(receptor, box);
   const searchSpace = searchSpacePresentation(box);
   const ready = Object.values(readiness).every(Boolean);
-  const preparationReady = preparationSelectionReady(inventory, selectedChains, heteroChoices, altlocChoices);
+  const preparationReady = preparationSelectionReady(inventory, selectedChains, heteroChoices, altlocChoices)
+    && searchSpace.status === 'valid'
+    && ['reference_ligand', 'manual'].includes(method)
+    && (method !== 'reference_ligand' || (pocketGroupId && ligandRemovalIds.includes(pocketGroupId)));
 
   function setCenter(coordinates) {
     if (!coordinates) return;
@@ -400,7 +419,13 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
 
   function selectLigand(ligand) {
     setSelectedLigandId(ligand.ligand_id);
-    setBox((current) => ({ ...current, ...ligandCentroid(ligand) }));
+    setPocketGroupId(ligand.ligand_id);
+    setLigandRemovalIds((current) => current.includes(ligand.ligand_id) ? current : [...current, ligand.ligand_id]);
+    const defaults = ligand.default_box;
+    setBox(defaults ? {
+      centerX: formatBoxInput(defaults.center_x), centerY: formatBoxInput(defaults.center_y), centerZ: formatBoxInput(defaults.center_z),
+      sizeX: formatBoxInput(defaults.size_x), sizeY: formatBoxInput(defaults.size_y), sizeZ: formatBoxInput(defaults.size_z),
+    } : (current) => ({ ...current, ...ligandCentroid(ligand) }));
   }
 
   function fitSelection(atoms) {
@@ -441,7 +466,7 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
       const metadata = await prepareDockingReceptor(
         apiBaseUrl,
         receptor.receptor_id,
-        preparationPayload(selectedChains, heteroChoices, altlocChoices, pocketGroupId),
+        preparationPayload(selectedChains, heteroChoices, altlocChoices, pocketGroupId, method, ligandRemovalIds, box, padding),
         request.signal,
       );
       if (!request.isCurrent()) return;
@@ -457,7 +482,7 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
     if (!ready) { setError('Docking setup is not ready. A prepared PDBQT, finite center, and positive box dimensions are required.'); return; }
     setLoading(true); setError('');
     try {
-      const configuration = await submitDockingConfiguration(apiBaseUrl, configurationPayload(receptor.receptor_id, method, selectedLigandId, box, advanced));
+      const configuration = await submitDockingConfiguration(apiBaseUrl, configurationPayload(receptor.receptor_id, method, selectedLigandId, box, { ...advanced, padding }));
       setConfirmed(configuration); onConfirmed?.({ receptor, configuration });
     } catch (configurationError) { setError(configurationError.message ?? String(configurationError)); }
     finally { setLoading(false); }
@@ -467,7 +492,7 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
     <Box component="section" aria-label="Docking setup" sx={{ width: '100%', p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1, bgcolor: 'background.paper' }}>
       <Stack spacing={1.5}>
         <Box><Typography variant="h2">Receptor workspace</Typography><Typography variant="caption" color="text.secondary">
-          PDB is retained for visualization and scientific selection. MolOptima can generate a rigid docking receptor with Meeko; it does not repair missing residues or determine biologically correct protonation.
+          PDB is retained for visualization and scientific selection. MolOptima performs conservative side-chain repair before generating a rigid Meeko/Vina receptor.
         </Typography></Box>
         <Box>
           <Button aria-label="Select PDB for visualization" variant="outlined" component="label" startIcon={<UploadFileOutlinedIcon />}>Select PDB for visualization<input hidden type="file" accept=".pdb" onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)} /></Button>
@@ -490,8 +515,9 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
               Structure: {receptor?.original_filename ?? 'Load a PDB to inspect preparation choices'}
             </Typography></Box>
             <Alert severity={preparationRuntime?.available ? 'success' : 'warning'}>
-              Receptor preparation runtime: {preparationRuntime?.available ? `Meeko ${preparationRuntime.version} available` : (preparationRuntime?.reason || 'checking availability')}. Hydrogen optimization and pH-dependent protonation are not performed.
+              Receptor preparation runtime: {preparationRuntime?.available ? `PDBFixer/OpenMM + Meeko ${preparationRuntime.version} available` : (preparationRuntime?.reason || 'checking availability')}. Missing residues, terminal completion, hydrogen optimization, and pH-dependent protonation are not performed.
             </Alert>
+            <Typography variant="caption">Hydrogen optimization and pH-dependent protonation are not performed.</Typography>
             <Typography variant="body2">MolOptima uses Meeko to prepare the AutoDock/Vina receptor representation. The final PDBQT retains the explicit polar/donor hydrogens required by the AutoDock atom representation; nonpolar hydrogens are not retained as independent docking atoms.</Typography>
             {inventory ? <>
               <Box><Typography variant="subtitle2">Protein chains</Typography><Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
@@ -522,12 +548,16 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
                 <Typography variant="body2">Retained hetero groups: {summarizeHetero(inventory.hetero_groups, heteroChoices, 'keep')}</Typography>
                 <Typography variant="body2">Excluded hetero groups: {summarizeHetero(inventory.hetero_groups, heteroChoices, 'exclude')}</Typography>
                 <Typography variant="body2">Pocket-definition group: {pocketGroupId || 'none selected'}</Typography>
+                <Typography variant="body2">Ligand copies removed before repair: {ligandRemovalIds.length ? ligandRemovalIds.join(', ') : 'none'}</Typography>
+                <Typography variant="body2">Repair policy: missing side-chain heavy atoms only; stop on missing backbone or residue blocks</Typography>
                 <Typography variant="body2">Hydrogen handling: Meeko/RDKit residue-template completion; no Reduce2 optimization or resolved pH policy</Typography>
                 <Typography variant="body2">Receptor preparation: Meeko {preparationRuntime?.version ?? 'unavailable'}</Typography>
               </Box>
               <Button variant="contained" disabled={!preparationRuntime?.available || !preparationReady || preparing} onClick={handlePrepare}>{preparing ? 'Preparing receptor…' : 'Prepare Receptor'}</Button>
               {!preparationReady ? <Typography variant="caption" color="warning.main">Select at least one protein chain and complete every hetero/alternate-location choice.</Typography> : null}
-              {receptor.preparation_status === 'valid' && receptor.receptor_source === 'moloptima_prepared' ? <Alert severity="success">Prepared docking receptor: valid · existing MolOptima PDBQT validator passed · original visualization and binding-site selections retained.</Alert> : null}
+              {receptor.preparation_status === 'valid' && receptor.receptor_source === 'moloptima_prepared' ? <Alert severity="success">
+                Prepared receptor: ready for docking · PDBQT saved · SHA-256 {receptor.docking_receptor_sha256?.slice(0, 12)}… · Meeko {receptor.preparation_details?.meeko_version}. Repair PASS: {receptor.preparation_details?.repair_audit?.added_atom_count ?? 0} heavy atoms added across {receptor.preparation_details?.repair_validation?.repaired_residue_count ?? 0} residues; max observed-atom displacement {Number(receptor.preparation_details?.repair_validation?.coordinate_preservation?.maximum_displacement_A ?? 0).toFixed(3)} Å; severe clashes {receptor.preparation_details?.repair_validation?.severe_clash_count ?? 0}. This PDBQT is reused for docking.
+              </Alert> : null}
             </> : <Typography variant="body2" color="text.secondary">Upload a PDB to display chains, waters, hetero groups, and alternate locations.</Typography>}
           </Stack>
         </Box>
@@ -574,17 +604,15 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
           </Stack>
         </Box>
 
-        <FormControl><FormLabel>Binding-site definition</FormLabel><RadioGroup row value={method} onChange={(event) => setMethod(event.target.value)}>
-          <FormControlLabel value="bound_ligand" control={<Radio />} label="Bound ligand" disabled={!boundLigands.length} />
-          <FormControlLabel value="selected_atom" control={<Radio />} label="Selected atom" disabled={!selectedAtom} />
-          <FormControlLabel value="selected_region" control={<Radio />} label="Selected residue region" disabled={!selectedResidues.length} />
-          <FormControlLabel value="manual" control={<Radio />} label="Manual coordinates" />
+        <FormControl><FormLabel>How do you want to define the docking pocket?</FormLabel><RadioGroup row value={method} onChange={(event) => setMethod(event.target.value)}>
+          <FormControlLabel value="reference_ligand" control={<Radio />} label="Use a bound reference ligand" disabled={!boundLigands.length} />
+          <FormControlLabel value="manual" control={<Radio />} label="Enter docking box coordinates manually" />
         </RadioGroup></FormControl>
 
         {boundLigands.length ? <TextField select label="Detected bound ligand" value={selectedLigandId} onChange={(event) => {
           const ligand = selectedLigandForId(boundLigands, event.target.value);
           if (!ligand) { setSelectedLigandId(''); return; }
-          setMethod('bound_ligand'); selectLigand(ligand);
+          setMethod('reference_ligand'); selectLigand(ligand);
         }}><MenuItem value=""><em>Select a ligand</em></MenuItem>{boundLigands.map((ligand) => <MenuItem key={ligand.ligand_id} value={ligand.ligand_id}>{ligand.residue_name} {ligand.chain || '–'} {ligand.residue_number} ({ligand.atom_count} atoms)</MenuItem>)}</TextField>
           : <Alert severity="info">No plausible non-water bound ligand was identified. Bound-ligand mode is unavailable.</Alert>}
 
@@ -593,7 +621,11 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
           <Button variant="outlined" disabled={!selectedRegionAtoms.length} onClick={() => { setMethod('selected_region'); setCenter(centroidForAtoms(selectedRegionAtoms)); }}>Use region centroid</Button>
           <Button variant="outlined" disabled={!selectedRegionAtoms.length} onClick={() => fitSelection(selectedRegionAtoms)}>Fit box to region + padding</Button>
           <Button variant="outlined" disabled={!selectedLigand} onClick={() => fitSelection(ligandAtoms())}>Fit box to ligand + padding</Button>
+          <Button variant="text" disabled={!selectedLigand} onClick={() => { selectLigand(selectedLigand); setPadding('4'); }}>Reset ligand box (4 Å)</Button>
         </Stack>
+        {boundLigands.length ? <Box><Typography variant="subtitle2">Ligand copies to remove before protein repair</Typography>
+          {selectedLigand ? <Stack direction="row" spacing={1} sx={{ my: 0.5 }}><Button size="small" variant="outlined" onClick={() => setLigandRemovalIds([selectedLigand.ligand_id])}>Remove selected copy only</Button><Button size="small" variant="outlined" onClick={() => setLigandRemovalIds(matchingLigands.map((ligand) => ligand.ligand_id))}>Remove all {matchingLigands.length} matching copies</Button></Stack> : null}
+          <Stack direction="row" useFlexGap flexWrap="wrap">{boundLigands.map((ligand) => <FormControlLabel key={ligand.ligand_id} control={<Checkbox checked={ligandRemovalIds.includes(ligand.ligand_id)} onChange={(event) => setLigandRemovalIds((current) => event.target.checked ? [...new Set([...current, ligand.ligand_id])] : current.filter((id) => id !== ligand.ligand_id))} />} label={ligand.ligand_id} />)}</Stack></Box> : null}
 
         <Typography variant="h2">Vina Search Box</Typography>
         <NumericGrid title="Center (Å)" values={box} setValues={setBox} fields={[["centerX", "Center X"], ["centerY", "Center Y"], ["centerZ", "Center Z"]]} />
@@ -638,6 +670,7 @@ function numericOrNull(value) {
   const numeric = Number(value); return Number.isFinite(numeric) ? numeric : null;
 }
 function formatCoordinate(value) { return Number(value).toFixed(3).replace(/\.000$/, ''); }
+function formatBoxInput(value) { return Number(value).toFixed(4).replace(/0+$/, '').replace(/\.$/, ''); }
 export function summarizeHetero(groups = [], choices = {}, action) {
   const selected = groups.filter((group) => choices[group.group_id] === action);
   return selected.length
