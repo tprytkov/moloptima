@@ -158,6 +158,29 @@ def test_structure_endpoint_handles_missing_smiles_safely():
     assert response.status_code == 422
 
 
+def test_structure_3d_endpoint_returns_deterministic_display_conformer():
+    client = TestClient(app)
+
+    first = client.get("/api/molecules/structure-3d", params={"smiles": "CCO"})
+    second = client.get("/api/molecules/structure-3d", params={"smiles": "CCO"})
+
+    assert first.status_code == 200
+    assert first.headers["content-type"].startswith("chemical/x-mdl-sdfile")
+    assert first.headers["cache-control"] == "public, max-age=86400"
+    assert "MolOptima display conformer" in first.text
+    assert "3D" in first.text.splitlines()[1]
+    assert first.text == second.text
+
+
+def test_structure_3d_endpoint_rejects_invalid_smiles():
+    client = TestClient(app)
+
+    response = client.get("/api/molecules/structure-3d", params={"smiles": "not-a-smiles"})
+
+    assert response.status_code == 422
+    assert "Invalid or unavailable structure" in response.json()["detail"]
+
+
 def test_chemical_space_endpoints_use_existing_import_collection(tmp_path, monkeypatch):
     configure_temp_job_storage(tmp_path, monkeypatch)
     upload_id = "a" * 32

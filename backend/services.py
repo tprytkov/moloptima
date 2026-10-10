@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException, UploadFile, status
 from rdkit import Chem
-from rdkit.Chem import rdDepictor
+from rdkit.Chem import AllChem, rdDepictor
 from rdkit.Chem.Draw import rdMolDraw2D
 
 from molecular_prioritization import model_sources, runtime_qualification
@@ -1178,6 +1178,40 @@ def render_molecule_structure_svg(smiles: str, width: int = 280, height: int = 2
     drawer.DrawMolecule(molecule)
     drawer.FinishDrawing()
     return drawer.GetDrawingText()
+
+
+@lru_cache(maxsize=512)
+def render_molecule_structure_3d_sdf(smiles: str) -> str:
+    """Generate a deterministic display-only 3D conformer for a compact viewer."""
+
+    clean_smiles = (smiles or "").strip()
+    if not clean_smiles:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="SMILES is required for 3D structure rendering.",
+        )
+    molecule = Chem.MolFromSmiles(clean_smiles)
+    if molecule is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid or unavailable structure for 3D rendering.",
+        )
+
+    molecule = Chem.AddHs(molecule)
+    parameters = AllChem.ETKDGv3()
+    parameters.randomSeed = 0xF00D
+    if AllChem.EmbedMolecule(molecule, parameters) != 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="A display-only 3D conformer could not be generated for this structure.",
+        )
+    try:
+        AllChem.UFFOptimizeMolecule(molecule, maxIters=100)
+    except Exception:
+        pass
+    display_molecule = Chem.RemoveHs(molecule)
+    display_molecule.SetProp("_Name", "MolOptima display conformer")
+    return Chem.MolToMolBlock(display_molecule)
 
 
 def export_candidates_sdf(candidates: list[dict[str, object]]) -> dict[str, object]:

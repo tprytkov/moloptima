@@ -59,8 +59,41 @@ test('single-compound summary reports counts, preview provenance, and mode', () 
   assert.match(html, /Single Compound Analysis/);
   assert.match(html, /1 valid compound loaded/);
   assert.match(html, /canonical_smiles/);
+  assert.match(html, />Structure</);
+  assert.match(html, /aria-label="3D structure preview for ethanol"/);
+  assert.doesNotMatch(html, />warnings</i);
   assert.match(html, /ethanol\.sdf/);
   assert.doesNotMatch(html, /[A-Za-z]:\\Users\\/);
+});
+
+test('preview replaces warning text with a keyboard-reachable warning tooltip control', () => {
+  const warning = 'Original coordinates are preserved as provenance.';
+  const html = render({
+    filename: 'ethanol.sdf', submitted_count: 1, valid_count: 1, invalid_count: 0,
+    unresolved_pdb_count: 0, duplicate_count: 0, ignored_file_count: 0,
+    multi_record_sdf_count: 0, analysis_mode: 'single_compound',
+    preview: [{
+      molecule_id: 'ethanol', source_type: 'sdf', source_filename: 'ethanol.sdf',
+      canonical_smiles: 'CCO', structure_status: 'validated', coordinate_status: '3d',
+      warnings: [warning], failure_reason: '',
+    }],
+  });
+
+  assert.match(html, new RegExp(`aria-label="Import warning for ethanol: ${warning}`));
+  assert.match(html, /<button[^>]*aria-label="Import warning for ethanol:/);
+  assert.doesNotMatch(html, /<th[^>]*>warnings<\/th>/i);
+  assert.equal((html.match(new RegExp(warning, 'g')) ?? []).length, 1);
+});
+
+test('preview omits the warning control when no warning or failure exists', () => {
+  const html = render({
+    filename: 'ethanol.sdf', submitted_count: 1, valid_count: 1, invalid_count: 0,
+    analysis_mode: 'single_compound', preview: [{
+      molecule_id: 'ethanol', source_type: 'sdf', canonical_smiles: 'CCO',
+      structure_status: 'validated', coordinate_status: 'none', warnings: [], failure_reason: '',
+    }],
+  });
+  assert.doesNotMatch(html, /Import warning for ethanol/);
 });
 
 test('library and multi-record rejection states are explicit', () => {

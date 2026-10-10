@@ -1,10 +1,12 @@
 import React, { useRef } from 'react';
 import {
-  Alert, Box, Button, Chip, CircularProgress, Paper, Stack, Table, TableBody,
-  TableCell, TableHead, TableRow, TextField, Typography,
+  Alert, Box, Button, Chip, CircularProgress, IconButton, Paper, Stack, Table, TableBody,
+  TableCell, TableHead, TableRow, TextField, Tooltip, Typography,
 } from '@mui/material';
 import FolderOpenOutlinedIcon from '@mui/icons-material/FolderOpenOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
+import MoleculeStructureThumbnail from './MoleculeStructureThumbnail.jsx';
 import {
   FILE_PREVIEW_LIMIT,
   LARGE_SELECTION_THRESHOLD,
@@ -13,6 +15,10 @@ import {
 } from './moleculeSelection.js';
 
 const PDB_WARNING = 'SDF is preferred for small-molecule structure files because it preserves bond orders and formal charges more reliably than PDB.';
+
+export function moleculeImportWarning(row) {
+  return [...(row.warnings ?? []), row.failure_reason].filter(Boolean).join(' · ');
+}
 
 export function analysisModeLabel(mode) {
   if (mode === 'single_compound') return 'Single Compound Analysis';
@@ -58,7 +64,7 @@ function FileButton({ label, accept, multiple = false, folder = false, onFiles, 
   );
 }
 
-export default function MoleculeInputPanel({ uploadState, backendHealth, onChange, onImport, onCancelImport, onContinue }) {
+export default function MoleculeInputPanel({ uploadState, backendHealth, baseUrl = 'http://localhost:8000', onChange, onImport, onCancelImport, onContinue }) {
   const upload = uploadState.upload;
   const preview = upload?.preview ?? [];
   const valid = upload?.valid_count ?? 0;
@@ -173,15 +179,20 @@ export default function MoleculeInputPanel({ uploadState, backendHealth, onChang
             {valid ? `${valid} valid compound${valid === 1 ? '' : 's'} loaded. Mode: ${analysisModeLabel(upload.analysis_mode)}.` : 'No chemically valid compounds are available. Correct the input before continuing.'}
           </Alert>
           {upload.multi_record_sdf_count ? <Alert severity="error">MolOptima accepts one molecule per SDF file. For a molecular library, place individual SDF files in a folder or select multiple SDF files.</Alert> : null}
-          {preview.length ? <Box sx={{ overflowX: 'auto' }}>
+          {preview.length ? <Box sx={{ maxWidth: '100%', overflowX: 'auto' }}>
             <Typography variant="subtitle2" sx={{ mb: 0.75 }}>Actual-data preview</Typography>
-            <Table size="small" aria-label="Molecule input preview" sx={{ minWidth: 1080 }}><TableHead><TableRow>
-              <TableCell>molecule_id</TableCell><TableCell>source</TableCell><TableCell>filename</TableCell><TableCell>canonical_smiles</TableCell><TableCell>structure_status</TableCell><TableCell>coordinates</TableCell><TableCell>warnings</TableCell>
-            </TableRow></TableHead><TableBody>{preview.map((row, index) => <TableRow key={`${row.molecule_id}-${index}`}>
-              <TableCell>{row.molecule_id}</TableCell><TableCell>{row.source_type}</TableCell><TableCell>{row.source_filename || '—'}</TableCell>
-              <TableCell sx={{ fontFamily: 'monospace', minWidth: 180 }}>{row.canonical_smiles || '—'}</TableCell><TableCell>{row.structure_status}</TableCell>
-              <TableCell>{row.coordinate_status}</TableCell><TableCell sx={{ minWidth: 340 }}>{[...(row.warnings ?? []), row.failure_reason].filter(Boolean).join(' · ') || '—'}</TableCell>
-            </TableRow>)}</TableBody></Table>
+            <Table size="small" aria-label="Molecule input preview" sx={{ minWidth: 740, tableLayout: 'fixed', '& .MuiTableCell-root': { px: 0.75 }, '& .MuiTableCell-head': { fontSize: '0.72rem' } }}><TableHead><TableRow>
+              <TableCell scope="col" sx={{ width: 136 }}>Structure</TableCell><TableCell scope="col" sx={{ width: 110 }}>molecule_id</TableCell><TableCell scope="col" sx={{ width: 56 }}>source</TableCell><TableCell scope="col" sx={{ width: 98 }}>filename</TableCell><TableCell scope="col" sx={{ width: 145 }}>canonical_smiles</TableCell><TableCell scope="col" sx={{ width: 108 }}>structure_status</TableCell><TableCell scope="col" sx={{ width: 78 }}>coordinates</TableCell>
+            </TableRow></TableHead><TableBody>{preview.map((row, index) => {
+              const warning = moleculeImportWarning(row);
+              return <TableRow key={`${row.molecule_id}-${index}`}>
+                <TableCell><MoleculeStructureThumbnail baseUrl={baseUrl} moleculeId={row.molecule_id} smiles={row.canonical_smiles} /></TableCell>
+                <TableCell sx={{ overflowWrap: 'anywhere' }}><Stack direction="row" spacing={0.25} alignItems="center"><Box component="span">{row.molecule_id}</Box>{warning ? <Tooltip title={warning} arrow enterTouchDelay={0}><IconButton size="small" color="warning" aria-label={`Import warning for ${row.molecule_id}: ${warning}`}><WarningAmberRoundedIcon fontSize="small" /></IconButton></Tooltip> : null}</Stack></TableCell>
+                <TableCell>{row.source_type}</TableCell><TableCell sx={{ overflowWrap: 'anywhere' }}>{row.source_filename || '—'}</TableCell>
+                <TableCell sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.canonical_smiles || '—'}</TableCell><TableCell sx={{ overflowWrap: 'anywhere' }}>{row.structure_status}</TableCell>
+                <TableCell>{row.coordinate_status}</TableCell>
+              </TableRow>;
+            })}</TableBody></Table>
           </Box> : null}
           <Box><Button variant="contained" disabled={!valid} onClick={onContinue}>Continue to Receptor & Docking</Button></Box>
         </Stack>

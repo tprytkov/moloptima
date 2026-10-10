@@ -274,6 +274,16 @@ def get_molecule_structure(
     return Response(content=svg, media_type="image/svg+xml")
 
 
+@app.get("/api/molecules/structure-3d")
+def get_molecule_structure_3d(smiles: str = Query(..., min_length=1)) -> Response:
+    sdf = services.render_molecule_structure_3d_sdf(smiles)
+    return Response(
+        content=sdf,
+        media_type="chemical/x-mdl-sdfile",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.post("/api/chemical-space/project", response_model=ChemicalSpaceProjectResponse)
 def project_chemical_space(request: ChemicalSpaceProjectRequest) -> ChemicalSpaceProjectResponse:
     return ChemicalSpaceProjectResponse(**services.project_chemical_space(request.upload_id))

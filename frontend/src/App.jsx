@@ -3104,7 +3104,7 @@ function formatCounts(counts) {
 }
 
 function UploadMoleculesPage({ uploadState, backendHealth, onUpload, onCancelImport, onChange, onContinue }) {
-  return <MoleculeInputPanel uploadState={uploadState} backendHealth={backendHealth} onImport={onUpload} onCancelImport={onCancelImport} onChange={onChange} onContinue={onContinue} />;
+  return <MoleculeInputPanel uploadState={uploadState} backendHealth={backendHealth} baseUrl={apiBaseUrl} onImport={onUpload} onCancelImport={onCancelImport} onChange={onChange} onContinue={onContinue} />;
 }
 
 export function CandidateExportPanel({ rows }) {
