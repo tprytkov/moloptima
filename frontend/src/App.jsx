@@ -35,13 +35,15 @@ import {
   createTheme,
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
-import CloudQueueOutlinedIcon from '@mui/icons-material/CloudQueueOutlined';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CloseIcon from '@mui/icons-material/Close';
 import DownloadOutlinedIcon from '@mui/icons-material/DownloadOutlined';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
 import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 import MedicationOutlinedIcon from '@mui/icons-material/MedicationOutlined';
+import PendingOutlinedIcon from '@mui/icons-material/PendingOutlined';
+import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
@@ -184,29 +186,20 @@ export function revealCompoundDetail(detailElement) {
 
 export const PRIMARY_NAVIGATION = [
   {
-    section: '', items: [
-      { label: 'New Calculation', icon: AddCircleOutlineIcon },
-    ],
-  },
-  {
-    section: 'WORKFLOW', items: [
-      { label: 'Molecules', step: 1, icon: UploadFileOutlinedIcon },
-      { label: 'Experimental Data', step: 2, icon: ScienceOutlinedIcon },
-      { label: 'Receptor & Docking', step: 3, icon: HubOutlinedIcon },
-      { label: 'ADMET', step: 4, icon: MedicationOutlinedIcon },
-      { label: 'Chemical Space', step: 5, icon: InsightsOutlinedIcon },
-      { label: 'Prioritization', step: 6, icon: ScienceOutlinedIcon },
-      { label: 'Results', step: 7, icon: FactCheckOutlinedIcon },
-    ],
-  },
-  {
-    section: 'ANALYSIS', items: [
-      { label: 'Analysis', step: 8, icon: InsightsOutlinedIcon },
+    section: 'WORKSPACE', items: [
+      { label: 'Molecules', icon: UploadFileOutlinedIcon },
+      { label: 'Experimental Data', icon: ScienceOutlinedIcon },
+      { label: 'Receptor & Docking', icon: HubOutlinedIcon },
+      { label: 'ADMET', icon: MedicationOutlinedIcon },
+      { label: 'Chemical Space', icon: InsightsOutlinedIcon },
+      { label: 'Prioritization', icon: ScienceOutlinedIcon },
+      { label: 'Results', icon: FactCheckOutlinedIcon },
+      { label: 'Analysis', icon: InsightsOutlinedIcon },
     ],
   },
   {
     section: 'SYSTEM', items: [
-      { label: 'Settings', step: 9, icon: SettingsOutlinedIcon },
+      { label: 'Settings', icon: SettingsOutlinedIcon },
     ],
   },
 ];
@@ -345,7 +338,7 @@ const theme = createTheme({
 });
 
 function App() {
-  const [activeItem, setActiveItem] = useState('New Calculation');
+  const [activeItem, setActiveItem] = useState('Workspace');
   const previousActiveItem = useRef(activeItem);
   const [uploadState, setUploadState] = useState({ ...EMPTY_UPLOAD_STATE });
   const activeImportRef = useRef(null);
@@ -839,6 +832,9 @@ function App() {
   }
 
   const workflowStatuses = deriveWorkflowStatuses({ uploadState, targetContext, prioritizationState });
+  const currentMoleculeCount = validatedMoleculeCount(uploadState.upload)
+    || prioritizationState.result?.results?.length
+    || 0;
 
   useEffect(() => {
     if (previousActiveItem.current !== activeItem) {
@@ -854,11 +850,10 @@ function App() {
         <Sidebar
           activeItem={activeItem}
           onSelect={setActiveItem}
-          onNewCalculation={handleNewCalculation}
         />
-        <Box component="main" sx={{ flexGrow: 1, minWidth: 0 }}>
-          <AppHeader activeItem={activeItem} health={health} />
-          <Box sx={{ px: { xs: 2, md: 3 }, py: 2.5, width: '100%' }}>
+        <Box component="main" sx={{ flexGrow: 1, minWidth: 0, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+          <AppHeader activeItem={activeItem} onNewCalculation={handleNewCalculation} />
+          <Box sx={{ px: { xs: 2, md: 3 }, py: 2.5, width: '100%', flexGrow: 1 }}>
             <ActivePage
               activeItem={activeItem}
               health={health}
@@ -893,17 +888,22 @@ function App() {
               onRefreshSourceStatus={handleRefreshSourceStatus}
               onSaveReviewAnnotation={handleSaveReviewAnnotation}
               onNavigate={setActiveItem}
-              onNewCalculation={handleNewCalculation}
               workflowStatuses={workflowStatuses}
+              currentMoleculeCount={currentMoleculeCount}
             />
           </Box>
+          <AppStatusBar
+            health={health}
+            currentJob={prioritizationState.job}
+            moleculeCount={currentMoleculeCount}
+          />
         </Box>
       </Box>
     </ThemeProvider>
   );
 }
 
-function Sidebar({ activeItem, onSelect, onNewCalculation }) {
+export function Sidebar({ activeItem, onSelect }) {
   return (
     <Drawer
       variant="permanent"
@@ -918,16 +918,24 @@ function Sidebar({ activeItem, onSelect, onNewCalculation }) {
         },
       }}
     >
-      <Toolbar sx={{ alignItems: 'center', gap: 1.25, px: 2 }}>
+      <Toolbar sx={{ alignItems: 'center', gap: 1.25, px: 1 }}>
         <Box
-          component="img"
-          src={moloptimaLogo}
-          alt="MolOptima"
-          sx={{ width: '100%', maxWidth: 180, height: 'auto', display: 'block' }}
-        />
+          component="button"
+          type="button"
+          onClick={() => onSelect('Workspace')}
+          aria-label="Open Workspace"
+          sx={{
+            width: '100%', p: 1, border: 0, bgcolor: 'transparent', borderRadius: 1,
+            cursor: 'pointer', display: 'flex', alignItems: 'center',
+            '&:hover': { bgcolor: 'action.hover' },
+            '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 },
+          }}
+        >
+          <Box component="img" src={moloptimaLogo} alt="MolOptima" sx={{ width: '100%', maxWidth: 180, height: 'auto', display: 'block' }} />
+        </Box>
       </Toolbar>
       <Divider />
-      <Box sx={{ px: 1, py: 1.25 }}>
+      <Box component="nav" aria-label="Primary workspace navigation" sx={{ px: 1, py: 1.25 }}>
         {PRIMARY_NAVIGATION.map((group) => (
           <Box key={group.section || 'primary'} sx={{ mb: group.section ? 1.25 : 1.5 }}>
             {group.section ? (
@@ -936,11 +944,12 @@ function Sidebar({ activeItem, onSelect, onNewCalculation }) {
               </Typography>
             ) : null}
             <List disablePadding>
-              {group.items.map(({ label, step, icon: Icon }) => (
+              {group.items.map(({ label, icon: Icon }) => (
                 <ListItemButton
                   key={label}
                   selected={activeItem === label}
-                  onClick={() => label === 'New Calculation' ? onNewCalculation() : onSelect(label)}
+                  onClick={() => onSelect(label)}
+                  aria-current={activeItem === label ? 'page' : undefined}
                   sx={{
                     mb: 0.25, px: 1.25, borderRadius: 1, minHeight: 38,
                     '&.Mui-selected': { bgcolor: 'rgba(20, 95, 116, 0.1)', color: 'primary.main' },
@@ -949,7 +958,7 @@ function Sidebar({ activeItem, onSelect, onNewCalculation }) {
                 >
                   <ListItemIcon sx={{ minWidth: 32, color: 'inherit' }}><Icon sx={{ fontSize: 19 }} /></ListItemIcon>
                   <ListItemText
-                    primary={`${step ? `${step}. ` : ''}${label}`}
+                    primary={label}
                     primaryTypographyProps={{ fontSize: 12.5, fontWeight: activeItem === label ? 700 : 550 }}
                   />
                 </ListItemButton>
@@ -962,7 +971,7 @@ function Sidebar({ activeItem, onSelect, onNewCalculation }) {
   );
 }
 
-function AppHeader({ activeItem, health }) {
+export function AppHeader({ activeItem, onNewCalculation }) {
   return (
     <AppBar
       position="sticky"
@@ -972,9 +981,56 @@ function AppHeader({ activeItem, health }) {
     >
       <Toolbar sx={{ justifyContent: 'space-between', px: { xs: 2, md: 3 } }}>
         <Typography variant="h2">{activeItem}</Typography>
-        <HealthChip health={health} />
+        <Button
+          variant="contained"
+          startIcon={<AddCircleOutlineIcon />}
+          onClick={onNewCalculation}
+          aria-label="Start a new calculation"
+        >
+          New Calculation
+        </Button>
       </Toolbar>
     </AppBar>
+  );
+}
+
+export function AppStatusBar({ health, currentJob, moleculeCount = 0 }) {
+  const connected = health.status === 'online';
+  const checking = health.status === 'checking';
+  const connectionLabel = connected ? 'Backend connected' : checking ? 'Checking backend connection' : 'Backend unavailable';
+  const statusColor = connected ? 'success.main' : checking ? 'text.secondary' : 'warning.main';
+  return (
+    <Box
+      component="footer"
+      aria-label="Application status"
+      aria-live="polite"
+      sx={{
+        minHeight: 34,
+        px: { xs: 2, md: 3 },
+        py: 0.65,
+        borderTop: '1px solid',
+        borderColor: connected || checking ? 'divider' : 'warning.light',
+        bgcolor: connected || checking ? 'background.paper' : '#fff8e8',
+        display: 'flex',
+        alignItems: 'center',
+        gap: { xs: 1.5, md: 2.5 },
+        flexWrap: 'wrap',
+        color: 'text.secondary',
+      }}
+    >
+      <Stack direction="row" spacing={0.75} alignItems="center">
+        <Box component="span" aria-hidden="true" sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: statusColor }} />
+        <Typography variant="caption" sx={{ fontWeight: connected ? 600 : 700, color: connected ? 'text.secondary' : statusColor }}>
+          {connectionLabel}
+        </Typography>
+      </Stack>
+      <Divider orientation="vertical" flexItem />
+      <Typography variant="caption">
+        Current job: {currentJob ? currentJobStatusLabel(currentJob) : 'None'}
+      </Typography>
+      <Divider orientation="vertical" flexItem />
+      <Typography variant="caption">{moleculeCount.toLocaleString()} {moleculeCount === 1 ? 'molecule' : 'molecules'}</Typography>
+    </Box>
   );
 }
 
@@ -1012,16 +1068,18 @@ function ActivePage({
   onCheckLocalModelCache,
   onRefreshSourceStatus,
   onNavigate,
-  onNewCalculation,
   workflowStatuses,
+  currentMoleculeCount,
 }) {
-  if (activeItem === 'New Calculation') {
+  if (activeItem === 'Workspace') {
     return (
-      <NewCalculationPage
+      <WorkspacePage
         workflowStatuses={workflowStatuses}
-        onStart={onNewCalculation}
         currentJob={prioritizationState.job}
+        hasResults={Boolean(prioritizationState.result)}
+        moleculeCount={currentMoleculeCount}
         analysisMode={uploadState.upload?.analysis_mode}
+        onNavigate={onNavigate}
       />
     );
   }
@@ -1180,51 +1238,98 @@ function WorkflowStatusChip({ status }) {
   return <Chip label={status} color={color} variant={status === 'Not started' ? 'outlined' : 'filled'} />;
 }
 
-export function NewCalculationPage({ workflowStatuses, onStart, currentJob, analysisMode }) {
+function WorkflowStatusItem({ label, status }) {
+  const isComplete = status === 'Complete';
+  const isRunning = status === 'Running';
+  const needsAttention = status === 'Needs attention';
+  const Icon = isComplete ? CheckCircleOutlineIcon : isRunning ? PendingOutlinedIcon : RadioButtonUncheckedIcon;
+  const color = isComplete ? 'success.dark' : needsAttention ? 'warning.dark' : isRunning ? 'primary.main' : 'text.secondary';
+  return (
+    <Stack
+      direction="row"
+      spacing={1}
+      alignItems="center"
+      sx={{ minWidth: 0, px: 1.25, py: 1, borderLeft: '2px solid', borderColor: color }}
+    >
+      <Icon aria-hidden="true" sx={{ color, fontSize: 19, flex: '0 0 auto' }} />
+      <Box sx={{ minWidth: 0 }}>
+        <Typography sx={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.25 }}>{label}</Typography>
+        <Typography variant="caption" sx={{ color, lineHeight: 1.2 }}>{status}</Typography>
+      </Box>
+    </Stack>
+  );
+}
+
+export function WorkspacePage({ workflowStatuses, currentJob, hasResults, moleculeCount = 0, analysisMode, onNavigate }) {
   const single = analysisMode === 'single_compound';
   const steps = single
     ? ['Molecule', 'Receptor & Docking', 'ADMET', 'Compound Assessment', 'Results']
     : WORKFLOW_STEPS;
+  if (!currentJob && moleculeCount === 0) {
+    return (
+      <Box sx={{ width: '100%', maxWidth: SUMMARY_CONTENT_MAX_WIDTH, mx: 'auto' }}>
+        <Paper elevation={0} sx={{ px: { xs: 2, md: 3 }, py: 3, border: '1px solid', borderColor: 'divider' }}>
+          <Typography variant="h1">Create a calculation</Typography>
+          <Typography color="text.secondary" sx={{ mt: 1, maxWidth: 620 }}>
+            Import molecules and configure the molecular workflow. Use the action in the application header to begin.
+          </Typography>
+        </Paper>
+      </Box>
+    );
+  }
   return (
-    <Stack spacing={2} sx={{ width: '100%', maxWidth: READABLE_CONTENT_MAX_WIDTH, mx: 'auto' }}>
-      <PageIntro
-        title="New Calculation"
-        description="Integrated molecular docking, ADMET prediction, and multiparameter molecular prioritization."
-      />
-      <Paper elevation={0} sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }}>
-        <Stack spacing={2.5}>
-          <Box>
-            <Typography variant="h2">Scientific workflow</Typography>
-            <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-              {single
-                ? 'One valid compound loaded: molecular properties, ADMET, optional docking, and profile interpretation are available without library ranking.'
-                : 'Begin with molecules, configure receptor-specific docking, then run the existing local scientific pipeline.'}
+    <Stack spacing={1.5} sx={{ width: '100%', maxWidth: SUMMARY_CONTENT_MAX_WIDTH, mx: 'auto' }}>
+      <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: '0.08em', fontSize: 10.5 }}>
+        Project overview
+      </Typography>
+      <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
+        <Box sx={{ px: { xs: 2, md: 2.5 }, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+          <Typography variant="h1">Current calculation</Typography>
+        </Box>
+        <Box
+          component="dl"
+          sx={{
+            m: 0,
+            px: { xs: 2, md: 2.5 },
+            py: 1.75,
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
+            gap: { xs: 1.25, sm: 0 },
+            '& > div': { minWidth: 0, pr: { sm: 2 } },
+            '& > div + div': { borderLeft: { sm: '1px solid' }, borderColor: { sm: 'divider' }, pl: { sm: 2 } },
+          }}
+        >
+          <Box component="div">
+            <Typography component="dt" variant="caption" color="text.secondary">Job</Typography>
+            <Typography component="dd" sx={{ m: 0, mt: 0.35, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: 13.5 }} title={currentJob ? `Full job ID: ${currentJob.job_id}` : undefined}>
+              {currentJob ? compactJobId(currentJob.job_id) : 'Not started'}
             </Typography>
           </Box>
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(6, minmax(0, 1fr))' }, gap: 1 }}>
-            {steps.map((step, index) => (
-              <Box key={step} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 1, minWidth: 0 }}>
-                <Typography variant="caption" color="text.secondary">Step {index + 1}</Typography>
-                <Typography sx={{ fontWeight: 700, my: 0.75, fontSize: 13 }}>{step}</Typography>
-                <WorkflowStatusChip status={workflowStatuses[step === 'Molecule' ? 'Molecules' : step === 'Compound Assessment' ? 'Prioritization' : step] || 'Not started'} />
-              </Box>
-            ))}
+          <Box component="div">
+            <Typography component="dt" variant="caption" color="text.secondary">Status</Typography>
+            <Typography component="dd" sx={{ m: 0, mt: 0.35, fontWeight: 700, fontSize: 13.5 }}>{currentJob ? currentJobStatusLabel(currentJob) : 'Not started'}</Typography>
           </Box>
-          {currentJob ? (
-            <Typography variant="caption" color="text.secondary">
-              Current job:{' '}
-              <Box
-                component="span"
-                title={`Full job ID: ${currentJob.job_id}`}
-                sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}
-              >
-                {compactJobId(currentJob.job_id)}
-              </Box>
-              {' · '}{currentJobStatusLabel(currentJob)}
-            </Typography>
-          ) : null}
-          <Box><Button variant="contained" onClick={onStart}>Start New Calculation</Button></Box>
-        </Stack>
+          <Box component="div">
+            <Typography component="dt" variant="caption" color="text.secondary">Compounds</Typography>
+            <Typography component="dd" sx={{ m: 0, mt: 0.35, fontWeight: 700, fontSize: 13.5 }}>{moleculeCount.toLocaleString()}</Typography>
+          </Box>
+        </Box>
+        <Divider />
+        <Box sx={{ px: { xs: 1, md: 1.25 }, py: 1.25, display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', md: 'repeat(6, minmax(0, 1fr))' }, gap: 0.5 }} aria-label="Calculation workflow status">
+          {steps.map((step) => (
+            <WorkflowStatusItem
+              key={step}
+              label={step}
+              status={workflowStatuses[step === 'Molecule' ? 'Molecules' : step === 'Compound Assessment' ? 'Prioritization' : step] || 'Not started'}
+            />
+          ))}
+        </Box>
+        {hasResults ? (
+          <Box sx={{ px: { xs: 2, md: 2.5 }, py: 1.5, borderTop: '1px solid', borderColor: 'divider', display: 'flex', justifyContent: 'flex-end', gap: 1, flexWrap: 'wrap' }}>
+            <Button variant="outlined" onClick={() => onNavigate('Results')}>Open Results</Button>
+            <Button variant="contained" onClick={() => onNavigate('Analysis')}>Continue Analysis</Button>
+          </Box>
+        ) : null}
       </Paper>
     </Stack>
   );
@@ -5795,11 +5900,6 @@ export function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache
       </Paper>
     </Stack>
   );
-}
-
-function HealthChip({ health }) {
-  const color = health.status === 'online' ? 'success' : health.status === 'checking' ? 'default' : 'warning';
-  return <Chip icon={<CloudQueueOutlinedIcon />} label={health.label} color={color} variant="outlined" />;
 }
 
 function useBackendHealth() {

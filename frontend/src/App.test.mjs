@@ -21,9 +21,11 @@ after(async () => vite?.close());
 test('primary navigation follows the scientific workflow and hides history tools', () => {
   const labels = module.PRIMARY_NAVIGATION.flatMap((group) => group.items.map((item) => item.label));
   assert.deepEqual(labels, [
-    'New Calculation', 'Molecules', 'Experimental Data', 'Receptor & Docking', 'ADMET', 'Chemical Space',
+    'Molecules', 'Experimental Data', 'Receptor & Docking', 'ADMET', 'Chemical Space',
     'Prioritization', 'Results', 'Analysis', 'Settings',
   ]);
+  assert.deepEqual(module.PRIMARY_NAVIGATION.map((group) => group.section), ['WORKSPACE', 'SYSTEM']);
+  assert.equal(module.PRIMARY_NAVIGATION.some((group) => group.items.some((item) => 'step' in item)), false);
   assert.equal(labels.includes('Run History'), false);
   assert.equal(labels.includes('Run Comparison'), false);
 });
@@ -166,25 +168,59 @@ test('sidebar uses the approved MolOptima logo without a duplicate wordmark', as
   assert.doesNotMatch(source, />MOLOPTIMA<\/Typography>/);
 });
 
+test('application shell exposes one header calculation action and subtle accurate status text', () => {
+  const headerHtml = renderToStaticMarkup(React.createElement(module.AppHeader, {
+    activeItem: 'Workspace', onNewCalculation: () => {},
+  }));
+  assert.match(headerHtml, />Workspace</);
+  assert.equal((headerHtml.match(/New Calculation/g) || []).length, 1);
+  assert.match(headerHtml, /aria-label="Start a new calculation"/);
+  assert.doesNotMatch(headerHtml, />Online</);
+
+  const statusHtml = renderToStaticMarkup(React.createElement(module.AppStatusBar, {
+    health: { status: 'online', label: 'Online' },
+    currentJob: { status: 'completed' },
+    moleculeCount: 20,
+  }));
+  assert.match(statusHtml, /Backend connected/);
+  assert.match(statusHtml, /Current job: Completed/);
+  assert.match(statusHtml, /20 molecules/);
+  assert.doesNotMatch(statusHtml, />Online</);
+});
+
+test('Workspace empty state leaves creation to the single header action', () => {
+  const html = renderToStaticMarkup(React.createElement(module.WorkspacePage, {
+    workflowStatuses: {}, currentJob: null, moleculeCount: 0, analysisMode: 'library', onNavigate: () => {},
+  }));
+  assert.match(html, /Create a calculation/);
+  assert.match(html, /Import molecules and configure the molecular workflow/);
+  assert.doesNotMatch(html, /<button/);
+  assert.doesNotMatch(html, /New Calculation/);
+});
+
 test('primary-page scroll reset targets the provided scrolling element', () => {
   let options = null;
   module.resetPrimaryPageScroll({ scrollTo: (value) => { options = value; } });
   assert.deepEqual(options, { top: 0, left: 0, behavior: 'auto' });
 });
 
-test('home status uses one human-readable status and a concise job ID', () => {
+test('Workspace uses one human-readable status, compact job ID, and no duplicate calculation action', () => {
   const fullJobId = 'b1d1b0f655ce46ba8d2dc350ec7718b7';
   assert.equal(module.compactJobId(fullJobId), 'b1d1b0f6…');
   assert.equal(module.currentJobStatusLabel({ status: 'completed', stage: 'completed' }), 'Completed');
   assert.equal(module.currentJobStatusLabel({ status: 'completed_with_warnings', stage: 'completed' }), 'Completed with warnings');
 
-  const html = renderToStaticMarkup(React.createElement(module.NewCalculationPage, {
-    workflowStatuses: {}, onStart: () => {}, analysisMode: 'library',
+  const html = renderToStaticMarkup(React.createElement(module.WorkspacePage, {
+    workflowStatuses: {}, analysisMode: 'library', moleculeCount: 20, hasResults: true, onNavigate: () => {},
     currentJob: { job_id: fullJobId, status: 'completed', stage: 'completed' },
   }));
-  assert.match(html, /Current job:[\s\S]*b1d1b0f6…[\s\S]*· Completed/);
+  assert.match(html, /Current calculation/);
+  assert.match(html, /b1d1b0f6…/);
+  assert.match(html, />Completed</);
+  assert.match(html, />20</);
   assert.match(html, new RegExp(`title="Full job ID: ${fullJobId}"`));
-  assert.doesNotMatch(html, /completed · completed/i);
+  assert.doesNotMatch(html, /New Calculation/);
+  assert.doesNotMatch(html, /Step [1-9]/);
 });
 
 test('compound-detail reveal scrolls and focuses the mounted detail container', () => {
@@ -221,10 +257,10 @@ test('Results export and Compound Detail actions expose meaningful accessible na
 });
 
 test('readable cards are capped without imposing a global table width', () => {
-  const pageHtml = renderToStaticMarkup(React.createElement(module.NewCalculationPage, {
-    workflowStatuses: {}, onStart: () => {}, currentJob: null, analysisMode: 'library',
+  const pageHtml = renderToStaticMarkup(React.createElement(module.WorkspacePage, {
+    workflowStatuses: {}, currentJob: null, moleculeCount: 0, analysisMode: 'library', onNavigate: () => {},
   }));
-  assert.match(pageHtml, new RegExp(`max-width:${module.READABLE_CONTENT_MAX_WIDTH}px`));
+  assert.match(pageHtml, new RegExp(`max-width:${module.SUMMARY_CONTENT_MAX_WIDTH}px`));
 
   const filterHtml = renderToStaticMarkup(React.createElement(module.EvidenceFilterPanel, {
     rows: [], filteredRows: [], filters: {}, onChange: () => {}, onReset: () => {}, exportFilename: 'results.csv',
