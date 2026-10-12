@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Accordion, AccordionDetails, AccordionSummary, Alert, Box, Chip, CircularProgress,
-  Button, FormControl, InputLabel, MenuItem, Paper, Select, Stack, Tab, Tabs, TextField, Typography,
+  Button, Divider, FormControl, InputLabel, MenuItem, Paper, Select, Stack, Tab, Table,
+  TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { normalizeAdmetAnalysis } from './admetAnalysisData.js';
@@ -39,22 +40,74 @@ function sourceLabel(point) {
   return point.source_filename || point.source_type || 'Entered SMILES';
 }
 
-function Detail({ point, baseUrl, admetMolecule, onFindAnalogs }) {
-  if (!point) return <Alert severity="info">Select a point to inspect its imported identity and structure.</Alert>;
-  const params = new URLSearchParams({ smiles: point.canonical_smiles, width: '300', height: '220' });
+function structureUrl(baseUrl, point, width = 260, height = 180) {
+  if (!point?.canonical_smiles) return '';
+  return `${baseUrl}/api/molecules/structure?${new URLSearchParams({
+    smiles: point.canonical_smiles, width: String(width), height: String(height),
+  })}`;
+}
+
+function QueryRail({ point, baseUrl, query, onQueryChange, colorMode, onColorModeChange, admetColorAvailable, onFindAnalogs }) {
   return (
-    <Paper variant="outlined" sx={{ p: 2 }} data-testid="chemical-space-detail">
-      <Stack spacing={1.25}>
-        <Typography variant="h3">{point.display_name || point.molecule_id}</Typography>
-        <Box component="img" src={`${baseUrl}/api/molecules/structure?${params}`} alt={`2D structure for ${point.display_name || point.molecule_id}`} sx={{ width: '100%', maxWidth: 300, bgcolor: '#fff', border: '1px solid', borderColor: 'divider', borderRadius: 1 }} />
-        <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>{point.canonical_smiles}</Typography>
-        <Typography variant="body2" color="text.secondary">ID: {point.molecule_id}</Typography>
-        <Typography variant="body2" color="text.secondary">Source: {sourceLabel(point)}{point.source_record ? ` · ${point.source_record}` : ''}</Typography>
-        <Typography variant="body2" color="text.secondary">Validation: {point.validation_status || 'valid'}{point.duplicate_structure ? ' · duplicate structure retained' : ''}</Typography>
-        <Typography variant="caption" color="text.secondary">{admetMolecule ? 'ADMET results are available for optional map coloring.' : 'No ADMET result is linked; chemical-space analysis remains available.'}</Typography>
-        <Button variant="outlined" onClick={onFindAnalogs}>Find experimental analogs</Button>
+    <Box component="aside" aria-label="Chemical Space query and display controls" sx={{ minWidth: 0, borderRight: { md: '1px solid' }, borderColor: { md: 'divider' }, pr: { md: 1.75 } }}>
+      <Stack spacing={1.5}>
+        <Box>
+          <Typography variant="overline" color="text.secondary">Query compound</Typography>
+          <Typography variant="h2" sx={{ overflowWrap: 'anywhere' }}>{point?.display_name || point?.molecule_id || 'Not selected'}</Typography>
+          {point ? <Typography variant="caption" color="text.secondary">ID: {point.molecule_id}</Typography> : null}
+        </Box>
+        {point ? <Box component="img" src={structureUrl(baseUrl, point, 240, 150)} alt={`2D structure for query compound ${point.display_name || point.molecule_id}`} sx={{ width: '100%', height: 150, objectFit: 'contain', bgcolor: '#fff', border: '1px solid', borderColor: 'divider', borderRadius: 1 }} /> : null}
+        {point ? <Stack spacing={0.25}>
+          <Typography variant="caption" color="text.secondary">Source · {sourceLabel(point)}</Typography>
+          <Typography variant="caption" color="text.secondary">Validation · {point.validation_status || 'valid'}{point.duplicate_structure ? ' · duplicate retained' : ''}</Typography>
+        </Stack> : null}
+        <Button variant="outlined" disabled={!point} onClick={onFindAnalogs}>Find experimental analogs</Button>
+        <Divider />
+        <TextField fullWidth label="Search compounds" value={query} onChange={(event) => onQueryChange(event.target.value)} inputProps={{ 'aria-label': 'Search projected compounds' }} />
+        <FormControl fullWidth size="small">
+          <InputLabel id="chemical-color-label">Color points by</InputLabel>
+          <Select labelId="chemical-color-label" value={colorMode} label="Color points by" onChange={(event) => onColorModeChange(event.target.value)}>
+            <MenuItem value="source">Source</MenuItem><MenuItem value="status">Validation status</MenuItem><MenuItem value="scaffold">Scaffold group</MenuItem>
+            {ADMET_COLOR_OPTIONS.map(([key, label]) => <MenuItem key={key} value={key} disabled={!admetColorAvailable}>{label}{!admetColorAvailable ? ' · unavailable' : ''}</MenuItem>)}
+          </Select>
+        </FormControl>
       </Stack>
-    </Paper>
+    </Box>
+  );
+}
+
+function Detail({ point, baseUrl, admetMolecule }) {
+  if (!point) return <Alert severity="info">Select a point to inspect its imported identity and structure.</Alert>;
+  return (
+    <Box component="aside" aria-label="Selected compound details" sx={{ minWidth: 0, borderLeft: { lg: '1px solid' }, borderColor: { lg: 'divider' }, pl: { lg: 1.75 } }} data-testid="chemical-space-detail">
+      <Stack spacing={1.1}>
+        <Box><Typography variant="overline" color="text.secondary">Selected compound</Typography><Typography variant="h2">{point.display_name || point.molecule_id}</Typography></Box>
+        <Box component="img" src={structureUrl(baseUrl, point)} alt={`2D structure for ${point.display_name || point.molecule_id}`} sx={{ width: '100%', height: 180, objectFit: 'contain', bgcolor: '#fff', border: '1px solid', borderColor: 'divider', borderRadius: 1 }} />
+        <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>{point.canonical_smiles}</Typography>
+        <Typography variant="caption" color="text.secondary">ID · {point.molecule_id}</Typography>
+        <Typography variant="caption" color="text.secondary">Source · {sourceLabel(point)}{point.source_record ? ` · ${point.source_record}` : ''}</Typography>
+        <Typography variant="caption" color="text.secondary">Validation · {point.validation_status || 'valid'}{point.duplicate_structure ? ' · duplicate structure retained' : ''}</Typography>
+        <Typography variant="caption" color="text.secondary">{admetMolecule ? 'ADMET results are available for optional map coloring.' : 'No ADMET result is linked; chemical-space analysis remains available.'}</Typography>
+      </Stack>
+    </Box>
+  );
+}
+
+function NeighborTable({ neighbors, selectedId, onSelect, baseUrl, scaffoldByMolecule }) {
+  return (
+    <TableContainer sx={{ maxHeight: 'min(58vh, 560px)', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+      <Table stickyHeader size="small" aria-label="Query-relative structural neighbors">
+        <TableHead><TableRow><TableCell width={52}>#</TableCell><TableCell width={86}>Structure</TableCell><TableCell>Compound</TableCell><TableCell>Source</TableCell><TableCell>Scaffold context</TableCell><TableCell align="right">Tanimoto</TableCell></TableRow></TableHead>
+        <TableBody>{neighbors.map((neighbor, index) => <TableRow key={`${neighbor.molecule_id}-${neighbor.source_index}`} hover selected={neighbor.molecule_id === selectedId} tabIndex={0} sx={{ cursor: 'pointer' }} onClick={() => onSelect(neighbor.molecule_id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(neighbor.molecule_id); } }}>
+          <TableCell>{index + 1}</TableCell>
+          <TableCell><Box component="img" src={structureUrl(baseUrl, neighbor, 96, 64)} alt={`2D structure for ${neighbor.display_name || neighbor.molecule_id}`} loading="lazy" sx={{ width: 72, height: 48, display: 'block', objectFit: 'contain', bgcolor: '#fff' }} /></TableCell>
+          <TableCell><Typography variant="body2" fontWeight={700}>{neighbor.display_name || neighbor.molecule_id}</Typography><Typography variant="caption" color="text.secondary">{neighbor.molecule_id}{neighbor.duplicate_structure ? ' · duplicate retained' : ''}</Typography></TableCell>
+          <TableCell>{sourceLabel(neighbor)}</TableCell>
+          <TableCell>{scaffoldByMolecule.get(neighbor.molecule_id) || 'Unavailable'}</TableCell>
+          <TableCell align="right"><Typography variant="body2" fontWeight={700}>{neighbor.similarity.toFixed(3)}</Typography></TableCell>
+        </TableRow>)}</TableBody>
+      </Table>
+    </TableContainer>
   );
 }
 
@@ -192,39 +245,35 @@ export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl
 
   if (!upload?.upload_id) return <Alert severity="info">Import a molecule collection first. Chemical Space uses that current collection directly; no second upload is required.</Alert>;
   return (
-    <Stack spacing={2.5}>
-      <Box>
+    <Stack spacing={1.5} data-testid="chemical-space-workstation">
+      <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'baseline' }} gap={0.5}>
         <Typography variant="h1">Chemical Space</Typography>
-        <Typography color="text.secondary">Explore a descriptive Morgan-fingerprint projection, query-relative structural neighbors, and Bemis–Murcko scaffold organization. This workspace does not infer activity, potency, applicability domain, confidence, preference, or rank.</Typography>
-      </Box>
+        {projection ? <Typography variant="body2" color="text.secondary">{projection.projected_count.toLocaleString()} projected · {projection.excluded_count.toLocaleString()} excluded · query: {selected?.display_name || selected?.molecule_id || 'not selected'}</Typography> : null}
+      </Stack>
+      <Typography variant="caption" color="text.secondary">Descriptive structural analysis only; activity, potency, applicability domain, confidence, preference, and rank are not inferred.</Typography>
       {error ? <Alert severity="error">{error}</Alert> : null}
       {loading ? <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={20} /><Typography>Projecting the current collection…</Typography></Stack> : null}
-      {projection ? <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}><Chip label={`${projection.projected_count.toLocaleString()} projected`} /><Chip label={`${projection.excluded_count.toLocaleString()} invalid or unresolved excluded`} /><Chip label={`${projection.total_count.toLocaleString()} imported records`} /></Stack> : null}
-      <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chemical Space workspace views" variant="scrollable" scrollButtons="auto"><Tab label="Map" /><Tab label="Neighbors" /><Tab label="Scaffolds" /><Tab label="Experimental Neighborhood" /></Tabs>
+      <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chemical Space workspace views" variant="scrollable" scrollButtons="auto" sx={{ minHeight: 36, borderBottom: '1px solid', borderColor: 'divider', '& .MuiTab-root': { minHeight: 36, py: 0.5 } }}><Tab label="Map" /><Tab label="Neighbors" /><Tab label="Scaffolds" /><Tab label="Experimental Neighborhood" /></Tabs>
       {projection && projection.projected_count === 0 ? <Alert severity="warning">No valid resolved structures are available to fingerprint. Excluded records remain listed in the import workflow.</Alert> : null}
       {projection?.projected_count ? (
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 2fr) minmax(280px, 1fr)' }, gap: 2 }}>
-          <Paper variant="outlined" sx={{ p: 2, minWidth: 0, gridColumn: tab >= 2 ? '1 / -1' : 'auto' }}>
-            {tab === 0 ? <Stack spacing={2}>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
-                <TextField size="small" label="Search compounds" value={query} onChange={(event) => setQuery(event.target.value)} sx={{ flex: 1 }} />
-                <FormControl size="small" sx={{ minWidth: 220 }}><InputLabel id="chemical-color-label">Color points by</InputLabel><Select labelId="chemical-color-label" value={colorMode} label="Color points by" onChange={(event) => setColorMode(event.target.value)}><MenuItem value="source">Source</MenuItem><MenuItem value="status">Validation status</MenuItem><MenuItem value="scaffold">Scaffold group</MenuItem>{ADMET_COLOR_OPTIONS.map(([key, label]) => <MenuItem key={key} value={key} disabled={!admetColorAvailable}>{label}{!admetColorAvailable ? ' · unavailable' : ''}</MenuItem>)}</Select></FormControl>
-              </Stack>
-              <Typography variant="body2" color="text.secondary">Showing {visiblePoints.length.toLocaleString()} of {projection.projected_count.toLocaleString()} projected records. Duplicate structures remain distinct points and may overlap exactly.</Typography>
-              {visiblePoints.length ? <MapCanvas points={visiblePoints} selectedId={selectedId} onSelect={setSelectedId} colorMode={colorMode} admetById={admetById} scaffoldByMolecule={scaffoldByMolecule} scaffoldPlan={scaffoldPlan} selectedScaffoldId={selectedScaffoldId} /> : <Alert severity="info">No projected compounds match this search.</Alert>}
-              {colorMode === 'scaffold' ? <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1}>{scaffoldPlan.legend.map((entry) => <Chip key={entry.key} size="small" label={entry.label} sx={{ borderLeft: `8px solid ${entry.color}` }} />)}<Typography variant="caption" color="text.secondary">The 12 largest ring scaffolds are colored individually; remaining groups use Other scaffolds. Colors are categorical and do not indicate preference.</Typography></Stack> : null}
-            </Stack> : tab === 1 ? <Stack spacing={2}>
-              <FormControl size="small" sx={{ width: 180 }}><InputLabel id="neighbor-count-label">Neighbors shown</InputLabel><Select labelId="neighbor-count-label" value={topK} label="Neighbors shown" onChange={(event) => setTopK(Number(event.target.value))}>{CHEMICAL_SPACE_TOP_K_OPTIONS.map((value) => <MenuItem key={value} value={value}>Top {value}</MenuItem>)}</Select></FormControl>
-              {!selectedId ? <Alert severity="info">Select a molecule on the Map to calculate query-relative neighbors.</Alert> : null}
-              {selectedId && neighborsLoading ? <CircularProgress size={22} /> : null}
-              {selectedId && !neighborsLoading && neighbors ? <Stack spacing={1}>{neighbors.neighbors.length ? neighbors.neighbors.map((neighbor, index) => <Paper key={`${neighbor.molecule_id}-${neighbor.source_index}`} variant="outlined" sx={{ p: 1.25, cursor: 'pointer' }} onClick={() => setSelectedId(neighbor.molecule_id)}><Stack direction="row" justifyContent="space-between" gap={2}><Box><Typography variant="body2" fontWeight={700}>{index + 1}. {neighbor.display_name || neighbor.molecule_id}</Typography><Typography variant="caption" color="text.secondary">{sourceLabel(neighbor)}{neighbor.duplicate_structure ? ' · duplicate structure retained' : ''}</Typography></Box><Typography variant="body2" fontWeight={700}>{neighbor.similarity.toFixed(3)}</Typography></Stack></Paper>) : <Alert severity="info">This collection has no other valid structures to compare.</Alert>}</Stack> : null}
-            </Stack> : tab === 2 ? (scaffoldData ? <ScaffoldWorkspace data={scaffoldData} selectedScaffoldId={selectedScaffoldId} selectedMoleculeId={selectedId} onSelectScaffold={setSelectedScaffoldId} onSelectMolecule={setSelectedId} onViewMap={(scaffoldId) => { setSelectedScaffoldId(scaffoldId); setColorMode('scaffold'); setTab(0); }} baseUrl={baseUrl} admetById={admetById} /> : null) : <ExperimentalNeighborhood key={selected?.molecule_id || 'no-selection'} upload={upload} queryMolecule={selected} baseUrl={baseUrl} />}
-          </Paper>
-          {tab < 2 ? <Detail point={selected} baseUrl={baseUrl} admetMolecule={selected ? admetById.get(selected.molecule_id) : null} onFindAnalogs={() => setTab(3)} /> : null}
-        </Box>
+          tab === 0 ? <Paper variant="outlined" sx={{ p: 1.5, minWidth: 0 }}><Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '210px minmax(0, 1fr)', lg: '210px minmax(0, 1fr) 240px', xl: '220px minmax(0, 1fr) 270px' }, gap: 1.75 }}>
+          <QueryRail point={selected} baseUrl={baseUrl} query={query} onQueryChange={setQuery} colorMode={colorMode} onColorModeChange={setColorMode} admetColorAvailable={admetColorAvailable} onFindAnalogs={() => setTab(3)} />
+          <Stack spacing={1} sx={{ minWidth: 0 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={0.5}><Typography variant="h2">Randomized PCA projection</Typography><Typography variant="caption" color="text.secondary">Map distance is not Tanimoto similarity.</Typography></Stack>
+            <Typography variant="caption" color="text.secondary">Showing {visiblePoints.length.toLocaleString()} of {projection.projected_count.toLocaleString()} projected records · Morgan radius {projection.metadata?.fingerprint_radius} · {projection.metadata?.fingerprint_bits}-bit fingerprints. Duplicate structures remain distinct and may overlap.</Typography>
+            {visiblePoints.length ? <MapCanvas points={visiblePoints} selectedId={selectedId} onSelect={setSelectedId} colorMode={colorMode} admetById={admetById} scaffoldByMolecule={scaffoldByMolecule} scaffoldPlan={scaffoldPlan} selectedScaffoldId={selectedScaffoldId} /> : <Alert severity="info">No projected compounds match this search.</Alert>}
+            {colorMode === 'scaffold' ? <Stack direction="row" useFlexGap flexWrap="wrap" spacing={0.75}>{scaffoldPlan.legend.map((entry) => <Chip key={entry.key} label={entry.label} sx={{ borderLeft: `8px solid ${entry.color}` }} />)}<Typography variant="caption" color="text.secondary">Categorical scaffold colors do not indicate preference.</Typography></Stack> : null}
+          </Stack>
+            <Box sx={{ gridColumn: { md: '1 / -1', lg: 'auto' } }}><Detail point={selected} baseUrl={baseUrl} admetMolecule={selected ? admetById.get(selected.molecule_id) : null} /></Box>
+        </Box></Paper> : tab === 1 ? <Paper variant="outlined" sx={{ p: 1.5, minWidth: 0 }}><Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '220px minmax(0, 1fr)' }, gap: 2 }}>
+          <Box component="aside" sx={{ borderRight: { md: '1px solid' }, borderColor: { md: 'divider' }, pr: { md: 2 } }}><Stack spacing={1.5}><Box><Typography variant="overline" color="text.secondary">Query compound</Typography><Typography variant="h2">{selected?.display_name || selected?.molecule_id || 'Not selected'}</Typography><Typography variant="caption" color="text.secondary">Neighbors are ranked by independently calculated Morgan-fingerprint Tanimoto.</Typography></Box><FormControl fullWidth size="small"><InputLabel id="neighbor-count-label">Neighbors shown</InputLabel><Select labelId="neighbor-count-label" value={topK} label="Neighbors shown" onChange={(event) => setTopK(Number(event.target.value))}>{CHEMICAL_SPACE_TOP_K_OPTIONS.map((value) => <MenuItem key={value} value={value}>Top {value}</MenuItem>)}</Select></FormControl><Button onClick={() => setTab(0)}>Change query on map</Button></Stack></Box>
+          <Stack spacing={1.25} sx={{ minWidth: 0 }}><Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={0.5}><Typography variant="h2">Structural neighbors</Typography><Typography variant="caption" color="text.secondary">Projection position is not used for this ordering.</Typography></Stack>{!selectedId ? <Alert severity="info">Select a molecule on the Map to calculate query-relative neighbors.</Alert> : null}{selectedId && neighborsLoading ? <Stack direction="row" gap={1}><CircularProgress size={20} /><Typography variant="body2">Calculating query-relative neighbors…</Typography></Stack> : null}{selectedId && !neighborsLoading && neighbors ? (neighbors.neighbors.length ? <NeighborTable neighbors={neighbors.neighbors} selectedId={selectedId} onSelect={setSelectedId} baseUrl={baseUrl} scaffoldByMolecule={scaffoldByMolecule} /> : <Alert severity="info">This collection has no other valid structures to compare.</Alert>) : null}</Stack>
+        </Box></Paper> : tab === 2 ? (scaffoldData ? <ScaffoldWorkspace data={scaffoldData} selectedScaffoldId={selectedScaffoldId} selectedMoleculeId={selectedId} onSelectScaffold={setSelectedScaffoldId} onSelectMolecule={setSelectedId} onViewMap={(scaffoldId) => { setSelectedScaffoldId(scaffoldId); setColorMode('scaffold'); setTab(0); }} baseUrl={baseUrl} admetById={admetById} /> : null) : <ExperimentalNeighborhood key={selected?.molecule_id || 'no-selection'} upload={upload} queryMolecule={selected} baseUrl={baseUrl} />
       ) : null}
-      {projection?.metadata ? <Accordion><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography fontWeight={700}>Method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">Representation: Morgan radius {projection.metadata.fingerprint_radius}, {projection.metadata.fingerprint_bits}-bit fingerprints · RDKit {projection.metadata.rdkit_version}.</Typography><Typography variant="body2">Similarity: {projection.metadata.similarity_metric}. Projection: {projection.metadata.projection_method} via {projection.metadata.projection_package} {projection.metadata.projection_package_version}, seed {projection.metadata.projection_seed}.</Typography><Typography variant="body2">Projection input: {projection.metadata.projection_input}.</Typography><Alert severity="info">{projection.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}
-      {scaffoldData?.metadata ? <Accordion><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography fontWeight={700}>Scaffold method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">{scaffoldData.metadata.method} via {scaffoldData.metadata.implementation} · RDKit {scaffoldData.metadata.rdkit_version} · algorithm {scaffoldData.metadata.algorithm_version}.</Typography><Typography variant="body2">{scaffoldData.metadata.canonicalization}. {scaffoldData.metadata.input_context}</Typography><Typography variant="body2">{scaffoldData.metadata.acyclic_policy} {scaffoldData.metadata.invalid_policy} {scaffoldData.metadata.duplicate_policy}</Typography><Alert severity="info">{scaffoldData.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
+        {projection?.metadata ? <Accordion sx={{ flex: 1 }}><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography variant="body2" fontWeight={700}>Method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">Representation: Morgan radius {projection.metadata.fingerprint_radius}, {projection.metadata.fingerprint_bits}-bit fingerprints · RDKit {projection.metadata.rdkit_version}.</Typography><Typography variant="body2">Similarity: {projection.metadata.similarity_metric}. Projection: {projection.metadata.projection_method} via {projection.metadata.projection_package} {projection.metadata.projection_package_version}, seed {projection.metadata.projection_seed}.</Typography><Typography variant="body2">Projection input: {projection.metadata.projection_input}.</Typography><Alert severity="info">{projection.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}
+        {scaffoldData?.metadata ? <Accordion sx={{ flex: 1 }}><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography variant="body2" fontWeight={700}>Scaffold method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">{scaffoldData.metadata.method} via {scaffoldData.metadata.implementation} · RDKit {scaffoldData.metadata.rdkit_version} · algorithm {scaffoldData.metadata.algorithm_version}.</Typography><Typography variant="body2">{scaffoldData.metadata.canonicalization}. {scaffoldData.metadata.input_context}</Typography><Typography variant="body2">{scaffoldData.metadata.acyclic_policy} {scaffoldData.metadata.invalid_policy} {scaffoldData.metadata.duplicate_policy}</Typography><Alert severity="info">{scaffoldData.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}
+      </Stack>
     </Stack>
   );
 }

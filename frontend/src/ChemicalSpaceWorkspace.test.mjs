@@ -31,8 +31,14 @@ test('workspace establishes descriptive Map, Neighbors, Scaffolds, and Experimen
   assert.match(source, /\/api\/chemical-space\/scaffolds/);
   assert.match(source, /Scaffold group/);
   assert.match(source, /CHEMICAL_SPACE_TOP_K_OPTIONS/);
-  assert.match(source, /does not infer activity, potency, applicability domain, confidence, preference, or rank/);
+  assert.match(source, /activity, potency, applicability domain, confidence, preference, and rank are not inferred/);
   assert.match(source, /chemical-space-canvas/);
+  assert.match(source, /chemical-space-workstation/);
+  assert.match(source, /Randomized PCA projection/);
+  assert.match(source, /Map distance is not Tanimoto similarity/);
+  assert.match(source, /aria-label="Chemical Space query and display controls"/);
+  assert.match(source, /aria-label="Query-relative structural neighbors"/);
+  assert.match(source, /loading="lazy"/);
   assert.match(source, /Method and provenance/);
   assert.match(source, /Select a molecule on the Map to calculate query-relative neighbors/);
   assert.match(source, /rdkit_version/);

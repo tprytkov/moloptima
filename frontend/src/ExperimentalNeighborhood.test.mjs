@@ -25,8 +25,8 @@ test('entry state keeps selected query identity and scientific boundary explicit
   const html = renderToStaticMarkup(React.createElement(ExperimentalNeighborhood, {
     upload: { upload_id: 'a'.repeat(32) }, queryMolecule,
   }));
-  assert.match(html, /Experimental Neighborhood/);
-  assert.match(html, /Selected MolOptima compound/);
+  assert.match(html, /ChEMBL external evidence workspace/);
+  assert.match(html, /MolOptima query compound/);
   assert.match(html, /Generated molecule G-127/);
   assert.match(html, /no experimental value is assigned by this search/);
   assert.match(html, /belong to known reference compounds, not to the selected MolOptima compound/);
@@ -53,7 +53,7 @@ test('source contains bounded tables, exact/no-match, network states, provenance
   const source = await readFile(new URL('./ExperimentalNeighborhood.jsx', import.meta.url), 'utf8');
   for (const phrase of [
     'Searching ChEMBL by structure', 'No exact structure match found in the searched database',
-    'Exact structure match found in ChEMBL', 'MolOptima Tanimoto', 'Same Murcko scaffold',
+    'Exact structure match', 'ChEMBL structure match', 'MolOptima Tanimoto', 'Same Murcko scaffold',
     'Compatibility', 'Censored', 'Retrieved', 'Prepare CSV for Experimental Data import',
     'ChEMBL is offline or unreachable', 'rate limited', 'maxHeight: 520', 'PAGE_SIZE = 25',
     'Matched pair', 'Structural Transformation', '/api/matched-pairs/analyze-batch',
@@ -65,6 +65,8 @@ test('source contains bounded tables, exact/no-match, network states, provenance
   assert.match(source, /source/);
   assert.match(source, /mmpRequestIdentityRef/);
   assert.match(source, /requestIdentity === mmpRequestIdentityRef\.current/);
+  assert.match(source, /External record owner · ChEMBL reference/);
+  assert.match(source, /aria-label="Experimental evidence ownership comparison"/);
   assert.doesNotMatch(source, /activity cliff|SALI|interpolated activity/i);
 });
 

@@ -54,7 +54,7 @@ function structureUrl(baseUrl, smiles, width = 280, height = 190) {
   return `${baseUrl}/api/molecules/structure?${new URLSearchParams({ smiles, width: String(width), height: String(height) })}`;
 }
 
-function StructureCard({ baseUrl, label, name, smiles, nameVariant = 'h3' }) {
+function StructureCard({ baseUrl, label, name, smiles, nameVariant = 'h2' }) {
   return (
     <Paper variant="outlined" sx={{ p: 1.5, minWidth: 0, flex: 1 }}>
       <Typography variant="overline">{label}</Typography>
@@ -84,10 +84,10 @@ export function KnownAnalogTable({ analogs, selectedId, onSelect, sortMode, mmpB
     return right.moloptima_tanimoto - left.moloptima_tanimoto || left.source_compound_id.localeCompare(right.source_compound_id);
   }), [analogs, sortMode]);
   return (
-    <TableContainer sx={{ maxHeight: 520 }}>
+    <TableContainer sx={{ maxHeight: 520, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
       <Table stickyHeader size="small" aria-label="Known experimentally characterized analogs">
         <TableHead><TableRow><TableCell>Known compound</TableCell><TableCell align="right">MolOptima Tanimoto</TableCell><TableCell>Same Murcko scaffold</TableCell><TableCell>Matched pair</TableCell><TableCell align="right">Records</TableCell><TableCell align="right">Targets</TableCell><TableCell /></TableRow></TableHead>
-        <TableBody>{ordered.map((analog) => <TableRow key={analog.source_compound_id} selected={analog.source_compound_id === selectedId}>
+        <TableBody>{ordered.map((analog) => <TableRow key={analog.source_compound_id} selected={analog.source_compound_id === selectedId} aria-selected={analog.source_compound_id === selectedId}>
           <TableCell><Typography variant="body2" fontWeight={700}>{analog.preferred_name || analog.source_compound_id}</Typography><Typography variant="caption" sx={{ overflowWrap: 'anywhere' }}>{analog.source_compound_id}</Typography></TableCell>
           <TableCell align="right">{analog.moloptima_tanimoto.toFixed(3)}</TableCell>
           <TableCell>{analog.same_murcko_scaffold}</TableCell>
@@ -126,7 +126,7 @@ export function StructuralTransformation({ analysis, baseUrl }) {
 
 export function ExperimentalRecordTable({ records }) {
   return (
-    <TableContainer sx={{ maxHeight: 560 }}><Table stickyHeader size="small" aria-label="Known analog experimental records"><TableHead><TableRow><TableCell>Target</TableCell><TableCell>Assay</TableCell><TableCell>Endpoint</TableCell><TableCell>Experimental value</TableCell><TableCell>Normalized pEndpoint</TableCell><TableCell>Compatibility</TableCell><TableCell>Provenance</TableCell></TableRow></TableHead><TableBody>{records.map((record) => <TableRow key={record.measurement_id}><TableCell>{record.target?.name || record.target?.identifier || 'Unavailable'}<Typography variant="caption" display="block">{record.target?.organism || 'Organism unavailable'}</Typography></TableCell><TableCell>{record.assay_id || 'Unavailable'}<Typography variant="caption" display="block">{record.assay_type || 'Type unavailable'}</Typography></TableCell><TableCell>{record.endpoint_name || 'Unavailable'}</TableCell><TableCell><strong>{record.relation || 'relation unavailable'} {record.original_value ?? 'value unavailable'} {record.original_unit || ''}</strong>{record.quality_flags?.includes('censored_value') ? <Chip size="small" label="Censored" sx={{ ml: 0.5 }} /> : null}</TableCell><TableCell>{record.normalization?.status === 'normalized' ? `${record.normalization.transformed_relation} ${Number(record.normalization.transformed_value).toFixed(3)} ${record.normalization.transformed_endpoint}` : 'Not converted'}</TableCell><TableCell>{record.compatibility?.label}</TableCell><TableCell><Typography variant="caption" sx={{ overflowWrap: 'anywhere' }}>{record.source} · {record.source_record_id}<br />{record.publication_reference || 'No publication ID supplied'}<br />Retrieved {record.provenance?.retrieved_at}</Typography></TableCell></TableRow>)}</TableBody></Table></TableContainer>
+    <TableContainer sx={{ maxHeight: 560, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}><Table stickyHeader size="small" aria-label="Known analog experimental records"><TableHead><TableRow><TableCell>Target</TableCell><TableCell>Assay</TableCell><TableCell>Endpoint</TableCell><TableCell>Experimental value</TableCell><TableCell>Normalized pEndpoint</TableCell><TableCell>Compatibility</TableCell><TableCell>Record owner / provenance</TableCell></TableRow></TableHead><TableBody>{records.map((record) => <TableRow key={record.measurement_id}><TableCell>{record.target?.name || record.target?.identifier || 'Unavailable'}<Typography variant="caption" display="block">{record.target?.organism || 'Organism unavailable'}</Typography></TableCell><TableCell>{record.assay_id || 'Unavailable'}<Typography variant="caption" display="block">{record.assay_type || 'Type unavailable'}</Typography></TableCell><TableCell>{record.endpoint_name || 'Unavailable'}</TableCell><TableCell><strong>{record.relation || 'relation unavailable'} {record.original_value ?? 'value unavailable'} {record.original_unit || ''}</strong>{record.quality_flags?.includes('censored_value') ? <Chip size="small" label="Censored" sx={{ ml: 0.5 }} /> : null}</TableCell><TableCell>{record.normalization?.status === 'normalized' ? `${record.normalization.transformed_relation} ${Number(record.normalization.transformed_value).toFixed(3)} ${record.normalization.transformed_endpoint}` : 'Not converted'}</TableCell><TableCell>{record.compatibility?.label}</TableCell><TableCell><Typography variant="caption" sx={{ overflowWrap: 'anywhere' }}>{record.source} · {record.source_record_id}<br />{record.publication_reference || 'No publication ID supplied'}<br />Retrieved {record.provenance?.retrieved_at}</Typography></TableCell></TableRow>)}</TableBody></Table></TableContainer>
   );
 }
 
@@ -243,15 +243,15 @@ export default function ExperimentalNeighborhood({ upload, queryMolecule, baseUr
 
   if (!queryMolecule) return <Alert severity="info">Select a molecule on the Chemical Space map, then open Experimental Neighborhood.</Alert>;
   return (
-    <Stack spacing={2} data-testid="experimental-neighborhood">
-      <Box>
-        <Typography variant="h2">Experimental Neighborhood</Typography>
-        <Typography color="text.secondary">Search ChEMBL explicitly for the selected structure and experimentally characterized structural neighbors. No neighbor measurement is assigned to the selected molecule.</Typography>
-      </Box>
-      <Alert severity="warning">{SCIENTIFIC_NOTE}</Alert>
-      <Paper variant="outlined" sx={{ p: 2 }}>
+    <Stack spacing={1.5} data-testid="experimental-neighborhood">
+      <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ md: 'baseline' }} gap={0.5}>
+        <Box><Typography variant="h2">Experimental Neighborhood</Typography><Typography variant="caption" color="text.secondary">ChEMBL external evidence workspace · exact-structure checks, locally recalculated structural similarity, and assay-level records.</Typography></Box>
+        {searchResult ? <Typography variant="caption" color="text.secondary">Source · {searchResult.search_provenance.source} · cache {searchResult.search_provenance.cache_status}</Typography> : null}
+      </Stack>
+      <Alert severity="warning" sx={{ py: 0 }}>{SCIENTIFIC_NOTE}</Alert>
+      <Paper variant="outlined" sx={{ p: 1.5 }}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
-          <Box sx={{ flex: 1, minWidth: 0 }}><Typography variant="overline">Selected MolOptima compound</Typography><Typography variant="h3">{queryMolecule.display_name || queryMolecule.molecule_id}</Typography><Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>{queryMolecule.canonical_smiles}</Typography><Typography variant="caption">ID: {queryMolecule.molecule_id} · no experimental value is assigned by this search</Typography></Box>
+          <Box sx={{ flex: 1, minWidth: 0 }}><Typography variant="overline" color="text.secondary">MolOptima query compound</Typography><Typography variant="h2">{queryMolecule.display_name || queryMolecule.molecule_id}</Typography><Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>{queryMolecule.canonical_smiles}</Typography><Typography variant="caption">ID: {queryMolecule.molecule_id} · no experimental value is assigned by this search</Typography></Box>
           <FormControl size="small" sx={{ minWidth: 150 }}><InputLabel id="analog-limit-label">Known analogs</InputLabel><Select labelId="analog-limit-label" label="Known analogs" value={maxAnalogs} onChange={(event) => setMaxAnalogs(Number(event.target.value))}>{[10, 25, 50].map((value) => <MenuItem key={value} value={value}>Top {value}</MenuItem>)}</Select></FormControl>
           <Button variant="contained" disabled={searching || !upload?.upload_id} onClick={() => runSearch(false)}>Find experimental analogs</Button>
           {searchResult ? <Button variant="outlined" disabled={searching} onClick={() => runSearch(true)}>Refresh source</Button> : null}
@@ -261,22 +261,17 @@ export default function ExperimentalNeighborhood({ upload, queryMolecule, baseUr
       {searching ? <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={22} /><Typography>Searching ChEMBL by structure…</Typography></Stack> : null}
       {error ? <Alert severity="error"><strong>{error.code || 'Search unavailable'}:</strong> {error.message}</Alert> : null}
       {searchResult ? <>
-        <Alert severity={searchResult.exact_match ? 'success' : 'info'}>{searchResult.exact_match ? `Exact structure match found in ChEMBL (${searchResult.exact_matches.length}).` : 'No exact structure match found in the searched database.'}</Alert>
         <Paper variant="outlined" sx={{ p: 1.5 }} aria-label="Experimental Neighborhood summary">
-          <Typography variant="h3" gutterBottom>Experimental Neighborhood summary</Typography>
-          <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1}>
-            <Chip label={`Exact ChEMBL match: ${searchResult.exact_match ? 'Yes' : 'No'}`} />
-            <Chip label={`Structural neighbors: ${searchResult.analogs.length}`} />
-            <Chip label={`Highest retrieved Tanimoto: ${highestSimilarity}`} />
-            <Chip label={`Same-scaffold neighbors: ${sameScaffoldCount}`} />
-            <Chip label={`Matched pairs: ${mmpLoading ? 'Analyzing…' : mmpPayload?.matched_pair_count ?? 'Not analyzed'}`} />
-            <Chip label={`Analogs with loaded records: ${analogsWithRecords}`} />
-            <Chip label={`Targets in selected records: ${representedTargets}`} />
-          </Stack>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, minmax(0, 1fr))' }, gap: 1.5 }}>
+            <Box><Typography variant="caption" color="text.secondary">Exact structure match</Typography><Typography variant="h2">{searchResult.exact_match ? 'Yes' : 'No'}</Typography><Typography variant="caption">{searchResult.exact_match ? `${searchResult.exact_matches.length} ChEMBL structure match` : 'No exact structure match found in the searched database'}</Typography></Box>
+            <Box><Typography variant="caption" color="text.secondary">Structural analogs</Typography><Typography variant="h2">{searchResult.analogs.length}</Typography><Typography variant="caption">Highest local Tanimoto {highestSimilarity}</Typography></Box>
+            <Box><Typography variant="caption" color="text.secondary">Structural context</Typography><Typography variant="h2">{sameScaffoldCount} same scaffold</Typography><Typography variant="caption">Matched pairs {mmpLoading ? 'analyzing…' : mmpPayload?.matched_pair_count ?? 'not analyzed'}</Typography></Box>
+            <Box><Typography variant="caption" color="text.secondary">Loaded evidence</Typography><Typography variant="h2">{analogsWithRecords} analogs</Typography><Typography variant="caption">{representedTargets} targets in selected records</Typography></Box>
+          </Box>
         </Paper>
         {mmpError ? <Alert severity="warning">Structural transformation analysis is unavailable: {mmpError}. The ChEMBL search result remains available.</Alert> : null}
         {!allKnown.length ? <Alert severity="info">ChEMBL returned no exact matches or structural analogs for this bounded query.</Alert> : null}
-        <Tabs value={view} onChange={(_, value) => setView(value)} aria-label="Experimental Neighborhood views"><Tab label="Known Analogs" /><Tab label="Experimental Records" /></Tabs>
+        <Tabs value={view} onChange={(_, value) => setView(value)} aria-label="Experimental Neighborhood views" sx={{ minHeight: 36, borderBottom: '1px solid', borderColor: 'divider', '& .MuiTab-root': { minHeight: 36, py: 0.5 } }}><Tab label="Known Analogs" /><Tab label="Experimental Records" /></Tabs>
         {view === 0 ? <Stack spacing={1.5}>
           <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1}><Stack direction="row" useFlexGap flexWrap="wrap" spacing={1}><Chip label={`${searchResult.exact_matches.length} exact`} /><Chip label={`${searchResult.analogs.length} structural neighbors`} /><Chip label={`Source retrieval threshold ${searchResult.search_provenance.source_query_threshold}%`} /></Stack><FormControl size="small" sx={{ minWidth: 210 }}><InputLabel id="analog-sort-label">Order analogs by</InputLabel><Select labelId="analog-sort-label" label="Order analogs by" value={sortMode} onChange={(event) => setSortMode(event.target.value)}><MenuItem value="similarity">MolOptima Tanimoto</MenuItem><MenuItem value="records">Experimental record count</MenuItem><MenuItem value="targets">Target count</MenuItem><MenuItem value="source_id">Source compound ID</MenuItem></Select></FormControl></Stack>
           <Typography variant="caption" color="text.secondary">The source threshold is only a ChEMBL retrieval parameter, not a MolOptima scientific analog cutoff. Similarities below are recalculated locally.</Typography>
@@ -285,7 +280,7 @@ export default function ExperimentalNeighborhood({ upload, queryMolecule, baseUr
         </Stack> : <Stack spacing={2}>
           {!selectedAnalog ? <Alert severity="info">Choose a known compound in Known Analogs to retrieve its assay-level experimental records.</Alert> : null}
           {recordsLoading ? <Stack direction="row" spacing={1}><CircularProgress size={22} /><Typography>Retrieving assay-level records…</Typography></Stack> : null}
-          {selectedAnalog ? <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}><StructureCard baseUrl={baseUrl} label="Selected MolOptima compound · no assigned experimental activity" name={queryMolecule.display_name || queryMolecule.molecule_id} smiles={queryMolecule.canonical_smiles} /><StructureCard baseUrl={baseUrl} label="Known reference compound · experimental records below" name={selectedAnalog.preferred_name || selectedAnalog.source_compound_id} smiles={selectedAnalog.canonical_smiles} /></Stack> : null}
+          {selectedAnalog ? <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} aria-label="Experimental evidence ownership comparison"><StructureCard baseUrl={baseUrl} label="MolOptima query · no assigned experimental activity" name={queryMolecule.display_name || queryMolecule.molecule_id} smiles={queryMolecule.canonical_smiles} /><StructureCard baseUrl={baseUrl} label="External record owner · ChEMBL reference" name={selectedAnalog.preferred_name || selectedAnalog.source_compound_id} smiles={selectedAnalog.canonical_smiles} /></Stack> : null}
           {selectedAnalog ? <TableContainer><Table size="small" aria-label="Selected compound and known analog comparison"><TableHead><TableRow><TableCell>Attribute</TableCell><TableCell>Selected MolOptima compound</TableCell><TableCell>Known reference analog</TableCell></TableRow></TableHead><TableBody>
             {[
               ['Evidence ownership', 'Calculated/predicted/computational evidence belongs to selected compound', 'Experimental measurements belong to external known analog'],

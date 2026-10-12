@@ -26,7 +26,9 @@ test('scaffold browser renders counts, acyclic state, search, and provenance-saf
   assert.match(html, /Search scaffold ID or SMILES/);
   assert.match(html, /No ring scaffold/);
   assert.match(html, /2 members/);
-  assert.match(html, /do not establish activity, potency, preference/);
+  assert.match(html, /no activity, potency, preference/);
+  assert.match(html, /aria-label="Scaffold browser"/);
+  assert.match(html, /aria-pressed="false"/);
 });
 
 test('selected scaffold renders bounded members, shared-selection controls, and ADMET unavailable state', () => {
