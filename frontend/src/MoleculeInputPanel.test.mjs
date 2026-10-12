@@ -54,13 +54,19 @@ test('single-compound summary reports counts, preview provenance, and mode', () 
     filename: 'ethanol.sdf', submitted_count: 1, valid_count: 1, invalid_count: 0,
     unresolved_pdb_count: 0, duplicate_count: 0, ignored_file_count: 0,
     multi_record_sdf_count: 0, analysis_mode: 'single_compound',
-    preview: [{ molecule_id: 'ethanol', source_type: 'sdf', source_filename: 'ethanol.sdf', canonical_smiles: 'CCO', structure_status: 'validated', coordinate_status: '3d', warnings: [] }],
+    upload_id: 'upload-ethanol',
+    preview: [{ molecule_id: 'ethanol', source_type: 'sdf', source_filename: 'ethanol.sdf', canonical_smiles: 'CCO', structure_status: 'validated', coordinate_status: '3d', validation_status: 'valid', warnings: [] }],
   });
   assert.match(html, /Single Compound Analysis/);
-  assert.match(html, /1 valid compound loaded/);
-  assert.match(html, /canonical_smiles/);
+  assert.match(html, /1 imported \/ 1 valid/);
+  assert.match(html, /Canonical SMILES/);
   assert.match(html, />Structure</);
   assert.match(html, /aria-label="3D structure preview for ethanol"/);
+  assert.match(html, /aria-label="Inspect ethanol"/);
+  assert.match(html, /aria-pressed="true"/);
+  assert.match(html, />Valid</);
+  assert.match(html, /Upload ID/);
+  assert.match(html, /upload-ethanol/);
   assert.doesNotMatch(html, />warnings</i);
   assert.match(html, /ethanol\.sdf/);
   assert.doesNotMatch(html, /[A-Za-z]:\\Users\\/);
@@ -74,7 +80,7 @@ test('preview replaces warning text with a keyboard-reachable warning tooltip co
     multi_record_sdf_count: 0, analysis_mode: 'single_compound',
     preview: [{
       molecule_id: 'ethanol', source_type: 'sdf', source_filename: 'ethanol.sdf',
-      canonical_smiles: 'CCO', structure_status: 'validated', coordinate_status: '3d',
+      canonical_smiles: 'CCO', structure_status: 'validated', coordinate_status: '3d', validation_status: 'valid',
       warnings: [warning], failure_reason: '',
     }],
   });
@@ -82,7 +88,8 @@ test('preview replaces warning text with a keyboard-reachable warning tooltip co
   assert.match(html, new RegExp(`aria-label="Import warning for ethanol: ${warning}`));
   assert.match(html, /<button[^>]*aria-label="Import warning for ethanol:/);
   assert.doesNotMatch(html, /<th[^>]*>warnings<\/th>/i);
-  assert.equal((html.match(new RegExp(warning, 'g')) ?? []).length, 1);
+  assert.equal((html.match(new RegExp(warning, 'g')) ?? []).length, 2);
+  assert.match(html, /VALIDATION \/ PROVENANCE/);
 });
 
 test('preview omits the warning control when no warning or failure exists', () => {
@@ -90,10 +97,25 @@ test('preview omits the warning control when no warning or failure exists', () =
     filename: 'ethanol.sdf', submitted_count: 1, valid_count: 1, invalid_count: 0,
     analysis_mode: 'single_compound', preview: [{
       molecule_id: 'ethanol', source_type: 'sdf', canonical_smiles: 'CCO',
-      structure_status: 'validated', coordinate_status: 'none', warnings: [], failure_reason: '',
+      structure_status: 'validated', coordinate_status: 'none', validation_status: 'valid', warnings: [], failure_reason: '',
     }],
   });
   assert.doesNotMatch(html, /Import warning for ethanol/);
+});
+
+test('preview distinguishes focused inspection from pending-file batch selection', () => {
+  const html = render({
+    upload_id: 'focused-upload', filename: 'mixed.csv', submitted_count: 2, valid_count: 1, invalid_count: 1,
+    analysis_mode: 'single_compound', preview: [
+      { molecule_id: 'valid-1', source_type: 'smiles', canonical_smiles: 'CCO', structure_status: 'validated', coordinate_status: 'none', validation_status: 'valid', warnings: [] },
+      { molecule_id: 'invalid-1', source_type: 'smiles', input_smiles: 'not-smiles', structure_status: 'invalid_smiles', coordinate_status: 'none', validation_status: 'invalid', failure_reason: 'Invalid SMILES' },
+    ],
+  });
+  assert.match(html, /aria-label="Inspect valid-1"/);
+  assert.match(html, /aria-label="Inspect invalid-1"/);
+  assert.match(html, /Selected compound: valid-1/);
+  assert.match(html, />Invalid</);
+  assert.doesNotMatch(html, /type="checkbox"/);
 });
 
 test('library and multi-record rejection states are explicit', () => {
@@ -103,7 +125,7 @@ test('library and multi-record rejection states are explicit', () => {
     multi_record_sdf_count: 1, analysis_mode: 'library', preview: [],
   });
   assert.match(library, /Library Prioritization/);
-  assert.match(library, /2 valid compounds loaded/);
+  assert.match(library, /3 imported \/ 2 valid/);
   assert.match(library, /MolOptima accepts one molecule per SDF file/);
 });
 
@@ -203,7 +225,7 @@ test('renders acknowledged chunk progress and cancel action without replacing lo
   assert.match(html, /Batch 1 of 3/);
   assert.match(html, /250 molecule records parsed/);
   assert.match(html, /Cancel import/);
-  assert.match(html, /Input Summary/);
+  assert.match(html, /Validated collection/);
 });
 
 test('renders stopped chunk progress honestly after a failure', () => {
@@ -216,7 +238,7 @@ test('renders stopped chunk progress honestly after a failure', () => {
   });
   assert.match(html, /Import stopped/);
   assert.doesNotMatch(html, />Importing molecules</);
-  assert.match(html, /Input Summary/);
+  assert.match(html, /Validated collection/);
 });
 
 test('finalization is visibly non-cancellable', () => {
