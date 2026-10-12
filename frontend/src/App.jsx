@@ -1350,33 +1350,26 @@ export function DockingWorkflowPage({
   const vinaVersion = dockedRows.find((row) => row.docking_result?.vina_version)?.docking_result?.vina_version;
   const single = uploadState.upload?.analysis_mode === 'single_compound';
   return (
-    <Stack spacing={2}>
-      <PageIntro title="Receptor & Docking" description="Inspect the visualization structure, attach a prepared receptor, define an explicit binding-site box, and run the existing Vina workflow." />
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1.65fr) minmax(300px, 0.75fr)' }, gap: 2, alignItems: 'start' }}>
-        <DockingSetup apiBaseUrl={apiBaseUrl} onConfirmed={onDockingSetupConfirmed} />
-        <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
-          <Stack spacing={1.5}>
-            <Typography variant="h2">Docking run</Typography>
-            <WorkflowStatusChip status={ready ? 'Ready' : uploadState.upload ? 'Needs attention' : 'Not started'} />
-            <Typography color="text.secondary">
-              {uploadState.upload
-                ? `${submittedMoleculeCount} submitted; ${validMoleculeCount} valid molecule${validMoleculeCount === 1 ? '' : 's'} available.`
-                : 'Upload molecules before docking.'}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Run Docking starts the existing combined local calculation; ADMET and {single ? 'compound assessment' : 'prioritization'} continue in the same auditable job.
-            </Typography>
-            <Typography component="div" variant="caption" color="text.secondary">Ligand preparation: RDKit 3D → Open Babel PDBQT</Typography>
-            <Typography component="div" variant="caption" color="text.secondary">Vina runtime: {vinaVersion ? `available · ${vinaVersion}` : 'not yet verified for this calculation'}</Typography>
-            <Typography component="div" variant="caption" color="text.secondary">Receptor: validated prepared PDBQT required</Typography>
-            <Button variant="contained" disabled={!ready || prioritizationState.loading} onClick={onRunDocking}>
-              {prioritizationState.loading ? 'Calculation running' : 'Run Docking'}
-            </Button>
-            <Button data-testid="continue-to-admet" variant="outlined" disabled={!hasValidMolecules} onClick={() => onNavigate('ADMET')}>Continue to ADMET</Button>
-            {prioritizationState.error ? <Alert severity="error">{prioritizationState.error}</Alert> : null}
-          </Stack>
-        </Paper>
-      </Box>
+    <Stack spacing={1.5}>
+      <DockingSetup apiBaseUrl={apiBaseUrl} onConfirmed={onDockingSetupConfirmed} />
+      <Paper elevation={0} sx={{ px: 1.5, py: 1, border: '1px solid', borderColor: 'divider', display: 'flex', gap: 1.5, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+        <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+          <Typography variant="h2">Docking run</Typography>
+          <WorkflowStatusChip status={ready ? 'Ready' : uploadState.upload ? 'Needs attention' : 'Not started'} />
+          <Typography variant="body2" color="text.secondary">
+            {uploadState.upload
+              ? `${submittedMoleculeCount} submitted · ${validMoleculeCount} valid molecule${validMoleculeCount === 1 ? '' : 's'}`
+              : 'Upload molecules before docking'}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">PDBQT required · RDKit 3D → Open Babel · Vina {vinaVersion || 'not yet verified'}</Typography>
+        </Stack>
+        <Stack direction="row" spacing={0.75} alignItems="center">
+          <Box component="details"><Typography component="summary" variant="caption" sx={{ cursor: 'pointer', fontWeight: 700 }}>Calculation scope</Typography><Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, maxWidth: 430 }}>Run Docking starts the existing combined local calculation; ADMET and {single ? 'compound assessment' : 'prioritization'} continue in the same auditable job.</Typography></Box>
+          <Button size="small" variant="contained" disabled={!ready || prioritizationState.loading} onClick={onRunDocking}>{prioritizationState.loading ? 'Calculation running' : 'Run Docking'}</Button>
+          <Button size="small" data-testid="continue-to-admet" variant="outlined" disabled={!hasValidMolecules} onClick={() => onNavigate('ADMET')}>Continue to ADMET</Button>
+        </Stack>
+        {prioritizationState.error ? <Alert severity="error" sx={{ flexBasis: '100%' }}>{prioritizationState.error}</Alert> : null}
+      </Paper>
       {dockedRows.length ? (
         <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
           <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1} sx={{ mb: 1 }}><Box><Typography variant="h2">Current docking results</Typography><Typography variant="caption" color="text.secondary">Successful: {successfulDocking} / {dockedRows.length}</Typography></Box><Button variant="outlined" disabled={!dockedRows.length} onClick={() => setSelectedKey(compoundRowKey(dockedRows[0], 0))}>View Docking Results</Button></Stack>

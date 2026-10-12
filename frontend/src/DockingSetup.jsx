@@ -489,179 +489,157 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed }) {
   }
 
   return (
-    <Box component="section" aria-label="Docking setup" sx={{ width: '100%', p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1, bgcolor: 'background.paper' }}>
-      <Stack spacing={1.5}>
-        <Box><Typography variant="h2">Receptor workspace</Typography><Typography variant="caption" color="text.secondary">
-          PDB is retained for visualization and scientific selection. MolOptima performs conservative side-chain repair before generating a rigid Meeko/Vina receptor.
-        </Typography></Box>
-        <Box>
-          <Button aria-label="Select PDB for visualization" variant="outlined" component="label" startIcon={<UploadFileOutlinedIcon />}>Select PDB for visualization<input hidden type="file" accept=".pdb" onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)} /></Button>
+    <Box component="section" aria-label="Docking setup" sx={{ width: '100%', border: '1px solid', borderColor: 'divider', borderRadius: 1, bgcolor: 'background.paper', overflow: 'hidden' }}>
+      <Box sx={{ px: 1.5, py: 1, borderBottom: '1px solid', borderColor: 'divider', display: 'flex', gap: 1, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="h2">Receptor workspace</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {receptor ? `${receptor.display_name} · ${receptor.original_filename}` : 'Load a receptor structure to begin'}
+          </Typography>
         </Box>
-        <Box component="details"><Typography component="summary" variant="subtitle2" sx={{ cursor: 'pointer' }}>Advanced / reproducibility: already have a prepared docking receptor?</Typography><Stack sx={{ mt: 1 }} spacing={0.75}>
-          <Typography variant="caption" color="text.secondary">The uploaded PDBQT is preserved unchanged and validated through the same fail-closed receptor validator.</Typography>
-          <Button aria-label="Select prepared PDBQT" variant="outlined" component="label" startIcon={<UploadFileOutlinedIcon />}>Select prepared PDBQT<input hidden type="file" accept=".pdbqt" onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)} /></Button>
-        </Stack></Box>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
-          <Typography variant="caption" sx={{ flex: 1 }}>{selectedFile?.name ?? 'No receptor artifact selected'}</Typography>
-          <Button variant="contained" disabled={!selectedFile || loading} onClick={handleUpload}>{loading ? 'Processing' : 'Upload selected artifact'}</Button>
+        <Stack direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
+          <Button size="small" aria-label="Select PDB for visualization" variant="outlined" component="label" startIcon={<UploadFileOutlinedIcon />}>Select PDB<input hidden type="file" accept=".pdb" onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)} /></Button>
+          <Typography variant="caption" sx={{ maxWidth: 220, overflowWrap: 'anywhere' }}>{selectedFile?.name ?? 'No receptor selected'}</Typography>
+          <Button size="small" variant="contained" disabled={!selectedFile || loading} onClick={handleUpload}>{loading ? 'Processing' : 'Upload receptor'}</Button>
         </Stack>
-        {receptor ? <Alert severity={receptor.docking_ready ? 'success' : 'info'}>
-          {receptor.display_name} · PDB visualization: {receptor.visualization_available ? 'available' : 'unavailable'} · prepared PDBQT: {receptor.docking_ready ? `validated (${receptor.receptor_source === 'moloptima_prepared' ? 'prepared by MolOptima' : 'user supplied'})` : 'required'}
-        </Alert> : null}
+      </Box>
 
-        <Box sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(320px, .72fr) minmax(0, 1.45fr)' }, minHeight: 540 }}>
+        <Box sx={{ p: 1.25, borderRight: { md: '1px solid' }, borderBottom: { xs: '1px solid', md: 0 }, borderColor: 'divider', maxHeight: { md: 650 }, overflowY: { md: 'auto' } }}>
           <Stack spacing={1.25}>
-            <Box><Typography variant="h2">Receptor Preparation</Typography><Typography variant="caption" color="text.secondary">
-              Structure: {receptor?.original_filename ?? 'Load a PDB to inspect preparation choices'}
-            </Typography></Box>
-            <Alert severity={preparationRuntime?.available ? 'success' : 'warning'}>
-              Receptor preparation runtime: {preparationRuntime?.available ? `PDBFixer/OpenMM + Meeko ${preparationRuntime.version} available` : (preparationRuntime?.reason || 'checking availability')}. Missing residues, terminal completion, hydrogen optimization, and pH-dependent protonation are not performed.
-            </Alert>
-            <Typography variant="caption">Hydrogen optimization and pH-dependent protonation are not performed.</Typography>
-            <Typography variant="body2">MolOptima uses Meeko to prepare the AutoDock/Vina receptor representation. The final PDBQT retains the explicit polar/donor hydrogens required by the AutoDock atom representation; nonpolar hydrogens are not retained as independent docking atoms.</Typography>
-            {inventory ? <>
-              <Box><Typography variant="subtitle2">Protein chains</Typography><Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                {(inventory.protein?.chains ?? []).map((item) => <FormControlLabel key={item.chain || '_blank'} control={<Checkbox checked={selectedChains.includes(item.chain)} onChange={() => toggleChain(item.chain)} />} label={`${item.chain || '(blank)'} · ${item.residue_count} residues`} />)}
-              </Stack></Box>
-              <Box><Typography variant="subtitle2">Waters</Typography><FormControlLabel control={<Radio checked readOnly />} label={`Remove all waters (${inventory.waters?.count ?? 0} detected)`} /><Typography variant="caption" color="text.secondary" display="block">Selected-water retention is not supported safely in Stage 1; removal is explicit and recorded, not presented as universally optimal.</Typography></Box>
-              <Box><Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
-                <Typography variant="subtitle2">Hetero groups</Typography>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  disabled={!(inventory.hetero_groups ?? []).length}
-                  onClick={() => setReceptorState((current) => excludeAllHeteroGroups(current, inventory.hetero_groups))}
-                >
-                  Exclude all
-                </Button>
+            <Box sx={{ p: 1.25, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+              <Stack spacing={1}>
+                <Stack direction="row" justifyContent="space-between" gap={1} alignItems="baseline">
+                  <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>Receptor setup</Typography>
+                  <Typography variant="caption" color={receptor?.docking_ready ? 'success.dark' : 'text.secondary'}>
+                    {receptor?.docking_ready ? 'PDBQT ready' : 'Preparation required'}
+                  </Typography>
+                </Stack>
+                <Typography variant="caption" color="text.secondary">
+                  Receptor preparation runtime: {preparationRuntime?.available ? `PDBFixer/OpenMM + Meeko ${preparationRuntime.version} available` : (preparationRuntime?.reason || 'checking availability')}.
+                </Typography>
+                <Box component="details"><Typography component="summary" variant="caption" sx={{ cursor: 'pointer', fontWeight: 700 }}>Receptor Preparation policy</Typography><Stack spacing={0.5} sx={{ mt: 0.75 }}>
+                  <Typography variant="caption" color="text.secondary">Hydrogen optimization and pH-dependent protonation are not performed. Missing residues and terminal completion remain fail-closed.</Typography>
+                  <Typography variant="caption" color="text.secondary">MolOptima uses Meeko to prepare the AutoDock/Vina receptor representation. The final PDBQT retains the explicit polar/donor hydrogens required by the AutoDock atom representation; nonpolar hydrogens are not retained as independent docking atoms.</Typography>
+                </Stack></Box>
+                {inventory ? <>
+                  <Box><Typography variant="caption" sx={{ fontWeight: 700 }}>Protein chains</Typography><Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                    {(inventory.protein?.chains ?? []).map((item) => <FormControlLabel key={item.chain || '_blank'} sx={{ mr: 0 }} control={<Checkbox size="small" checked={selectedChains.includes(item.chain)} onChange={() => toggleChain(item.chain)} />} label={`${item.chain || '(blank)'} · ${item.residue_count}`} />)}
+                  </Stack></Box>
+                  <Typography variant="caption">Waters: remove all ({inventory.waters?.count ?? 0} detected)</Typography>
+                  <Box component="details">
+                    <Typography component="summary" variant="subtitle2" sx={{ cursor: 'pointer' }}>Preparation choices and provenance</Typography>
+                    <Stack spacing={1} sx={{ mt: 1 }}>
+                      <Typography variant="caption" color="text.secondary">How do you want MolOptima to prepare the receptor? New heterogroups default to Exclude; pocket use remains a separate choice.</Typography>
+                      <Stack direction="row" alignItems="center" justifyContent="space-between"><Typography variant="subtitle2">Hetero groups</Typography><Button size="small" variant="text" disabled={!(inventory.hetero_groups ?? []).length} onClick={() => setReceptorState((current) => excludeAllHeteroGroups(current, inventory.hetero_groups))}>Exclude all</Button></Stack>
+                      <Box sx={{ maxWidth: '100%', overflowX: 'auto' }}>
+                        {(inventory.hetero_groups ?? []).length ? <Table size="small" aria-label="Receptor hetero groups" sx={{ minWidth: 620 }}><TableHead><TableRow><TableCell>Receptor action</TableCell><TableCell>Use for pocket</TableCell><TableCell>Type</TableCell><TableCell>Residue</TableCell><TableCell>Chain</TableCell><TableCell>Number</TableCell><TableCell align="right">Atoms</TableCell></TableRow></TableHead><TableBody>
+                          {inventory.hetero_groups.map((group) => <TableRow key={group.group_id}><TableCell><TextField select size="small" aria-label={`Receptor action ${group.group_id}`} value={heteroChoices[group.group_id] ?? 'exclude'} onChange={(event) => setHeteroAction(group.group_id, event.target.value)} sx={{ minWidth: 105 }}><MenuItem value="keep">Keep</MenuItem><MenuItem value="exclude">Exclude</MenuItem></TextField></TableCell><TableCell><Checkbox size="small" aria-label={`Use ${group.group_id} for pocket definition`} checked={pocketGroupId === group.group_id} onChange={(event) => useHeteroForPocket(group, event.target.checked)} /></TableCell><TableCell>{group.type.replace('_', ' ')}</TableCell><TableCell>{group.residue_name}</TableCell><TableCell>{group.chain || '–'}</TableCell><TableCell>{group.residue_number}{group.insertion_code}</TableCell><TableCell align="right">{group.atom_count}</TableCell></TableRow>)}
+                        </TableBody></Table> : <Typography variant="caption" color="text.secondary">No non-water hetero groups detected.</Typography>}
+                      </Box>
+                      {(inventory.alternate_locations ?? []).length ? <Stack spacing={0.75}><Typography variant="subtitle2">Alternate locations</Typography>{inventory.alternate_locations.map((item) => <TextField key={item.residue_key} select size="small" label={`Conformer for ${item.residue_key}`} value={altlocChoices[item.residue_key] ?? ''} onChange={(event) => setAltlocChoices((current) => ({ ...current, [item.residue_key]: event.target.value }))}><MenuItem value=""><em>Choose explicitly</em></MenuItem>{item.choices.map((choice) => <MenuItem key={choice} value={choice}>{choice}</MenuItem>)}</TextField>)}</Stack> : null}
+                      <Box sx={{ bgcolor: '#f7f9fb', p: 1 }}><Typography variant="subtitle2">Preparation Summary</Typography>
+                        <Typography variant="caption" display="block">Input: {receptor.original_filename}</Typography>
+                        <Typography variant="caption" display="block">Protein chains: {selectedChains.length ? selectedChains.map((chain) => chain || '(blank)').join(', ') : 'none selected'}</Typography>
+                        <Typography variant="caption" display="block">Waters: remove {inventory.waters?.count ?? 0}</Typography>
+                        <Typography variant="caption" display="block">Retained hetero groups: {summarizeHetero(inventory.hetero_groups, heteroChoices, 'keep')}</Typography>
+                        <Typography variant="caption" display="block">Excluded hetero groups: {summarizeHetero(inventory.hetero_groups, heteroChoices, 'exclude')}</Typography>
+                        <Typography variant="caption" display="block">Pocket-definition group: {pocketGroupId || 'none selected'}</Typography>
+                        <Typography variant="caption" display="block">Ligand copies removed before repair: {ligandRemovalIds.length ? ligandRemovalIds.join(', ') : 'none'}</Typography>
+                        <Typography variant="caption" display="block">Repair policy: missing side-chain heavy atoms only; stop on missing backbone or residue blocks</Typography>
+                        <Typography variant="caption" display="block">Hydrogen handling: Meeko/RDKit residue-template completion; no Reduce2 optimization or resolved pH policy</Typography>
+                        <Typography variant="caption" display="block">Receptor preparation: Meeko {preparationRuntime?.version ?? 'unavailable'}</Typography>
+                      </Box>
+                    </Stack>
+                  </Box>
+                  <Button size="small" variant="contained" disabled={!preparationRuntime?.available || !preparationReady || preparing} onClick={handlePrepare}>{preparing ? 'Preparing receptor…' : 'Prepare Receptor'}</Button>
+                  {!preparationReady ? <Typography variant="caption" color="warning.main">Select at least one protein chain and complete every hetero/alternate-location choice.</Typography> : null}
+                  {receptor.preparation_status === 'valid' && receptor.receptor_source === 'moloptima_prepared' ? <Alert severity="success" sx={{ py: 0 }}>
+                    Prepared receptor ready · PDBQT saved · SHA-256 {receptor.docking_receptor_sha256?.slice(0, 12)}… · Meeko {receptor.preparation_details?.meeko_version}. Repair PASS: {receptor.preparation_details?.repair_audit?.added_atom_count ?? 0} heavy atoms added across {receptor.preparation_details?.repair_validation?.repaired_residue_count ?? 0} residues; max displacement {Number(receptor.preparation_details?.repair_validation?.coordinate_preservation?.maximum_displacement_A ?? 0).toFixed(3)} Å; severe clashes {receptor.preparation_details?.repair_validation?.severe_clash_count ?? 0}.
+                  </Alert> : null}
+                </> : <Typography variant="caption" color="text.secondary">Upload a PDB to inspect chains, waters, hetero groups, and alternate locations.</Typography>}
+                <Box component="details"><Typography component="summary" variant="caption" sx={{ cursor: 'pointer', fontWeight: 700 }}>Advanced / reproducibility: prepared PDBQT</Typography><Stack sx={{ mt: 1 }} spacing={0.75}>
+                  <Typography variant="caption" color="text.secondary">The uploaded PDBQT is preserved unchanged and validated through the same fail-closed receptor validator.</Typography>
+                  <Button size="small" aria-label="Select prepared PDBQT" variant="outlined" component="label" startIcon={<UploadFileOutlinedIcon />}>Select prepared PDBQT<input hidden type="file" accept=".pdbqt" onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)} /></Button>
+                </Stack></Box>
               </Stack>
-                {(inventory.hetero_groups ?? []).length ? <Table size="small" aria-label="Receptor hetero groups"><TableHead><TableRow><TableCell>Receptor action</TableCell><TableCell>Use for pocket</TableCell><TableCell>Type</TableCell><TableCell>Residue</TableCell><TableCell>Chain</TableCell><TableCell>Number</TableCell><TableCell align="right">Atoms</TableCell></TableRow></TableHead><TableBody>
-                  {inventory.hetero_groups.map((group) => <TableRow key={group.group_id}><TableCell><TextField select size="small" aria-label={`Receptor action ${group.group_id}`} value={heteroChoices[group.group_id] ?? 'exclude'} onChange={(event) => setHeteroAction(group.group_id, event.target.value)} sx={{ minWidth: 110 }}><MenuItem value="keep">Keep</MenuItem><MenuItem value="exclude">Exclude</MenuItem></TextField></TableCell><TableCell><Checkbox aria-label={`Use ${group.group_id} for pocket definition`} checked={pocketGroupId === group.group_id} onChange={(event) => useHeteroForPocket(group, event.target.checked)} /></TableCell><TableCell>{group.type.replace('_', ' ')}</TableCell><TableCell>{group.residue_name}</TableCell><TableCell>{group.chain || '–'}</TableCell><TableCell>{group.residue_number}{group.insertion_code}</TableCell><TableCell align="right">{group.atom_count}</TableCell></TableRow>)}
-                </TableBody></Table> : <Typography variant="caption" color="text.secondary">No non-water hetero groups detected.</Typography>}
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>Heterogroups are excluded from the prepared docking receptor by default. Keep only ions, cofactors, ligands, or other groups required for your docking model. Unsupported retained groups fail preparation; they are never silently dropped.</Typography>
-              </Box>
-              {(inventory.alternate_locations ?? []).length ? <Box><Typography variant="subtitle2">Alternate locations</Typography><Stack spacing={0.75}>{inventory.alternate_locations.map((item) => <TextField key={item.residue_key} select size="small" label={`Conformer for ${item.residue_key}`} value={altlocChoices[item.residue_key] ?? ''} onChange={(event) => setAltlocChoices((current) => ({ ...current, [item.residue_key]: event.target.value }))}><MenuItem value=""><em>Choose explicitly</em></MenuItem>{item.choices.map((choice) => <MenuItem key={choice} value={choice}>{choice}</MenuItem>)}</TextField>)}</Stack></Box> : null}
-              <Box sx={{ bgcolor: '#f7f9fb', p: 1.25, borderRadius: 1 }}><Typography variant="subtitle2">Preparation Summary</Typography>
-                <Typography variant="body2">Input: {receptor.original_filename}</Typography>
-                <Typography variant="body2">Protein chains: {selectedChains.length ? selectedChains.map((chain) => chain || '(blank)').join(', ') : 'none selected'}</Typography>
-                <Typography variant="body2">Waters: remove {inventory.waters?.count ?? 0}</Typography>
-                <Typography variant="body2">Retained hetero groups: {summarizeHetero(inventory.hetero_groups, heteroChoices, 'keep')}</Typography>
-                <Typography variant="body2">Excluded hetero groups: {summarizeHetero(inventory.hetero_groups, heteroChoices, 'exclude')}</Typography>
-                <Typography variant="body2">Pocket-definition group: {pocketGroupId || 'none selected'}</Typography>
-                <Typography variant="body2">Ligand copies removed before repair: {ligandRemovalIds.length ? ligandRemovalIds.join(', ') : 'none'}</Typography>
-                <Typography variant="body2">Repair policy: missing side-chain heavy atoms only; stop on missing backbone or residue blocks</Typography>
-                <Typography variant="body2">Hydrogen handling: Meeko/RDKit residue-template completion; no Reduce2 optimization or resolved pH policy</Typography>
-                <Typography variant="body2">Receptor preparation: Meeko {preparationRuntime?.version ?? 'unavailable'}</Typography>
-              </Box>
-              <Button variant="contained" disabled={!preparationRuntime?.available || !preparationReady || preparing} onClick={handlePrepare}>{preparing ? 'Preparing receptor…' : 'Prepare Receptor'}</Button>
-              {!preparationReady ? <Typography variant="caption" color="warning.main">Select at least one protein chain and complete every hetero/alternate-location choice.</Typography> : null}
-              {receptor.preparation_status === 'valid' && receptor.receptor_source === 'moloptima_prepared' ? <Alert severity="success">
-                Prepared receptor: ready for docking · PDBQT saved · SHA-256 {receptor.docking_receptor_sha256?.slice(0, 12)}… · Meeko {receptor.preparation_details?.meeko_version}. Repair PASS: {receptor.preparation_details?.repair_audit?.added_atom_count ?? 0} heavy atoms added across {receptor.preparation_details?.repair_validation?.repaired_residue_count ?? 0} residues; max observed-atom displacement {Number(receptor.preparation_details?.repair_validation?.coordinate_preservation?.maximum_displacement_A ?? 0).toFixed(3)} Å; severe clashes {receptor.preparation_details?.repair_validation?.severe_clash_count ?? 0}. This PDBQT is reused for docking.
-              </Alert> : null}
-            </> : <Typography variant="body2" color="text.secondary">Upload a PDB to display chains, waters, hetero groups, and alternate locations.</Typography>}
+            </Box>
+
+            <Box sx={{ p: 1.25, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+              <Stack spacing={1}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>Pocket definition</Typography>
+                <FormControl><FormLabel>How do you want to define the docking pocket?</FormLabel><RadioGroup value={method} onChange={(event) => setMethod(event.target.value)}>
+                  <FormControlLabel value="reference_ligand" control={<Radio size="small" />} label="Bound reference ligand" disabled={!boundLigands.length} />
+                  <FormControlLabel value="manual" control={<Radio size="small" />} label="Manual box coordinates" />
+                </RadioGroup></FormControl>
+                {boundLigands.length ? <TextField select size="small" label="Detected bound ligand" value={selectedLigandId} onChange={(event) => {
+                  const ligand = selectedLigandForId(boundLigands, event.target.value);
+                  if (!ligand) { setSelectedLigandId(''); return; }
+                  setMethod('reference_ligand'); selectLigand(ligand);
+                }}><MenuItem value=""><em>Select a ligand</em></MenuItem>{boundLigands.map((ligand) => <MenuItem key={ligand.ligand_id} value={ligand.ligand_id}>{ligand.residue_name} {ligand.chain || '–'} {ligand.residue_number} ({ligand.atom_count} atoms)</MenuItem>)}</TextField>
+                  : <Alert severity="info" sx={{ py: 0 }}>No plausible non-water bound ligand was identified.</Alert>}
+                <Stack direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
+                  <TextField size="small" label="Fit padding (Å)" type="number" value={padding} onChange={(event) => setPadding(event.target.value)} inputProps={{ min: 0, step: 0.5 }} sx={{ width: 130 }} />
+                  <Button size="small" variant="outlined" disabled={!selectedLigand} onClick={() => fitSelection(ligandAtoms())}>Fit ligand + padding</Button>
+                  <Button size="small" variant="text" disabled={!selectedLigand} onClick={() => { selectLigand(selectedLigand); setPadding('4'); }}>Reset 4 Å</Button>
+                </Stack>
+                {boundLigands.length ? <Box><Typography variant="caption" sx={{ fontWeight: 700 }}>Ligand copies removed before repair</Typography>
+                  {selectedLigand ? <Stack direction="row" spacing={0.5} sx={{ my: 0.5 }} useFlexGap flexWrap="wrap"><Button size="small" variant="outlined" onClick={() => setLigandRemovalIds([selectedLigand.ligand_id])}>Selected copy only</Button><Button size="small" variant="outlined" onClick={() => setLigandRemovalIds(matchingLigands.map((ligand) => ligand.ligand_id))}>All {matchingLigands.length} matching copies</Button></Stack> : null}
+                  <Stack direction="row" useFlexGap flexWrap="wrap">{boundLigands.map((ligand) => <FormControlLabel key={ligand.ligand_id} sx={{ mr: 1 }} control={<Checkbox size="small" checked={ligandRemovalIds.includes(ligand.ligand_id)} onChange={(event) => setLigandRemovalIds((current) => event.target.checked ? [...new Set([...current, ligand.ligand_id])] : current.filter((id) => id !== ligand.ligand_id))} />} label={ligand.ligand_id} />)}</Stack></Box> : null}
+                <Typography variant="subtitle2">Vina Search Box</Typography>
+                <NumericGrid title="Center (Å)" compact values={box} setValues={setBox} fields={[["centerX", "Center X"], ["centerY", "Center Y"], ["centerZ", "Center Z"]]} />
+                <NumericGrid title="Box size (Å)" compact values={box} setValues={setBox} fields={[["sizeX", "Size X"], ["sizeY", "Size Y"], ["sizeZ", "Size Z"]]} />
+                <Typography variant="caption" color="text.secondary">The translucent box updates immediately when center or dimensions change.</Typography>
+                <Box aria-live="polite" sx={{ p: 1, bgcolor: '#f7f9fb', borderRadius: 1 }}>
+                  {searchSpace.status === 'valid' ? <><Typography variant="caption" display="block">{searchSpace.center}</Typography><Typography variant="caption" display="block">{searchSpace.size}</Typography>{!showBox ? <Typography variant="caption" color="text.secondary">Search box hidden in viewer.</Typography> : null}</> : <Typography variant="caption" color={searchSpace.status === 'incomplete' ? 'text.secondary' : 'warning.main'}>{searchSpace.message} The numeric inputs remain editable.</Typography>}
+                </Box>
+                <Box component="details"><Typography component="summary" variant="caption" sx={{ cursor: 'pointer', fontWeight: 700 }}>Atom / residue pocket tools</Typography><Stack spacing={0.75} sx={{ mt: 0.75 }}>
+                  <Button size="small" variant="outlined" disabled={!selectedRegionAtoms.length} onClick={() => { setMethod('selected_region'); setCenter(centroidForAtoms(selectedRegionAtoms)); }}>Use region centroid</Button>
+                  <Button size="small" variant="outlined" disabled={!selectedRegionAtoms.length} onClick={() => fitSelection(selectedRegionAtoms)}>Fit box to region + padding</Button>
+                </Stack></Box>
+              </Stack>
+            </Box>
           </Stack>
         </Box>
 
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-          <Button
-            variant="outlined"
-            aria-pressed={showBox}
-            onClick={() => setShowBox((current) => !current)}
-          >
-            {showBox ? 'Hide search box' : 'Show search box'}
-          </Button>
-          <Button variant="outlined" disabled={!structure} onClick={() => viewerRef.current?.resetView()}>
-            Reset view
-          </Button>
-          <Button
-            variant="outlined"
-            disabled={!structure || searchSpace.status !== 'valid'}
-            onClick={() => viewerRef.current?.focusBox()}
-          >
-            Focus search box
-          </Button>
-        </Stack>
-
-        <ReceptorViewer
-          ref={viewerRef}
-          structure={structure}
-          box={box}
-          showBox={showBox}
-          selectedResidues={selectedResidues}
-          selectedLigand={selectedLigand}
-          onAtomSelect={(atom) => setSelectedAtom(atomDetails(atom))}
-          onError={(viewerError) => setError(`Interactive receptor viewer unavailable: ${viewerError.message ?? viewerError}`)}
-        />
-
-        <Box sx={{ p: 1.5, bgcolor: '#f7f9fb', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-          <Stack spacing={1}><Typography variant="subtitle2">Selected atom</Typography>
-            {selectedAtom ? <>
-              <Typography variant="body2">Chain {selectedAtom.chain || '–'} · {selectedAtom.residueName || '–'} {selectedAtom.residueNumber || '–'} · {selectedAtom.atomName || '–'}</Typography>
-              <Typography variant="caption" color="text.secondary">x {formatCoordinate(selectedAtom.x)} · y {formatCoordinate(selectedAtom.y)} · z {formatCoordinate(selectedAtom.z)}</Typography>
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap><Button variant="outlined" onClick={() => { setMethod('selected_atom'); setCenter(selectedAtom); }}>Set box center here</Button><Button variant="outlined" onClick={addSelectedResidue}>Add residue to pocket selection</Button><Button variant="text" onClick={() => setSelectedAtom(null)}>Clear selection</Button></Stack>
-            </> : <Typography variant="caption" color="text.secondary">Click an atom in the receptor viewer to inspect its identity and coordinates.</Typography>}
-            {selectedResidues.length ? <><Typography variant="caption" color="text.secondary">Selected pocket region</Typography><Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">{selectedResidues.map((residue) => <Chip key={residue.key} label={`${residue.chain || '–'} ${residue.residueName} ${residue.residueNumber}`} onDelete={() => setSelectedResidues((current) => current.filter((item) => item.key !== residue.key))} />)}<Button variant="text" onClick={() => setSelectedResidues([])}>Clear pocket selection</Button></Stack></> : null}
+        <Box sx={{ p: 1.25, minWidth: 0 }}>
+          <Stack spacing={1}>
+            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+              <Button size="small" variant="outlined" aria-pressed={showBox} onClick={() => setShowBox((current) => !current)}>{showBox ? 'Hide search box' : 'Show search box'}</Button>
+              <Button size="small" variant="outlined" disabled={!structure || searchSpace.status !== 'valid'} onClick={() => viewerRef.current?.focusBox()}>Focus search box</Button>
+              <Button size="small" variant="outlined" disabled={!structure} onClick={() => viewerRef.current?.resetView()}>Reset view</Button>
+            </Stack>
+            <ReceptorViewer ref={viewerRef} structure={structure} box={box} showBox={showBox} selectedResidues={selectedResidues} selectedLigand={selectedLigand} onAtomSelect={(atom) => setSelectedAtom(atomDetails(atom))} onError={(viewerError) => setError(`Interactive receptor viewer unavailable: ${viewerError.message ?? viewerError}`)} />
+            <Box sx={{ px: 1.25, py: 1, bgcolor: '#f7f9fb', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+              <Stack spacing={0.5}><Typography variant="subtitle2">Selected atom / pocket region</Typography>
+                {selectedAtom ? <><Typography variant="body2">Chain {selectedAtom.chain || '–'} · {selectedAtom.residueName || '–'} {selectedAtom.residueNumber || '–'} · {selectedAtom.atomName || '–'} · x {formatCoordinate(selectedAtom.x)} · y {formatCoordinate(selectedAtom.y)} · z {formatCoordinate(selectedAtom.z)}</Typography><Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap"><Button size="small" variant="outlined" onClick={() => { setMethod('selected_atom'); setCenter(selectedAtom); }}>Set box center here</Button><Button size="small" variant="outlined" onClick={addSelectedResidue}>Add residue</Button><Button size="small" variant="text" onClick={() => setSelectedAtom(null)}>Clear</Button></Stack></> : <Typography variant="caption" color="text.secondary">Click an atom in the receptor viewer to inspect identity and coordinates.</Typography>}
+                {selectedResidues.length ? <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">{selectedResidues.map((residue) => <Chip size="small" key={residue.key} label={`${residue.chain || '–'} ${residue.residueName} ${residue.residueNumber}`} onDelete={() => setSelectedResidues((current) => current.filter((item) => item.key !== residue.key))} />)}<Button size="small" variant="text" onClick={() => setSelectedResidues([])}>Clear pocket selection</Button></Stack> : null}
+              </Stack>
+            </Box>
           </Stack>
         </Box>
+      </Box>
 
-        <FormControl><FormLabel>How do you want to define the docking pocket?</FormLabel><RadioGroup row value={method} onChange={(event) => setMethod(event.target.value)}>
-          <FormControlLabel value="reference_ligand" control={<Radio />} label="Use a bound reference ligand" disabled={!boundLigands.length} />
-          <FormControlLabel value="manual" control={<Radio />} label="Enter docking box coordinates manually" />
-        </RadioGroup></FormControl>
-
-        {boundLigands.length ? <TextField select label="Detected bound ligand" value={selectedLigandId} onChange={(event) => {
-          const ligand = selectedLigandForId(boundLigands, event.target.value);
-          if (!ligand) { setSelectedLigandId(''); return; }
-          setMethod('reference_ligand'); selectLigand(ligand);
-        }}><MenuItem value=""><em>Select a ligand</em></MenuItem>{boundLigands.map((ligand) => <MenuItem key={ligand.ligand_id} value={ligand.ligand_id}>{ligand.residue_name} {ligand.chain || '–'} {ligand.residue_number} ({ligand.atom_count} atoms)</MenuItem>)}</TextField>
-          : <Alert severity="info">No plausible non-water bound ligand was identified. Bound-ligand mode is unavailable.</Alert>}
-
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
-          <TextField label="Fit padding (Å)" type="number" value={padding} onChange={(event) => setPadding(event.target.value)} inputProps={{ min: 0, step: 0.5 }} sx={{ width: 150 }} />
-          <Button variant="outlined" disabled={!selectedRegionAtoms.length} onClick={() => { setMethod('selected_region'); setCenter(centroidForAtoms(selectedRegionAtoms)); }}>Use region centroid</Button>
-          <Button variant="outlined" disabled={!selectedRegionAtoms.length} onClick={() => fitSelection(selectedRegionAtoms)}>Fit box to region + padding</Button>
-          <Button variant="outlined" disabled={!selectedLigand} onClick={() => fitSelection(ligandAtoms())}>Fit box to ligand + padding</Button>
-          <Button variant="text" disabled={!selectedLigand} onClick={() => { selectLigand(selectedLigand); setPadding('4'); }}>Reset ligand box (4 Å)</Button>
+      <Box sx={{ px: 1.5, py: 1, borderTop: '1px solid', borderColor: 'divider', display: 'flex', gap: 1, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
+          <Typography variant="subtitle2">Docking setup</Typography>
+          {Object.entries({ 'Protein visualization': readiness.receptorLoaded, 'Prepared PDBQT': readiness.preparedReceptor, 'Box center': readiness.centerDefined, 'Box size': readiness.positiveDimensions }).map(([label, value]) => <Chip size="small" key={label} label={`${label}: ${value ? 'ready' : 'required'}`} color={value ? 'success' : 'warning'} variant="outlined" />)}
+          <Chip size="small" label={`Detected ligands: ${boundLigands.length}`} variant="outlined" />
         </Stack>
-        {boundLigands.length ? <Box><Typography variant="subtitle2">Ligand copies to remove before protein repair</Typography>
-          {selectedLigand ? <Stack direction="row" spacing={1} sx={{ my: 0.5 }}><Button size="small" variant="outlined" onClick={() => setLigandRemovalIds([selectedLigand.ligand_id])}>Remove selected copy only</Button><Button size="small" variant="outlined" onClick={() => setLigandRemovalIds(matchingLigands.map((ligand) => ligand.ligand_id))}>Remove all {matchingLigands.length} matching copies</Button></Stack> : null}
-          <Stack direction="row" useFlexGap flexWrap="wrap">{boundLigands.map((ligand) => <FormControlLabel key={ligand.ligand_id} control={<Checkbox checked={ligandRemovalIds.includes(ligand.ligand_id)} onChange={(event) => setLigandRemovalIds((current) => event.target.checked ? [...new Set([...current, ligand.ligand_id])] : current.filter((id) => id !== ligand.ligand_id))} />} label={ligand.ligand_id} />)}</Stack></Box> : null}
-
-        <Typography variant="h2">Vina Search Box</Typography>
-        <NumericGrid title="Center (Å)" values={box} setValues={setBox} fields={[["centerX", "Center X"], ["centerY", "Center Y"], ["centerZ", "Center Z"]]} />
-        <NumericGrid title="Box size (Å)" values={box} setValues={setBox} fields={[["sizeX", "Size X"], ["sizeY", "Size Y"], ["sizeZ", "Size Z"]]} />
-        <Typography variant="caption" color="text.secondary">The translucent box updates immediately when center or dimensions change.</Typography>
-        <Box aria-live="polite" sx={{ p: 1.25, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-          {searchSpace.status === 'valid' ? <Stack spacing={0.25}>
-            <Typography variant="subtitle2">Search box</Typography>
-            <Typography variant="body2">{searchSpace.center}</Typography>
-            <Typography variant="body2">{searchSpace.size}</Typography>
-            {!showBox ? <Typography variant="caption" color="text.secondary">The search box is hidden in the 3D viewer.</Typography> : null}
-          </Stack> : <Alert severity={searchSpace.status === 'incomplete' ? 'info' : 'warning'}>
-            {searchSpace.message} The numeric inputs remain editable.
-          </Alert>}
-        </Box>
-
-        <Box component="details"><Typography component="summary" variant="subtitle2" sx={{ cursor: 'pointer' }}>Advanced Vina settings</Typography><Box sx={{ mt: 1 }}>
-          <NumericGrid values={advanced} setValues={setAdvanced} fields={[["exhaustiveness", "Exhaustiveness"], ["workerCount", "Workers"], ["numModes", "Number of modes"], ["energyRange", "Energy range (kcal/mol)"], ["seed", "Random seed"]]} />
-        </Box></Box>
-
-        <Box><Typography variant="subtitle2" sx={{ mb: 0.75 }}>Readiness</Typography><Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-          {Object.entries({ 'Protein visualization': readiness.receptorLoaded, 'Prepared receptor PDBQT': readiness.preparedReceptor, 'Search-box center': readiness.centerDefined, 'Search-box size': readiness.positiveDimensions }).map(([label, value]) => <Chip key={label} label={`${label}: ${value ? 'ready' : 'required'}`} color={value ? 'success' : 'warning'} variant="outlined" />)}
-          {receptor?.docking_ready ? <Chip label={`Receptor source: ${receptor.receptor_source === 'moloptima_prepared' ? 'MolOptima prepared' : 'user supplied / validated'}`} color="success" variant="outlined" /> : null}
-          <Chip label={`Detected ligands: ${boundLigands.length}`} variant="outlined" />
-        </Stack></Box>
-        <Button variant="contained" disabled={loading || !ready} onClick={handleConfirm}>Confirm Docking Setup</Button>
-        {confirmed ? <Alert severity="success">Docking configuration saved: {confirmed.configuration_id}</Alert> : null}
-        {error ? <Alert severity="error">{error}</Alert> : null}
-      </Stack>
+        <Stack direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
+          <Box component="details"><Typography component="summary" variant="caption" sx={{ cursor: 'pointer', fontWeight: 700 }}>Advanced Vina settings</Typography><Box sx={{ mt: 1, minWidth: { sm: 560 } }}><NumericGrid compact values={advanced} setValues={setAdvanced} fields={[["exhaustiveness", "Exhaustiveness"], ["workerCount", "Workers"], ["numModes", "Number of modes"], ["energyRange", "Energy range (kcal/mol)"], ["seed", "Random seed"]]} /></Box></Box>
+          <Button size="small" variant="contained" disabled={loading || !ready} onClick={handleConfirm}>Confirm Docking Setup</Button>
+        </Stack>
+      </Box>
+      {confirmed ? <Alert severity="success" sx={{ borderRadius: 0 }}>Docking configuration saved: {confirmed.configuration_id}</Alert> : null}
+      {error ? <Alert severity="error" sx={{ borderRadius: 0 }}>{error}</Alert> : null}
     </Box>
   );
 }
 
-function NumericGrid({ title = '', values, setValues, fields }) {
-  return <Stack spacing={0.75}>{title ? <Typography variant="subtitle2">{title}</Typography> : null}<Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 1 }}>
-    {fields.map(([key, label]) => <TextField key={key} label={label} type="number" value={values[key]} onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))} inputProps={{ step: 'any' }} />)}
+function NumericGrid({ title = '', values, setValues, fields, compact = false }) {
+  return <Stack spacing={0.6}>{title ? <Typography variant="caption" sx={{ fontWeight: 700 }}>{title}</Typography> : null}<Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: `repeat(${Math.min(fields.length, compact ? 5 : 3)}, minmax(0, 1fr))` }, gap: 0.75 }}>
+    {fields.map(([key, label]) => <TextField size={compact ? 'small' : 'medium'} key={key} label={label} type="number" value={values[key]} onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))} inputProps={{ step: 'any' }} />)}
   </Box></Stack>;
 }
 

@@ -25,10 +25,10 @@ test('renders the professional receptor upload and explicit box workflow', () =>
   assert.match(html, /Hydrogen optimization and pH-dependent protonation are not performed/);
   assert.match(html, /final PDBQT retains the explicit polar\/donor hydrogens/i);
   assert.match(html, /nonpolar hydrogens are not retained as independent docking atoms/);
-  assert.match(html, /Upload a PDB to display chains, waters, hetero groups, and alternate locations/);
+  assert.match(html, /Upload a PDB to inspect chains, waters, hetero groups, and alternate locations/);
   assert.match(html, /How do you want to define the docking pocket\?/);
-  assert.match(html, /Use a bound reference ligand/);
-  assert.match(html, /Enter docking box coordinates manually/);
+  assert.match(html, /Bound reference ligand/);
+  assert.match(html, /Manual box coordinates/);
   assert.match(html, /Center X/);
   assert.match(html, /Size X/);
   assert.match(html, /updates immediately/);

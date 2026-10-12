@@ -581,20 +581,20 @@ function continueToAdmetButton(html) {
 
 test('invalid-only upload reports zero valid molecules and blocks scientific continuation', () => {
   const html = renderDockingWorkflow({ rows: 1, submitted_count: 1, valid_count: 0, invalid_count: 1 });
-  assert.match(html, /1 submitted; 0 valid molecules available/);
+  assert.match(html, /1 submitted · 0 valid molecules/);
   assert.match(continueToAdmetButton(html), /disabled/);
   assert.equal(module.validatedMoleculeCount({ valid_count: 0 }), 0);
 });
 
 test('mixed upload allows continuation when one validated molecule remains', () => {
   const html = renderDockingWorkflow({ rows: 2, submitted_count: 2, valid_count: 1, invalid_count: 1 });
-  assert.match(html, /2 submitted; 1 valid molecule available/);
+  assert.match(html, /2 submitted · 1 valid molecule/);
   assert.doesNotMatch(continueToAdmetButton(html), /disabled/);
 });
 
 test('fully valid upload preserves scientific continuation', () => {
   const html = renderDockingWorkflow({ rows: 2, submitted_count: 2, valid_count: 2, invalid_count: 0 });
-  assert.match(html, /2 submitted; 2 valid molecules available/);
+  assert.match(html, /2 submitted · 2 valid molecules/);
   assert.doesNotMatch(continueToAdmetButton(html), /disabled/);
 });
 
