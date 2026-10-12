@@ -30,6 +30,7 @@ OBABEL_LEGACY_ENV = "MOLOPTIMA_OBABEL_EXECUTABLE"
 VINA_TIMEOUT_ENV = "MOLOPTIMA_VINA_TIMEOUT_SECONDS"
 VINA_RESULT_PREFIX = "REMARK VINA RESULT:"
 MODEL_PATTERN = re.compile(r"^MODEL\s+(\d+)\s*$")
+LIGAND_TEMPLATE_SCHEMA_VERSION = "moloptima-ligand-template-v1"
 
 
 class DockingRuntimeUnavailable(RuntimeError):
@@ -60,6 +61,8 @@ class VinaDockingEngine:
         self.docking_root = self.output_root / "docking"
         self.pose_root = self.docking_root / "poses"
         self.pose_root.mkdir(parents=True, exist_ok=True)
+        self.ligand_template_root = self.docking_root / "ligand_templates"
+        self.ligand_template_root.mkdir(parents=True, exist_ok=True)
         self.work_root = self.docking_root / "work"
         self.work_root.mkdir(parents=True, exist_ok=True)
         self.result_path = self.docking_root / "docking_results.jsonl"
@@ -157,9 +160,38 @@ class VinaDockingEngine:
         safe_key = hashlib.sha256(f"{index}:{molecule_id}".encode("utf-8")).hexdigest()[:16]
         pose_name = f"{index:04d}_{safe_key}.pdbqt"
         pose_path = self.pose_root / pose_name
+        template_name = f"{index:04d}_{safe_key}.sdf"
+        template_path = self.ligand_template_root / template_name
+        template_metadata_path = template_path.with_suffix(".json")
+        preparation_details: dict[str, object] = {}
+        # Production output roots are per-job directories; retain only the safe
+        # basename, never a local absolute path, as the job identity.
+        docking_job_id = self.output_root.name
         with tempfile.TemporaryDirectory(prefix=f"{safe_key}-", dir=self.work_root) as temp:
             molecule_root = Path(temp)
-            pdbqt_path = self._prepare_ligand_pdbqt(smiles, molecule_root)
+            pdbqt_path = self._prepare_ligand_pdbqt(
+                smiles,
+                molecule_root,
+                persisted_sdf_path=template_path,
+                persisted_metadata_path=template_metadata_path,
+                preparation_details=preparation_details,
+                template_provenance={
+                    "artifact_schema_version": LIGAND_TEMPLATE_SCHEMA_VERSION,
+                    "artifact_id": template_path.stem,
+                    "molecule_id": molecule_id,
+                    "canonical_isomeric_smiles": smiles,
+                    "rdkit_version": rdBase.rdkitVersion,
+                    "conformer_generation_method": "RDKit ETKDGv3",
+                    "conformer_seed": self.config.seed,
+                    "explicit_hydrogen_policy": "all_hydrogens_explicit_before_openbabel",
+                    "docking_job_id": docking_job_id,
+                    "docking_configuration_id": self.configuration_id or None,
+                    "source_ligand_identity": {
+                        "molecule_id": molecule_id,
+                        "canonical_isomeric_smiles": smiles,
+                    },
+                },
+            )
             if self._cancellation_requested():
                 return self._cancelled_result(molecule_id, smiles)
             command = [
@@ -212,17 +244,49 @@ class VinaDockingEngine:
             "pose_path": f"docking/poses/{pose_name}",
             "pose_available": True,
             "pose_sha256": hashlib.sha256(pose_path.read_bytes()).hexdigest(),
+            "ligand_template": {
+                **preparation_details,
+                "artifact_path": f"docking/ligand_templates/{template_name}",
+                "metadata_path": f"docking/ligand_templates/{template_metadata_path.name}",
+            },
             "runtime_duration_seconds": round(time.perf_counter() - started, 6),
             "stdout_summary": (completed.stdout or "")[-1200:],
             "stderr_summary": (completed.stderr or "")[-1200:],
             "ligand_preparation_status": "success",
         }
 
-    def _prepare_ligand_pdbqt(self, smiles: str, molecule_root: Path) -> Path:
+    def _prepare_ligand_pdbqt(
+        self,
+        smiles: str,
+        molecule_root: Path,
+        *,
+        persisted_sdf_path: Path | None = None,
+        persisted_metadata_path: Path | None = None,
+        preparation_details: dict[str, object] | None = None,
+        template_provenance: dict[str, object] | None = None,
+    ) -> Path:
         """Run the production RDKit-to-Open-Babel ligand preparation path."""
         sdf_path = molecule_root / "ligand.sdf"
         pdbqt_path = molecule_root / "ligand.pdbqt"
-        _prepare_rdkit_ligand(smiles, sdf_path, self.config.seed)
+        optimization_method = _prepare_rdkit_ligand(smiles, sdf_path, self.config.seed)
+        if persisted_sdf_path is not None:
+            if persisted_metadata_path is None or template_provenance is None:
+                raise RuntimeError("Ligand-template persistence requires metadata and provenance.")
+            sdf_bytes = sdf_path.read_bytes()
+            sdf_sha256 = hashlib.sha256(sdf_bytes).hexdigest()
+            provenance = {
+                **template_provenance,
+                "sdf_sha256": sdf_sha256,
+                "optimization_method": optimization_method,
+                "artifact_path": f"docking/ligand_templates/{persisted_sdf_path.name}",
+            }
+            _write_immutable_bytes(persisted_sdf_path, sdf_bytes)
+            _write_immutable_bytes(
+                persisted_metadata_path,
+                (json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+            )
+            if preparation_details is not None:
+                preparation_details.update(provenance)
         conversion = self._execute(
             [str(self.obabel_executable), str(sdf_path), "-O", str(pdbqt_path)], timeout=120
         )
@@ -400,7 +464,7 @@ def _finite_float(value: str) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
-def _prepare_rdkit_ligand(smiles: str, output_path: Path, seed: int) -> None:
+def _prepare_rdkit_ligand(smiles: str, output_path: Path, seed: int) -> str:
     molecule = Chem.MolFromSmiles(smiles)
     if molecule is None:
         raise RuntimeError("Canonical SMILES could not be parsed during ligand preparation.")
@@ -411,13 +475,30 @@ def _prepare_rdkit_ligand(smiles: str, output_path: Path, seed: int) -> None:
         raise RuntimeError("RDKit 3D conformer generation failed.")
     if AllChem.MMFFHasAllMoleculeParams(molecule):
         AllChem.MMFFOptimizeMolecule(molecule)
+        optimization_method = "RDKit MMFF"
     elif AllChem.UFFHasAllMoleculeParams(molecule):
         AllChem.UFFOptimizeMolecule(molecule)
+        optimization_method = "RDKit UFF"
+    else:
+        optimization_method = "none_parameters_unavailable"
     writer = Chem.SDWriter(str(output_path))
     writer.write(molecule)
     writer.close()
     if not output_path.is_file() or output_path.stat().st_size == 0:
         raise RuntimeError("RDKit ligand preparation produced no SDF artifact.")
+    return optimization_method
+
+
+def _write_immutable_bytes(path: Path, content: bytes) -> None:
+    """Create an immutable-by-contract artifact without silently replacing different bytes."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("xb") as handle:
+            handle.write(content)
+    except FileExistsError:
+        if path.read_bytes() != content:
+            raise RuntimeError(f"Immutable docking artifact already exists with different content: {path.name}")
 
 
 def audit_ligand_pdbqt_hydrogens(path: str | Path) -> dict[str, object]:

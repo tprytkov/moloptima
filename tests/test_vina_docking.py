@@ -133,6 +133,7 @@ def test_valid_receptor_and_vina_path_returns_provenance_and_safe_commands(tmp_p
     obabel = tmp_path / "obabel.exe"
     vina.touch(); obabel.touch()
     calls = []
+    openbabel_sdf = {}
 
     def runner(arguments, **kwargs):
         calls.append((arguments, kwargs))
@@ -141,7 +142,11 @@ def test_valid_receptor_and_vina_path_returns_provenance_and_safe_commands(tmp_p
         if "-V" in arguments:
             return subprocess.CompletedProcess(arguments, 0, "Open Babel 3.1.1\n", "")
         if "-O" in arguments:
-            Path(arguments[arguments.index("-O") + 1]).write_text("ROOT\nENDROOT\n", encoding="utf-8")
+            source = Path(arguments[1])
+            openbabel_sdf["bytes"] = source.read_bytes()
+            openbabel_sdf["sha256"] = hashlib.sha256(openbabel_sdf["bytes"]).hexdigest()
+            openbabel_sdf["pdbqt_path"] = arguments[arguments.index("-O") + 1]
+            Path(openbabel_sdf["pdbqt_path"]).write_text("ROOT\nENDROOT\n", encoding="utf-8")
             return subprocess.CompletedProcess(arguments, 0, "", "")
         pose = Path(arguments[arguments.index("--out") + 1])
         pose.write_text(
@@ -180,6 +185,24 @@ def test_valid_receptor_and_vina_path_returns_provenance_and_safe_commands(tmp_p
     assert result["configuration_reference"] == "config-123"
     assert result["pose_sha256"]
     assert (tmp_path / "job" / result["pose_file"]).is_file()
+    template = tmp_path / "job" / result["ligand_template"]["artifact_path"]
+    template_metadata = tmp_path / "job" / result["ligand_template"]["metadata_path"]
+    assert template.read_bytes() == openbabel_sdf["bytes"]
+    assert result["ligand_template"]["sdf_sha256"] == openbabel_sdf["sha256"]
+    assert json.loads(template_metadata.read_text(encoding="utf-8"))["sdf_sha256"] == openbabel_sdf["sha256"]
+    assert result["ligand_template"]["optimization_method"] == "RDKit MMFF"
+    assert result["ligand_template"]["docking_job_id"] == "job"
+    assert result["ligand_template"]["docking_configuration_id"] == "config-123"
+    assert result["ligand_template"]["canonical_isomeric_smiles"] == "CCO"
+    vina_call = next(arguments for arguments, _ in calls if "--receptor" in arguments)
+    assert vina_call == [
+        str(vina), "--receptor", str((tmp_path / "target.pdbqt").resolve()),
+        "--ligand", openbabel_sdf["pdbqt_path"],
+        "--center_x", "1.0", "--center_y", "2.0", "--center_z", "3.0",
+        "--size_x", "20.0", "--size_y", "21.0", "--size_z", "22.0",
+        "--exhaustiveness", "8", "--num_modes", "3", "--seed", "12345",
+        "--cpu", "1", "--out", str(tmp_path / "job" / result["pose_path"]),
+    ]
     assert (tmp_path / "job" / "docking" / "docking_results.jsonl").read_text(encoding="utf-8").count("\n") == 1
     assert result["pose_available"] is True
     assert result["runtime_duration_seconds"] >= 0
@@ -191,6 +214,13 @@ def test_valid_receptor_and_vina_path_returns_provenance_and_safe_commands(tmp_p
         assert kwargs["shell"] is False
         assert kwargs["capture_output"] is True
         assert kwargs["check"] is False
+    template.unlink()
+    template_metadata.write_text("corrupt downstream metadata", encoding="utf-8")
+    saved_result = json.loads(
+        (tmp_path / "job" / "docking" / "docking_results.jsonl").read_text(encoding="utf-8")
+    )
+    assert saved_result["status"] == "success"
+    assert (tmp_path / "job" / saved_result["pose_path"]).is_file()
 
 
 @pytest.mark.parametrize(
