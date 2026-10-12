@@ -60,7 +60,7 @@ import ChemicalSpaceWorkspace from './ChemicalSpaceWorkspace.jsx';
 import ExperimentalDataWorkspace from './ExperimentalDataWorkspace.jsx';
 import CompoundProfileIntegration from './CompoundProfileIntegration.jsx';
 import AdmetModelInfo from './AdmetModelInfo.jsx';
-import { normalizeAdmetAnalysis, searchAdmetMolecules } from './admetAnalysisData.js';
+import { ADMET_ENDPOINT_REGISTRY, normalizeAdmetAnalysis, searchAdmetMolecules } from './admetAnalysisData.js';
 import { endpointMetadataFromMolecules } from './admetModelMetadata.js';
 import { admetTableStateReducer, createEmptyAdmetFilters, filterAdmetMolecules } from './admetFilters.js';
 import { addAdmetComparisonId, clearAdmetComparison, removeAdmetComparisonId } from './admetComparison.js';
@@ -1413,6 +1413,46 @@ const ADMET_MODEL_GROUPS = [
 ];
 const EMPTY_ADMET_RUNTIME_IDENTITIES = Object.freeze([]);
 
+function AdmetWorkspaceHeader({ compoundCount, familyStatuses, normalizedAdmet, workspaceTab, onTabChange }) {
+  return (
+    <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={1} sx={{ px: 2, py: 1.5 }}>
+        <Box>
+          <Typography variant="h1">ADMET</Typography>
+          <Typography variant="body2" color="text.secondary">Scientific workspace for current calculation outputs</Typography>
+        </Box>
+        <Stack direction="row" useFlexGap flexWrap="wrap" spacing={0.75} aria-label="ADMET workspace counts">
+          <Chip size="small" variant="outlined" label={`${compoundCount.toLocaleString()} compound${compoundCount === 1 ? '' : 's'}`} />
+          <Chip size="small" variant="outlined" label={`${ADMET_ENDPOINT_REGISTRY.length} endpoints`} />
+          <Chip size="small" variant="outlined" label="3 model families" />
+        </Stack>
+      </Stack>
+      <Box aria-label="Models used" sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, borderTop: '1px solid', borderColor: 'divider' }}>
+        {ADMET_MODEL_GROUPS.map(([key, name, detail], index) => (
+          <Box key={key} sx={{ px: 1.5, py: 1, minWidth: 0, borderRight: { md: index < 2 ? '1px solid' : 0 }, borderRightColor: { md: 'divider' }, borderBottom: { xs: index < 2 ? '1px solid' : 0, md: 0 }, borderBottomColor: 'divider' }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+              <Typography variant="body2" sx={{ fontWeight: 800 }}>{name}</Typography>
+              <Chip size="small" label={familyStatuses[key].label} color={familyStatuses[key].color} variant="outlined" />
+            </Stack>
+            <Typography variant="caption" color="text.secondary" display="block" noWrap title={detail}>{detail}</Typography>
+            <AdmetModelInfo
+              label="Runtime details"
+              metadata={endpointMetadataFromMolecules(normalizedAdmet.molecules, normalizedAdmet.endpoints.find((endpoint) => endpoint.modelFamily === key))}
+              compact
+            />
+          </Box>
+        ))}
+      </Box>
+      <Tabs value={workspaceTab} onChange={(_, value) => onTabChange(value)} aria-label="ADMET workspace views" sx={{ minHeight: 42, borderTop: '1px solid', borderColor: 'divider', '& .MuiTab-root': { minHeight: 42, py: 0.75 } }}>
+        <Tab label="Overview" id="admet-tab-overview" aria-controls="admet-panel-overview" />
+        <Tab label="Property Table" id="admet-tab-property-table" aria-controls="admet-panel-property-table" />
+        <Tab label="Plots" id="admet-tab-plots" aria-controls="admet-panel-plots" />
+        <Tab label="Compare" id="admet-tab-compare" aria-controls="admet-panel-compare" />
+      </Tabs>
+    </Paper>
+  );
+}
+
 export function AdmetWorkflowPage({
   prioritizationState,
   sourceStatusState,
@@ -1459,77 +1499,70 @@ export function AdmetWorkflowPage({
     || prioritizationState.result?.analysis_mode === 'single_compound';
   return (
     <Stack spacing={2}>
-      <PageIntro title="ADMET" description="Review the existing ChemBERTa classification, GMC-MPNN BBB, and Chemprop regression outputs for the current calculation." />
-      <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
-        <Tabs value={workspaceTab} onChange={(_, value) => setWorkspaceTab(value)} aria-label="ADMET workspace views">
-          <Tab label="Overview" id="admet-tab-overview" aria-controls="admet-panel-overview" />
-          <Tab label="Property Table" id="admet-tab-property-table" aria-controls="admet-panel-property-table" />
-          <Tab label="Plots" id="admet-tab-plots" aria-controls="admet-panel-plots" />
-          <Tab label="Compare" id="admet-tab-compare" aria-controls="admet-panel-compare" />
-        </Tabs>
-      </Paper>
+      <AdmetWorkspaceHeader
+        compoundCount={rows.length}
+        familyStatuses={familyStatuses}
+        normalizedAdmet={normalizedAdmet}
+        workspaceTab={workspaceTab}
+        onTabChange={setWorkspaceTab}
+      />
       {sourceStatusState.error ? <Alert severity="warning">{sourceStatusState.error}</Alert> : null}
+      {workspaceTab === 0 ? (
+        <Box id="admet-panel-overview" role="tabpanel" aria-labelledby="admet-tab-overview">
+          {rows.length ? (
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '260px minmax(0, 1fr)' }, gap: 2, alignItems: 'start' }}>
+              <Stack spacing={1.5}>
+                <Paper elevation={0} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider' }}>
+                  <Stack spacing={1.25}>
+                    <Box><Typography variant="overline" color="text.secondary">Selected molecule</Typography><TextField fullWidth select size="small" label="Molecule" value={selectedIndex} onChange={(event) => setSelectedIndex(Number(event.target.value))}>
+                      {overviewRows.map((row, index) => <MenuItem key={compoundRowKey(row, index)} value={index}>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</MenuItem>)}
+                    </TextField></Box>
+                    <MetadataPanel rows={[["Molecules", rows.length], ["Available family results", completed], ["Unavailable / failed", failures], ["Warnings", warnings]]} />
+                    {rows.length > overviewRows.length ? <Alert severity="info">Overview selection shows the first 50 molecules. Use Property Table for the complete library.</Alert> : null}
+                  </Stack>
+                </Paper>
+                <Paper component="details" elevation={0} sx={{ border: '1px solid', borderColor: 'divider', '& > summary': { px: 1.5, py: 1.25, cursor: 'pointer', fontWeight: 800 } }}>
+                  <Typography component="summary" variant="body2">Molecule family status table</Typography>
+                  <Box sx={{ overflowX: 'auto', borderTop: '1px solid', borderColor: 'divider' }}>
+                    <Table size="small" aria-label="Molecule family status table" sx={{ minWidth: 560 }}><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>ChemBERTa</TableCell><TableCell>GMC BBB</TableCell><TableCell>Chemprop</TableCell></TableRow></TableHead><TableBody>{overviewRows.map((row, index) => {
+                      const statuses = rowStatuses[index];
+                      return <TableRow key={compoundRowKey(row, index)}><TableCell>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</TableCell><TableCell>{statuses.chemberta.label}</TableCell><TableCell>{statuses.gmc_mpnn_bbb.label}</TableCell><TableCell>{statuses.chemprop_regression.label}</TableCell></TableRow>;
+                    })}</TableBody></Table>
+                  </Box>
+                </Paper>
+              </Stack>
+              <Paper elevation={0} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', minWidth: 0 }}><AdmetResultsSection compound={selected} /></Paper>
+            </Box>
+          ) : <Alert severity="info">No ADMET predictions are available for the current calculation.</Alert>}
+        </Box>
+      ) : null}
       {workspaceTab > 0 ? (
-        <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
-          <Stack spacing={1.5}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '250px minmax(0, 1fr)' }, gap: 2, alignItems: 'start' }}>
+          <Stack spacing={1.25} component="aside" aria-label="ADMET search and filters" sx={{ minWidth: 0 }}>
             <TextField
+              fullWidth
               label="Search compounds"
               value={admetViewState.query}
               onChange={(event) => admetDispatch({ type: 'set-query', query: event.target.value })}
-              placeholder="Molecule name, ID, SMILES, or source file"
+              placeholder="Name, ID, SMILES, or source"
               size="small"
-              sx={{ maxWidth: 440 }}
               inputProps={{ 'aria-label': 'Search ADMET compounds' }}
             />
             <AdmetFilterPanel
+              layout="rail"
               filters={admetViewState.filters}
               onChange={(filters) => admetDispatch({ type: 'set-filters', filters })}
               matchedCount={filteredAdmetMolecules.length}
               totalCount={normalizedAdmet.molecules.length}
             />
           </Stack>
-        </Paper>
-      ) : null}
-      {workspaceTab === 0 ? <Box id="admet-panel-overview" role="tabpanel" aria-labelledby="admet-tab-overview"><Stack spacing={2}>
-        <Typography variant="h2">Models used</Typography>
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5 }}>
-          {ADMET_MODEL_GROUPS.map(([key, name, detail]) => (
-            <Paper key={name} elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
-              <Stack spacing={0.75}><Typography sx={{ fontWeight: 700 }}>{name}</Typography><Typography variant="caption" color="text.secondary">{detail}</Typography>
-                <Chip label={familyStatuses[key].label} color={familyStatuses[key].color} variant="outlined" />
-                <AdmetModelInfo
-                  label="Runtime details"
-                  metadata={endpointMetadataFromMolecules(
-                    normalizedAdmet.molecules,
-                    normalizedAdmet.endpoints.find((endpoint) => endpoint.modelFamily === key),
-                  )}
-                  compact
-                />
-              </Stack>
-            </Paper>
-          ))}
+          <Box sx={{ minWidth: 0 }}>
+            {workspaceTab === 1 ? <Box id="admet-panel-property-table" role="tabpanel" aria-labelledby="admet-tab-property-table"><Stack spacing={1.25}><AdmetExportActions molecules={filteredAdmetMolecules} allMolecules={normalizedAdmet.molecules} selectedIds={comparisonIds} viewState={admetViewState} /><AdmetPropertyTable molecules={filteredAdmetMolecules} totalCount={normalizedAdmet.molecules.length} viewState={admetViewState} dispatch={admetDispatch} selectedComparisonIds={comparisonIds} onAddToComparison={(id) => setComparisonIds((current) => addAdmetComparisonId(current, id))} onRemoveFromComparison={(id) => setComparisonIds((current) => removeAdmetComparisonId(current, id))} /></Stack></Box> : null}
+            {workspaceTab === 2 ? <Box id="admet-panel-plots" role="tabpanel" aria-labelledby="admet-tab-plots"><AdmetPlots molecules={filteredAdmetMolecules} selectedComparisonIds={comparisonIds} onAddToComparison={(id) => setComparisonIds((current) => addAdmetComparisonId(current, id))} /></Box> : null}
+            {workspaceTab === 3 ? <Box id="admet-panel-compare" role="tabpanel" aria-labelledby="admet-tab-compare"><Stack spacing={1.25}><AdmetExportActions mode="comparison" molecules={filteredAdmetMolecules} allMolecules={normalizedAdmet.molecules} selectedIds={comparisonIds} viewState={admetViewState} /><AdmetComparison molecules={normalizedAdmet.molecules} filteredMolecules={filteredAdmetMolecules} selectedIds={comparisonIds} onAdd={(id) => setComparisonIds((current) => addAdmetComparisonId(current, id))} onRemove={(id) => setComparisonIds((current) => removeAdmetComparisonId(current, id))} onClear={() => setComparisonIds(clearAdmetComparison())} /></Stack></Box> : null}
+          </Box>
         </Box>
-        {rows.length ? (
-        <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
-          <Stack spacing={1.5}>
-            <MetadataPanel rows={[["Molecules submitted", rows.length], ["Available molecule-family results", completed], ["Unavailable / failed molecule-family results", failures], ["Warnings", warnings]]} />
-            <Typography variant="h2">Molecule results</Typography>
-            {rows.length > overviewRows.length ? <Alert severity="info">Overview shows the first 50 molecules. Use Property Table to search, sort, and page through the complete library.</Alert> : null}
-            <Table size="small"><TableHead><TableRow><TableCell>Molecule</TableCell><TableCell>ChemBERTa</TableCell><TableCell>GMC BBB</TableCell><TableCell>Chemprop regression</TableCell></TableRow></TableHead><TableBody>{overviewRows.map((row, index) => {
-              const statuses = rowStatuses[index];
-              return <TableRow key={compoundRowKey(row, index)}><TableCell>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</TableCell><TableCell>{statuses.chemberta.label}</TableCell><TableCell>{statuses.gmc_mpnn_bbb.label}</TableCell><TableCell>{statuses.chemprop_regression.label}</TableCell></TableRow>;
-            })}</TableBody></Table>
-            <TextField select label="Molecule" value={selectedIndex} onChange={(event) => setSelectedIndex(Number(event.target.value))} sx={{ maxWidth: 420 }}>
-              {overviewRows.map((row, index) => <MenuItem key={compoundRowKey(row, index)} value={index}>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</MenuItem>)}
-            </TextField>
-            <AdmetResultsSection compound={selected} />
-          </Stack>
-        </Paper>
-        ) : <Alert severity="info">No ADMET predictions are available for the current calculation.</Alert>}
-      </Stack></Box> : null}
-      {workspaceTab === 1 ? <Box id="admet-panel-property-table" role="tabpanel" aria-labelledby="admet-tab-property-table"><Stack spacing={1.5}><AdmetExportActions molecules={filteredAdmetMolecules} allMolecules={normalizedAdmet.molecules} selectedIds={comparisonIds} viewState={admetViewState} /><AdmetPropertyTable molecules={filteredAdmetMolecules} totalCount={normalizedAdmet.molecules.length} viewState={admetViewState} dispatch={admetDispatch} selectedComparisonIds={comparisonIds} onAddToComparison={(id) => setComparisonIds((current) => addAdmetComparisonId(current, id))} onRemoveFromComparison={(id) => setComparisonIds((current) => removeAdmetComparisonId(current, id))} /></Stack></Box> : null}
-      {workspaceTab === 2 ? <Box id="admet-panel-plots" role="tabpanel" aria-labelledby="admet-tab-plots"><AdmetPlots molecules={filteredAdmetMolecules} selectedComparisonIds={comparisonIds} onAddToComparison={(id) => setComparisonIds((current) => addAdmetComparisonId(current, id))} /></Box> : null}
-      {workspaceTab === 3 ? <Box id="admet-panel-compare" role="tabpanel" aria-labelledby="admet-tab-compare"><Stack spacing={1.5}><AdmetExportActions mode="comparison" molecules={filteredAdmetMolecules} allMolecules={normalizedAdmet.molecules} selectedIds={comparisonIds} viewState={admetViewState} /><AdmetComparison molecules={normalizedAdmet.molecules} filteredMolecules={filteredAdmetMolecules} selectedIds={comparisonIds} onAdd={(id) => setComparisonIds((current) => addAdmetComparisonId(current, id))} onRemove={(id) => setComparisonIds((current) => removeAdmetComparisonId(current, id))} onClear={() => setComparisonIds(clearAdmetComparison())} /></Stack></Box> : null}
+      ) : null}
       <Box><Button variant="contained" onClick={() => onNavigate('Prioritization')}>Continue to {single ? 'Compound Assessment' : 'Prioritization'}</Button></Box>
     </Stack>
   );

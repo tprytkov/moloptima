@@ -57,6 +57,9 @@ test('ADMET Overview summarizes model families and portable runtime identities',
     sourceStatusState: { error: '' }, onNavigate: () => {},
   }));
   assert.match(html, /Models used/);
+  assert.match(html, /1 compound/);
+  assert.match(html, /15 endpoints/);
+  assert.match(html, /3 model families/);
   assert.match(html, /ChemBERTa classification/);
   assert.match(html, /9 public classification endpoints/);
   assert.match(html, /Runtime details for hia_hou/);
@@ -98,6 +101,8 @@ test('ADMET Property Table renders compact filtered export and report controls',
   assert.match(html, />Export filtered CSV</);
   assert.match(html, />Generate report</);
   assert.match(html, /aria-label="Export all currently filtered ADMET rows as CSV"/);
+  assert.match(html, /aria-label="ADMET search and filters"/);
+  assert.match(html, /data-layout="rail"/);
 });
 
 test('ADMET comparison exports are disabled until two compounds are selected', () => {

@@ -102,6 +102,17 @@ test('table exposes accessible sorting, pagination, and bounded horizontal scrol
   assert.match(html, /aria-label="Sort by Compound"/);
   assert.match(html, /aria-label="Go to next page"/);
   assert.match(html, /overflow-x:auto/);
+  assert.match(html, /position:sticky/);
+});
+
+test('filter panel supports a vertical rail presentation without changing filter semantics', async () => {
+  const { AdmetFilterPanel } = await vite.ssrLoadModule('/src/AdmetPropertyTable.jsx');
+  const html = renderToStaticMarkup(React.createElement(AdmetFilterPanel, {
+    filters: createEmptyAdmetFilters(), onChange: () => {}, matchedCount: 2, totalCount: 2, layout: 'rail',
+  }));
+  assert.match(html, /data-layout="rail"/);
+  assert.match(html, /2 of 2 compounds/);
+  assert.match(html, /BBB classification/);
 });
 
 test('shared compact filter panel exposes numeric, BBB, status, summary, and clear controls', async () => {

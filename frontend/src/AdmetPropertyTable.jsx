@@ -54,7 +54,7 @@ const COLUMN_KEYS = ['compound', ...ADMET_PROPERTY_TABLE_ENDPOINTS];
 const QUICK_NUMERIC_ENDPOINTS = ['lipophilicity_astrazeneca', 'solubility_aqsoldb'];
 const MORE_NUMERIC_ENDPOINTS = ['caco2_wang', 'ppbr_az', 'vdss_lombardo'];
 
-function NumericFilterFields({ endpointKey, filters, onChange }) {
+function NumericFilterFields({ endpointKey, filters, onChange, fullWidth = false }) {
   const metadata = ADMET_ENDPOINT_BY_KEY.get(endpointKey);
   const constraint = filters.numeric[endpointKey];
   const validity = numericFilterValidity(constraint);
@@ -71,7 +71,7 @@ function NumericFilterFields({ endpointKey, filters, onChange }) {
             size="small"
             error={!validity[bound].valid || !validity.rangeValid}
             inputProps={{ inputMode: 'decimal', 'aria-label': `${metadata.label} ${bound}` }}
-            sx={{ width: 112 }}
+            sx={{ width: fullWidth ? '50%' : 112 }}
           />
         ))}
       </Stack>
@@ -81,10 +81,10 @@ function NumericFilterFields({ endpointKey, filters, onChange }) {
   );
 }
 
-function MultiSelectFilter({ endpointKey, label, kind, options, filters, onChange }) {
+function MultiSelectFilter({ endpointKey, label, kind, options, filters, onChange, fullWidth = false }) {
   const selected = filters[kind][endpointKey];
   return (
-    <FormControl size="small" sx={{ minWidth: 190 }}>
+    <FormControl size="small" sx={{ minWidth: 0, width: fullWidth ? '100%' : 'auto' }}>
       <InputLabel>{label}</InputLabel>
       <Select
         multiple
@@ -111,21 +111,26 @@ const STATUS_OPTIONS = ADMET_FILTERABLE_STATUSES.map((value) => ({
   label: ADMET_STATUS_PRESENTATION[value].label,
 }));
 
-export function AdmetFilterPanel({ filters, onChange, matchedCount, totalCount }) {
+export function AdmetFilterPanel({ filters, onChange, matchedCount, totalCount, layout = 'toolbar' }) {
   const summaries = activeAdmetFilterSummaries(filters);
+  const rail = layout === 'rail';
   return (
-    <Box aria-label="ADMET property filters" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1.5, p: 1.5 }}>
+    <Box
+      aria-label="ADMET property filters"
+      data-layout={layout}
+      sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1.5, p: 1.5, bgcolor: 'background.paper' }}
+    >
       <Stack spacing={1.25}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={1}>
+        <Stack direction={rail ? 'column' : { xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={rail ? 'stretch' : { sm: 'center' }} spacing={1}>
           <Box>
             <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Filters</Typography>
             <Typography variant="caption" color="text.secondary">All active filters must match; selections within one field match any selected value.</Typography>
           </Box>
-          <Button size="small" disabled={!summaries.length} onClick={() => onChange(createEmptyAdmetFilters())}>Clear all filters</Button>
+          <Button size="small" disabled={!summaries.length} onClick={() => onChange(createEmptyAdmetFilters())} sx={{ alignSelf: rail ? 'flex-start' : 'auto' }}>Clear all filters</Button>
         </Stack>
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5, alignItems: 'start' }}>
-          {QUICK_NUMERIC_ENDPOINTS.map((key) => <NumericFilterFields key={key} endpointKey={key} filters={filters} onChange={onChange} />)}
-          <MultiSelectFilter endpointKey="gmc_mpnn_bbb" label="BBB classification" kind="classifications" options={BBB_OPTIONS} filters={filters} onChange={onChange} />
+        <Box sx={{ display: 'grid', gridTemplateColumns: rail ? '1fr' : { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5, alignItems: 'start' }}>
+          {QUICK_NUMERIC_ENDPOINTS.map((key) => <NumericFilterFields key={key} endpointKey={key} filters={filters} onChange={onChange} fullWidth={rail} />)}
+          <MultiSelectFilter endpointKey="gmc_mpnn_bbb" label="BBB classification" kind="classifications" options={BBB_OPTIONS} filters={filters} onChange={onChange} fullWidth={rail} />
         </Box>
         <Accordion disableGutters elevation={0} sx={{ border: '1px solid', borderColor: 'divider', '&:before': { display: 'none' } }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />} aria-controls="admet-more-filters" id="admet-more-filters-summary">
@@ -133,12 +138,12 @@ export function AdmetFilterPanel({ filters, onChange, matchedCount, totalCount }
           </AccordionSummary>
           <AccordionDetails id="admet-more-filters">
             <Stack spacing={2}>
-              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5 }}>
-                {MORE_NUMERIC_ENDPOINTS.map((key) => <NumericFilterFields key={key} endpointKey={key} filters={filters} onChange={onChange} />)}
+              <Box sx={{ display: 'grid', gridTemplateColumns: rail ? '1fr' : { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5 }}>
+                {MORE_NUMERIC_ENDPOINTS.map((key) => <NumericFilterFields key={key} endpointKey={key} filters={filters} onChange={onChange} fullWidth={rail} />)}
               </Box>
               <Box>
                 <Typography variant="caption" sx={{ display: 'block', mb: 1, fontWeight: 800 }}>Endpoint status</Typography>
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(3, minmax(0, 1fr))' }, gap: 1 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: rail ? '1fr' : { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(3, minmax(0, 1fr))' }, gap: 1 }}>
                   {ADMET_PROPERTY_TABLE_ENDPOINTS.map((key) => (
                     <MultiSelectFilter
                       key={key}
@@ -148,6 +153,7 @@ export function AdmetFilterPanel({ filters, onChange, matchedCount, totalCount }
                       options={STATUS_OPTIONS}
                       filters={filters}
                       onChange={onChange}
+                      fullWidth={rail}
                     />
                   ))}
                 </Box>
@@ -236,8 +242,8 @@ export default function AdmetPropertyTable({
   }
 
   return (
-    <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
-      <Stack spacing={1.5} sx={{ p: 2 }}>
+    <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden', minWidth: 0 }}>
+      <Stack spacing={1} sx={{ px: 1.5, py: 1.25 }}>
         <Box>
           <Typography variant="h2">ADMET property table</Typography>
           <Typography variant="body2" color="text.secondary">
@@ -260,7 +266,14 @@ export default function AdmetPropertyTable({
                 const metadata = key === 'compound' ? null : ADMET_ENDPOINT_BY_KEY.get(key);
                 const label = metadata?.label || 'Compound';
                 return (
-                  <TableCell key={key} sortDirection={viewState.sortKey === key ? viewState.sortDirection : false} sx={{ minWidth: key === 'compound' ? 220 : 140 }}>
+                  <TableCell
+                    key={key}
+                    sortDirection={viewState.sortKey === key ? viewState.sortDirection : false}
+                    sx={{
+                      minWidth: key === 'compound' ? 220 : 140,
+                      ...(key === 'compound' ? { position: 'sticky', left: 0, zIndex: 4, bgcolor: 'background.paper', borderRight: '1px solid', borderRightColor: 'divider' } : {}),
+                    }}
+                  >
                     <TableSortLabel
                       active={viewState.sortKey === key}
                       direction={viewState.sortKey === key ? viewState.sortDirection : 'asc'}
@@ -283,7 +296,7 @@ export default function AdmetPropertyTable({
               const isCompared = comparedIds.has(molecule.moleculeId);
               return (
               <TableRow hover selected={isCompared} key={`${molecule.moleculeId}-${molecule.sourceIndex}`} data-testid="admet-property-row">
-                <TableCell component="th" scope="row" sx={{ maxWidth: 300 }}>
+                <TableCell component="th" scope="row" sx={{ maxWidth: 300, position: 'sticky', left: 0, zIndex: 2, bgcolor: 'background.paper', borderRight: '1px solid', borderRightColor: 'divider' }}>
                   <Stack spacing={0.25}>
                     <Typography variant="body2" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>{molecule.displayName}</Typography>
                     {molecule.moleculeId !== molecule.displayName ? <Typography variant="caption" color="text.secondary">{molecule.moleculeId}</Typography> : null}

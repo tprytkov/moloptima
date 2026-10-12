@@ -53,6 +53,8 @@ const EVIDENCE_LABELS = {
   strong: 'Strong support',
 };
 
+const REGRESSION_NUMBER_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 });
+
 export function formatCalibratedProbability(value) {
   if (value === null || value === undefined || value === '') {
     return 'Not available';
@@ -88,20 +90,29 @@ function firstEnsembleValue(endpoint) {
   return key ? endpoint[key] : null;
 }
 
+function formatRegressionNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? REGRESSION_NUMBER_FORMAT.format(number) : 'Not available';
+}
+
 function RegressionEndpointCard({ endpointName, endpoint, status }) {
   const value = firstEnsembleValue(endpoint);
   const uncertaintyKey = Object.keys(endpoint || {}).find((name) => name.startsWith('seed_standard_deviation_'));
   return (
-    <Box data-testid={`admet-endpoint-${endpointName}`} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2, bgcolor: 'background.paper' }}>
-      <Stack spacing={1}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>{ENDPOINT_LABELS[endpointName]}</Typography>
-        {status.code !== 'available' ? <Chip variant="outlined" color={status.color} label={status.label} /> : null}
-        <Typography variant="h5" sx={{ fontWeight: 750 }}>{value ?? 'Not available'} {endpoint?.unit || ''}</Typography>
-        <Typography variant="caption" color="text.secondary">
-          Ensemble SD: {uncertaintyKey ? endpoint[uncertaintyKey] : 'Not available'} · {endpoint?.representation || 'representation unavailable'}
-        </Typography>
-        {endpoint?.warning ? <Alert severity="warning">{endpoint.warning}</Alert> : null}
+    <Box data-testid={`admet-endpoint-${endpointName}`} sx={{ borderBottom: '1px solid', borderColor: 'divider', px: 1.25, py: 1, bgcolor: 'background.paper' }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ sm: 'center' }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="body2" sx={{ fontWeight: 750 }}>{ENDPOINT_LABELS[endpointName]}</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Ensemble SD: {uncertaintyKey ? formatRegressionNumber(endpoint[uncertaintyKey]) : 'Not available'} · {endpoint?.representation || 'representation unavailable'}
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={0.75} alignItems="center" sx={{ flexShrink: 0 }}>
+          {status.code !== 'available' ? <Chip size="small" variant="outlined" color={status.color} label={status.label} /> : null}
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{formatRegressionNumber(value)} {endpoint?.unit || ''}</Typography>
+        </Stack>
       </Stack>
+      {endpoint?.warning ? <Alert severity="warning" sx={{ mt: 0.75 }}>{endpoint.warning}</Alert> : null}
     </Box>
   );
 }
@@ -112,17 +123,21 @@ function BBBEndpointCard({ endpoint, status }) {
   const thresholdStatus = endpoint?.threshold_status === 'provisional_raw' ? 'Provisional raw' : 'Not specified';
   const calibrationStatus = endpoint?.calibration_status === 'not_frozen' ? 'Not frozen' : 'Not specified';
   return (
-    <Box data-testid="admet-endpoint-gmc_mpnn_bbb" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2, bgcolor: 'background.paper' }}>
-      <Stack spacing={1}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>BBB permeability · GMC-MPNN</Typography>
-        {status.code !== 'available' ? <Chip variant="outlined" color={status.color} label={status.label} /> : null}
-        <Typography variant="caption" color="text.secondary">Raw ensemble probability</Typography>
-        <Typography variant="h5" sx={{ fontWeight: 750 }}>{formatCalibratedProbability(endpoint?.ensemble_probability)}</Typography>
-        <Typography variant="body2">Raw classification at {threshold}: {rawClassification || 'Not available'}</Typography>
-        <Typography variant="caption" color="text.secondary">Model disagreement / seed SD: {endpoint?.ensemble_standard_deviation ?? 'Not available'}</Typography>
-        <Typography variant="caption" color="text.secondary">Threshold status: {thresholdStatus} · Calibration status: {calibrationStatus}</Typography>
-        {endpoint?.warning || endpoint?.error_message ? <Alert severity="warning">{endpoint.warning || endpoint.error_message}</Alert> : null}
+    <Box data-testid="admet-endpoint-gmc_mpnn_bbb" sx={{ borderBottom: '1px solid', borderColor: 'divider', px: 1.25, py: 1, bgcolor: 'background.paper' }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ sm: 'center' }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="body2" sx={{ fontWeight: 750 }}>BBB permeability · GMC-MPNN</Typography>
+          <Typography variant="caption" color="text.secondary" display="block">Raw classification at {threshold}: {rawClassification || 'Not available'}</Typography>
+          <Typography variant="caption" color="text.secondary" display="block">Model disagreement / seed SD: {formatRegressionNumber(endpoint?.ensemble_standard_deviation)}</Typography>
+          <Typography variant="caption" color="text.secondary" display="block">Threshold status: {thresholdStatus} · Calibration status: {calibrationStatus}</Typography>
+        </Box>
+        <Stack alignItems={{ sm: 'flex-end' }} sx={{ flexShrink: 0 }}>
+          {status.code !== 'available' ? <Chip size="small" variant="outlined" color={status.color} label={status.label} /> : null}
+          <Typography variant="caption" color="text.secondary">Raw ensemble probability</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{formatCalibratedProbability(endpoint?.ensemble_probability)}</Typography>
+        </Stack>
       </Stack>
+      {endpoint?.warning || endpoint?.error_message ? <Alert severity="warning" sx={{ mt: 0.75 }}>{endpoint.warning || endpoint.error_message}</Alert> : null}
     </Box>
   );
 }
@@ -135,22 +150,16 @@ function ADMETEndpointCard({ endpointName, endpoint, status }) {
   return (
     <Box
       data-testid={`admet-endpoint-${endpointName}`}
-      sx={{
-        border: '1px solid',
-        borderColor: 'divider',
-        borderRadius: 1,
-        p: 2,
-        bgcolor: 'background.paper',
-      }}
+      sx={{ borderBottom: '1px solid', borderColor: 'divider', px: 1.25, py: 1, bgcolor: 'background.paper' }}
     >
-      <Stack spacing={1.25}>
+      <Stack spacing={0.5}>
         <Stack
-          direction={{ xs: 'column', sm: 'row' }}
+          direction="row"
           spacing={1}
           justifyContent="space-between"
-          alignItems={{ sm: 'flex-start' }}
+          alignItems="center"
         >
-          <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>
+          <Typography variant="body2" sx={{ fontWeight: 750 }}>
             {displayName}
           </Typography>
           <Chip
@@ -160,20 +169,12 @@ function ADMETEndpointCard({ endpointName, endpoint, status }) {
             label={status.code === 'available' ? badgeLabel : status.label}
           />
         </Stack>
-        <Box>
-          <Typography variant="caption" color="text.secondary">
-            Calibrated probability
-          </Typography>
-          <Typography variant="h5" sx={{ fontWeight: 750, lineHeight: 1.2 }}>
-            {formatCalibratedProbability(endpoint?.calibrated_probability)}
-          </Typography>
-        </Box>
-        <Typography variant="body2" color="text.secondary">
-          High probability represents: {endpoint?.positive_class_meaning || 'Positive-class meaning unavailable'}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          Binary prediction (threshold 0.5): {formatBinaryPrediction(endpoint?.binary_prediction)}
-        </Typography>
+        <Stack direction="row" justifyContent="space-between" alignItems="baseline" spacing={1}>
+          <Typography variant="caption" color="text.secondary">Calibrated probability</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.2 }}>{formatCalibratedProbability(endpoint?.calibrated_probability)}</Typography>
+        </Stack>
+        <Typography variant="caption" color="text.secondary">High probability represents: {endpoint?.positive_class_meaning || 'Positive-class meaning unavailable'}</Typography>
+        <Typography variant="caption" color="text.secondary">Binary prediction (threshold 0.5): {formatBinaryPrediction(endpoint?.binary_prediction)}</Typography>
         {warning ? <Alert severity="warning">{warning}</Alert> : null}
       </Stack>
     </Box>
@@ -208,24 +209,28 @@ export default function AdmetResultsSection({ compound }) {
 
   return (
     <Box aria-label="ADMET classification">
-      <Stack spacing={0.75} sx={{ mb: 2 }}>
-        <Typography variant="h2">ADMET Results</Typography>
+      <Stack spacing={0.5} sx={{ mb: 1.25 }}>
+        <Typography variant="h2">Endpoint profile</Typography>
         <Typography variant="body2" color="text.secondary">
           Model probabilities are computational research signals, not clinical conclusions. GMC BBB is shown as a raw, uncalibrated ensemble.
         </Typography>
         {compound?.admet_warning ? <Alert severity="warning">{compound.admet_warning}</Alert> : null}
       </Stack>
-      <Stack spacing={2}>
+      <Stack spacing={1.25}>
         {ADMET_GROUPS.map((group) => (
           <Box key={group.label} component="section" aria-label={`${group.label} ADMET endpoints`}>
-            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, fontWeight: 750 }}>
+            <Typography variant="overline" color="text.secondary" sx={{ mb: 0.5, fontWeight: 800, letterSpacing: '0.08em' }}>
               {group.label}
             </Typography>
             <Box
               sx={{
                 display: 'grid',
-                gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
-                gap: 1.5,
+                gridTemplateColumns: { xs: '1fr', xl: 'repeat(2, minmax(0, 1fr))' },
+                border: '1px solid',
+                borderColor: 'divider',
+                borderRadius: 1,
+                overflow: 'hidden',
+                '& > :last-child': { borderBottom: 0 },
               }}
             >
               {group.endpoints.map((endpointKey) => {
