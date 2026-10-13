@@ -1,0 +1,39 @@
+{
+  "expected_versions": {
+    "MDAnalysis": "2.10.0",
+    "dill": "0.4.1",
+    "gemmi": "0.7.5",
+    "multiprocess": "0.70.19",
+    "networkx": "3.6.1",
+    "numpy": "2.4.6",
+    "pandas": "3.0.6",
+    "prolif": "2.2.3",
+    "psutil": "7.2.2",
+    "python": "3.11.17",
+    "rdkit": "2026.09.1",
+    "scipy": "1.17.1",
+    "tqdm": "4.70.1"
+  },
+  "python_relative_candidates": [
+    "resources/prolif/runtime/python/python.exe",
+    "desktop/runtime/prolif/python/python.exe"
+  ],
+  "qualification_status": "qualified_unbundled",
+  "runner_relative_path": "resources/prolif/prolif_runner.py",
+  "runner_schema_version": "moloptima-prolif-runner-request-v1",
+  "runner_sha256": "8ca4c66238618094a0d1a4ea4df59b176c9ff2aa845f59bf87134b4ea26480db",
+  "runner_version": "1.0.0",
+  "schema_version": "moloptima-prolif-runtime-resources-v1",
+  "supported_interactions": [
+    "Hydrophobic",
+    "HBDonor",
+    "HBAcceptor",
+    "PiStacking",
+    "Anionic",
+    "Cationic",
+    "CationPi",
+    "PiCation",
+    "VdWContact"
+  ]
+}
+

@@ -19,6 +19,7 @@ from typing import Callable, Iterable
 from rdkit import Chem, rdBase
 from rdkit.Chem import AllChem
 
+from molecular_prioritization.interaction_analysis_input import build_ligand_input_pdbqt_provenance
 from molecular_prioritization.receptor import ReceptorArtifact, VinaBoxConfig
 
 
@@ -163,6 +164,7 @@ class VinaDockingEngine:
         template_name = f"{index:04d}_{safe_key}.sdf"
         template_path = self.ligand_template_root / template_name
         template_metadata_path = template_path.with_suffix(".json")
+        input_pdbqt_template_path = template_path.with_suffix(".pdbqt")
         preparation_details: dict[str, object] = {}
         # Production output roots are per-job directories; retain only the safe
         # basename, never a local absolute path, as the job identity.
@@ -174,6 +176,7 @@ class VinaDockingEngine:
                 molecule_root,
                 persisted_sdf_path=template_path,
                 persisted_metadata_path=template_metadata_path,
+                persisted_pdbqt_path=input_pdbqt_template_path,
                 preparation_details=preparation_details,
                 template_provenance={
                     "artifact_schema_version": LIGAND_TEMPLATE_SCHEMA_VERSION,
@@ -248,6 +251,9 @@ class VinaDockingEngine:
                 **preparation_details,
                 "artifact_path": f"docking/ligand_templates/{template_name}",
                 "metadata_path": f"docking/ligand_templates/{template_metadata_path.name}",
+                "input_pdbqt_artifact_path": (
+                    f"docking/ligand_templates/{input_pdbqt_template_path.name}"
+                ),
             },
             "runtime_duration_seconds": round(time.perf_counter() - started, 6),
             "stdout_summary": (completed.stdout or "")[-1200:],
@@ -262,6 +268,7 @@ class VinaDockingEngine:
         *,
         persisted_sdf_path: Path | None = None,
         persisted_metadata_path: Path | None = None,
+        persisted_pdbqt_path: Path | None = None,
         preparation_details: dict[str, object] | None = None,
         template_provenance: dict[str, object] | None = None,
     ) -> Path:
@@ -269,8 +276,9 @@ class VinaDockingEngine:
         sdf_path = molecule_root / "ligand.sdf"
         pdbqt_path = molecule_root / "ligand.pdbqt"
         optimization_method = _prepare_rdkit_ligand(smiles, sdf_path, self.config.seed)
+        provenance: dict[str, object] | None = None
         if persisted_sdf_path is not None:
-            if persisted_metadata_path is None or template_provenance is None:
+            if persisted_metadata_path is None or persisted_pdbqt_path is None or template_provenance is None:
                 raise RuntimeError("Ligand-template persistence requires metadata and provenance.")
             sdf_bytes = sdf_path.read_bytes()
             sdf_sha256 = hashlib.sha256(sdf_bytes).hexdigest()
@@ -281,17 +289,29 @@ class VinaDockingEngine:
                 "artifact_path": f"docking/ligand_templates/{persisted_sdf_path.name}",
             }
             _write_immutable_bytes(persisted_sdf_path, sdf_bytes)
+        conversion = self._execute(
+            [str(self.obabel_executable), str(sdf_path), "-O", str(pdbqt_path)], timeout=120
+        )
+        if conversion.returncode != 0 or not pdbqt_path.is_file():
+            raise RuntimeError(f"Ligand PDBQT preparation failed: {_diagnostic(conversion)}")
+        if provenance is not None:
+            pdbqt_bytes = pdbqt_path.read_bytes()
+            pdbqt_provenance = build_ligand_input_pdbqt_provenance(sdf_path, pdbqt_path)
+            provenance.update({
+                "input_pdbqt_artifact_path": (
+                    f"docking/ligand_templates/{persisted_pdbqt_path.name}"
+                ),
+                "input_pdbqt_sha256": hashlib.sha256(pdbqt_bytes).hexdigest(),
+                "input_pdbqt_size_bytes": len(pdbqt_bytes),
+                "input_pdbqt_provenance": pdbqt_provenance,
+            })
+            _write_immutable_bytes(persisted_pdbqt_path, pdbqt_bytes)
             _write_immutable_bytes(
                 persisted_metadata_path,
                 (json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode("utf-8"),
             )
             if preparation_details is not None:
                 preparation_details.update(provenance)
-        conversion = self._execute(
-            [str(self.obabel_executable), str(sdf_path), "-O", str(pdbqt_path)], timeout=120
-        )
-        if conversion.returncode != 0 or not pdbqt_path.is_file():
-            raise RuntimeError(f"Ligand PDBQT preparation failed: {_diagnostic(conversion)}")
         return pdbqt_path
 
     def _common_result(self, molecule_id: str, smiles: str) -> dict[str, object]:

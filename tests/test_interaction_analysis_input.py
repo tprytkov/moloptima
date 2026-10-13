@@ -9,11 +9,14 @@ from rdkit import Chem
 
 from molecular_prioritization.interaction_analysis_input import (
     INPUT_SCHEMA_VERSION,
+    MAPPING_SCHEMA_VERSION_V2,
     POCKET_CUTOFF_ANGSTROM,
     InteractionAnalysisInputError,
+    build_ligand_input_pdbqt_provenance,
     build_interaction_analysis_input,
     extract_vina_pose_model,
     resolve_template_pose_mapping,
+    resolve_template_pose_mapping_v2,
     write_interaction_analysis_input,
 )
 from molecular_prioritization.vina_docking import _prepare_rdkit_ligand
@@ -79,6 +82,35 @@ def unique_cco_atoms() -> list[str]:
 
 def write_template(path: Path, smiles: str) -> None:
     _prepare_rdkit_ligand(smiles, path, 20240517)
+
+
+def pdbqt_from_template(path: Path, *, swap_oxygen_coordinates: bool = False) -> list[str]:
+    molecule = Chem.SDMolSupplier(str(path), removeHs=False)[0]
+    conformer = molecule.GetConformer()
+    included = [
+        atom.GetIdx() for atom in molecule.GetAtoms()
+        if atom.GetSymbol() != "H" or any(
+            neighbor.GetSymbol() in {"N", "O", "S"} for neighbor in atom.GetNeighbors()
+        )
+    ]
+    oxygen_indices = [index for index in included if molecule.GetAtomWithIdx(index).GetSymbol() == "O"]
+    coordinate_source = {index: index for index in included}
+    if swap_oxygen_coordinates:
+        coordinate_source[oxygen_indices[0]], coordinate_source[oxygen_indices[1]] = (
+            oxygen_indices[1], oxygen_indices[0]
+        )
+    lines = []
+    for serial, atom_index in enumerate(included, start=1):
+        atom = molecule.GetAtomWithIdx(atom_index)
+        point = conformer.GetAtomPosition(coordinate_source[atom_index])
+        atom_type = {"H": "HD", "O": "OA", "N": "NA", "S": "SA"}.get(
+            atom.GetSymbol(), "A" if atom.GetIsAromatic() else atom.GetSymbol()
+        )
+        lines.append(pdbqt_atom(
+            serial, atom.GetSymbol(), "LIG", "A", 1,
+            point.x, point.y, point.z, atom_type,
+        ))
+    return lines
 
 
 def test_extracts_exact_model_metadata_and_never_rewrites_parent(tmp_path):
@@ -173,6 +205,88 @@ def test_graph_automorphism_is_resolved_only_after_graph_match_by_template_geome
     assert [entry["pose_pdbqt_atom_index"] for entry in mapping["entries"]] == [2, 3, 0, 1]
     assert mapping["coordinate_tiebreaker"]["status"] == "resolved_graph_automorphisms"
     assert mapping["coordinate_tiebreaker"]["candidate_count"] == 2
+
+
+def test_pre_docking_pdbqt_maps_explicit_polar_hydrogen_to_sdf_parent(tmp_path):
+    template = tmp_path / "acid.sdf"
+    input_pdbqt = tmp_path / "acid.pdbqt"
+    write_template(template, "CC(=O)O")
+    input_pdbqt.write_text("ROOT\n" + "".join(pdbqt_from_template(template)) + "ENDROOT\n", encoding="utf-8")
+
+    provenance = build_ligand_input_pdbqt_provenance(template, input_pdbqt)
+
+    assert provenance["input_pdbqt_sha256"] == hashlib.sha256(input_pdbqt.read_bytes()).hexdigest()
+    assert provenance["polar_hydrogen_count"] == 1
+    hydrogen = provenance["polar_hydrogens"][0]
+    molecule = Chem.SDMolSupplier(str(template), removeHs=False)[0]
+    assert molecule.GetBondBetweenAtoms(
+        hydrogen["template_hydrogen_atom_index"], hydrogen["template_parent_atom_index"]
+    ) is not None
+    parent = molecule.GetAtomWithIdx(hydrogen["template_parent_atom_index"])
+    assert parent.GetSymbol() == "O"
+    assert parent.GetTotalValence() == 2
+
+
+def test_v2_direct_identity_overrides_oxygen_automorphism_geometry(tmp_path):
+    template = tmp_path / "acid.sdf"
+    input_pdbqt = tmp_path / "acid-input.pdbqt"
+    pose = tmp_path / "pose.pdbqt"
+    write_template(template, "CC(=O)O")
+    input_atoms = pdbqt_from_template(template)
+    input_pdbqt.write_text("ROOT\n" + "".join(input_atoms) + "ENDROOT\n", encoding="utf-8")
+    swapped_pose_atoms = pdbqt_from_template(template, swap_oxygen_coordinates=True)
+    pose.write_text(pose_model(1, -5.0, 0, 0, swapped_pose_atoms), encoding="utf-8")
+
+    mapping, provenance = resolve_template_pose_mapping_v2(
+        template, input_pdbqt, extract_vina_pose_model(pose, 1)
+    )
+
+    hydrogen = provenance["polar_hydrogens"][0]
+    parent_pose_index = hydrogen["input_pdbqt_parent_atom_index"]
+    direct_parent = next(
+        entry["template_atom_index"] for entry in mapping["entries"]
+        if entry["pose_pdbqt_atom_index"] == parent_pose_index
+    )
+    assert mapping["schema_version"] == MAPPING_SCHEMA_VERSION_V2
+    assert mapping["coordinate_tiebreaker"]["status"] == "not_used"
+    assert direct_parent == hydrogen["template_parent_atom_index"]
+    assert mapping["polar_hydrogen_entries"][0]["pose_pdbqt_parent_atom_index"] == parent_pose_index
+
+
+def test_v2_fails_closed_when_vina_reorders_identity(tmp_path):
+    template = tmp_path / "acid.sdf"
+    input_pdbqt = tmp_path / "acid-input.pdbqt"
+    pose = tmp_path / "pose.pdbqt"
+    write_template(template, "CC(=O)O")
+    input_atoms = pdbqt_from_template(template)
+    input_pdbqt.write_text("ROOT\n" + "".join(input_atoms) + "ENDROOT\n", encoding="utf-8")
+    reordered = [input_atoms[1], input_atoms[0], *input_atoms[2:]]
+    pose.write_text(pose_model(1, -5.0, 0, 0, reordered), encoding="utf-8")
+
+    with pytest.raises(InteractionAnalysisInputError, match="identity differs") as error:
+        resolve_template_pose_mapping_v2(template, input_pdbqt, extract_vina_pose_model(pose, 1))
+
+    assert error.value.code == "template_pose_mapping_failed"
+
+
+def test_preparation_mapping_fails_closed_when_coordinates_do_not_resolve_identity(tmp_path):
+    template = tmp_path / "ambiguous.sdf"
+    input_pdbqt = tmp_path / "ambiguous.pdbqt"
+    write_template(template, "CC")
+    molecule = Chem.SDMolSupplier(str(template), removeHs=False)[0]
+    conformer = molecule.GetConformer()
+    conformer.SetAtomPosition(1, conformer.GetAtomPosition(0))
+    writer = Chem.SDWriter(str(template)); writer.write(molecule); writer.close()
+    point = molecule.GetConformer().GetAtomPosition(0)
+    input_pdbqt.write_text(
+        "ROOT\n" + pdbqt_atom(1, "C", "LIG", "A", 1, point.x, point.y, point.z, "C") + "ENDROOT\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InteractionAnalysisInputError, match="ambiguous") as error:
+        build_ligand_input_pdbqt_provenance(template, input_pdbqt)
+
+    assert error.value.code == "ligand_input_pdbqt_mapping_failed"
 
 
 def test_build_contract_selects_complete_residues_and_preserves_limitations(tmp_path):

@@ -21,10 +21,14 @@ from rdkit.Chem import rdDetermineBonds, rdMolAlign
 
 INPUT_SCHEMA_VERSION = "moloptima-interaction-analysis-input-v1"
 MAPPING_SCHEMA_VERSION = "moloptima-template-pose-atom-mapping-v1"
+INPUT_SCHEMA_VERSION_V2 = "moloptima-interaction-analysis-input-v2"
+MAPPING_SCHEMA_VERSION_V2 = "moloptima-template-pose-atom-mapping-v2"
+PDBQT_PROVENANCE_SCHEMA_VERSION = "moloptima-ligand-input-pdbqt-provenance-v1"
 RECEPTOR_POLICY_VERSION = "moloptima-complete-residue-pocket-v1"
 LIGAND_TEMPLATE_SCHEMA_VERSION = "moloptima-ligand-template-v1"
 POCKET_CUTOFF_ANGSTROM = 8.0
 MAPPING_RMSD_AMBIGUITY_TOLERANCE_ANGSTROM = 0.001
+PREPARATION_COORDINATE_TOLERANCE_ANGSTROM = 0.002
 
 # ProLIF 2.2.3's supported default fingerprint reaches furthest for edge-to-face
 # pi stacking (6.5 A centroid distance).  An 8 A atom-neighbour shell adds a
@@ -198,11 +202,7 @@ def resolve_template_pose_mapping(
     coordinate_tiebreaker: dict[str, object] = {"status": "not_required"}
     if len(matches) != 1:
         ranked_matches = sorted(
-            (
-                _alignment_rmsd(pose, template, candidate),
-                candidate,
-            )
-            for candidate in matches
+            (_alignment_rmsd(pose, template, candidate), candidate) for candidate in matches
         )
         best_rmsd, match = ranked_matches[0]
         next_rmsd = ranked_matches[1][0]
@@ -221,7 +221,6 @@ def resolve_template_pose_mapping(
         }
     else:
         match = matches[0]
-
     reconstructed = _reconstruct_pose_chemistry(template, pose, match)
     validation = _validate_reconstructed_chemistry(template, reconstructed, match)
     entries = []
@@ -252,6 +251,197 @@ def resolve_template_pose_mapping(
     }
 
 
+def build_ligand_input_pdbqt_provenance(
+    template_path: str | Path,
+    input_pdbqt_path: str | Path,
+) -> dict[str, object]:
+    """Map SDF atoms to the exact pre-docking PDBQT by preparation coordinates."""
+
+    template_file = Path(template_path)
+    pdbqt_file = Path(input_pdbqt_path)
+    if not template_file.is_file() or not pdbqt_file.is_file():
+        raise InteractionAnalysisInputError(
+            "ligand_input_pdbqt_missing", "Ligand template or pre-docking PDBQT is missing."
+        )
+    supplier = Chem.SDMolSupplier(str(template_file), removeHs=False, sanitize=True)
+    template = supplier[0] if len(supplier) else None
+    if template is None or template.GetNumConformers() != 1:
+        raise InteractionAnalysisInputError(
+            "ligand_input_pdbqt_mapping_failed", "Ligand template SDF is invalid."
+        )
+    pdbqt_bytes = pdbqt_file.read_bytes()
+    try:
+        pdbqt_text = pdbqt_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise InteractionAnalysisInputError(
+            "ligand_input_pdbqt_mapping_failed", "Pre-docking PDBQT is not UTF-8 text."
+        ) from exc
+    pdbqt_atoms = _parse_pdbqt_atoms(
+        pdbqt_text, failure_code="ligand_input_pdbqt_mapping_failed"
+    )
+    conformer = template.GetConformer()
+    unused = set(range(template.GetNumAtoms()))
+    entries: list[dict[str, object]] = []
+    for pdbqt_atom in pdbqt_atoms:
+        candidates = []
+        for template_index in unused:
+            template_atom = template.GetAtomWithIdx(template_index)
+            if template_atom.GetSymbol() != pdbqt_atom["element"]:
+                continue
+            position = conformer.GetAtomPosition(template_index)
+            distance = math.sqrt(sum(
+                (float(left) - float(right)) ** 2
+                for left, right in zip(
+                    pdbqt_atom["coordinates"], [position.x, position.y, position.z], strict=True
+                )
+            ))
+            if distance <= PREPARATION_COORDINATE_TOLERANCE_ANGSTROM:
+                candidates.append((distance, template_index))
+        if len(candidates) != 1:
+            raise InteractionAnalysisInputError(
+                "ligand_input_pdbqt_mapping_failed",
+                "SDF-to-input-PDBQT atom identity is missing or ambiguous.",
+            )
+        distance, template_index = candidates[0]
+        unused.remove(template_index)
+        entries.append({
+            "template_atom_index": template_index,
+            "input_pdbqt_atom_index": pdbqt_atom["pose_pdbqt_atom_index"],
+            "input_pdbqt_atom_serial": pdbqt_atom["serial"],
+            "atom_name": pdbqt_atom["atom_name"],
+            "element": pdbqt_atom["element"],
+            "autodock_atom_type": pdbqt_atom["atom_type"],
+            "preparation_coordinate_distance_angstrom": round(distance, 6),
+        })
+    mapped_template = {int(entry["template_atom_index"]) for entry in entries}
+    missing_heavy = [
+        atom.GetIdx() for atom in template.GetAtoms()
+        if atom.GetSymbol() != "H" and atom.GetIdx() not in mapped_template
+    ]
+    if missing_heavy:
+        raise InteractionAnalysisInputError(
+            "ligand_input_pdbqt_mapping_failed", "Pre-docking PDBQT omitted a template heavy atom."
+        )
+    template_to_pdbqt = {
+        int(entry["template_atom_index"]): entry for entry in entries
+    }
+    polar_hydrogens = []
+    for entry in entries:
+        template_index = int(entry["template_atom_index"])
+        atom = template.GetAtomWithIdx(template_index)
+        if atom.GetSymbol() != "H":
+            continue
+        neighbors = list(atom.GetNeighbors())
+        if len(neighbors) != 1 or neighbors[0].GetIdx() not in template_to_pdbqt:
+            raise InteractionAnalysisInputError(
+                "ligand_input_pdbqt_mapping_failed", "Polar-hydrogen parent identity is unavailable."
+            )
+        parent = template_to_pdbqt[neighbors[0].GetIdx()]
+        polar_hydrogens.append({
+            "template_hydrogen_atom_index": template_index,
+            "template_parent_atom_index": neighbors[0].GetIdx(),
+            "input_pdbqt_hydrogen_atom_index": entry["input_pdbqt_atom_index"],
+            "input_pdbqt_hydrogen_atom_serial": entry["input_pdbqt_atom_serial"],
+            "input_pdbqt_parent_atom_index": parent["input_pdbqt_atom_index"],
+            "input_pdbqt_parent_atom_serial": parent["input_pdbqt_atom_serial"],
+            "parent_element": parent["element"],
+            "hydrogen_autodock_atom_type": entry["autodock_atom_type"],
+        })
+    return {
+        "schema_version": PDBQT_PROVENANCE_SCHEMA_VERSION,
+        "mapping_method": (
+            "exact preparation-time SDF conformer to Open Babel PDBQT coordinate identity; "
+            "polar-hydrogen parent taken from the explicit SDF bond"
+        ),
+        "coordinate_tolerance_angstrom": PREPARATION_COORDINATE_TOLERANCE_ANGSTROM,
+        "input_pdbqt_sha256": hashlib.sha256(pdbqt_bytes).hexdigest(),
+        "input_pdbqt_size_bytes": len(pdbqt_bytes),
+        "atom_count": len(entries),
+        "heavy_atom_count": sum(entry["element"] != "H" for entry in entries),
+        "polar_hydrogen_count": len(polar_hydrogens),
+        "entries": entries,
+        "polar_hydrogens": polar_hydrogens,
+    }
+
+
+def resolve_template_pose_mapping_v2(
+    template_path: str | Path,
+    input_pdbqt_path: str | Path,
+    extracted_pose: Mapping[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Propagate preparation-time atom identity through a verified Vina MODEL."""
+
+    provenance = build_ligand_input_pdbqt_provenance(template_path, input_pdbqt_path)
+    input_atoms = _parse_pdbqt_atoms(
+        Path(input_pdbqt_path).read_text(encoding="utf-8"),
+        failure_code="ligand_input_pdbqt_mapping_failed",
+    )
+    pose_atoms = extracted_pose.get("atoms")
+    if not isinstance(pose_atoms, list) or len(pose_atoms) != len(input_atoms):
+        raise InteractionAnalysisInputError(
+            "template_pose_mapping_failed", "Vina MODEL atom count differs from its input PDBQT."
+        )
+    identity_fields = ("serial", "atom_name", "atom_type", "element")
+    for index, (input_atom, pose_atom) in enumerate(zip(input_atoms, pose_atoms, strict=True)):
+        if any(input_atom[field] != pose_atom[field] for field in identity_fields):
+            raise InteractionAnalysisInputError(
+                "template_pose_mapping_failed",
+                f"Vina MODEL atom identity differs from input PDBQT at index {index}.",
+            )
+    entries = []
+    for entry in provenance["entries"]:
+        if entry["element"] == "H":
+            continue
+        pose_index = int(entry["input_pdbqt_atom_index"])
+        entries.append({
+            "template_atom_index": entry["template_atom_index"],
+            "input_pdbqt_atom_index": pose_index,
+            "input_pdbqt_atom_serial": entry["input_pdbqt_atom_serial"],
+            "pose_pdbqt_atom_index": pose_index,
+            "pose_pdbqt_atom_serial": pose_atoms[pose_index]["serial"],
+            "element": entry["element"],
+            "autodock_atom_type": entry["autodock_atom_type"],
+        })
+    polar_hydrogens = []
+    for hydrogen in provenance["polar_hydrogens"]:
+        pose_index = int(hydrogen["input_pdbqt_hydrogen_atom_index"])
+        polar_hydrogens.append({
+            **hydrogen,
+            "pose_pdbqt_hydrogen_atom_index": pose_index,
+            "pose_pdbqt_hydrogen_atom_serial": pose_atoms[pose_index]["serial"],
+            "pose_pdbqt_parent_atom_index": hydrogen["input_pdbqt_parent_atom_index"],
+            "pose_pdbqt_parent_atom_serial": hydrogen["input_pdbqt_parent_atom_serial"],
+        })
+    validation = resolve_template_pose_mapping(template_path, extracted_pose)["validation"]
+    validation.update({
+        "input_pdbqt_sha256": "passed",
+        "vina_atom_order": "passed",
+        "vina_atom_serials": "passed",
+        "vina_atom_names": "passed",
+        "vina_autodock_atom_types": "passed",
+        "polar_hydrogen_identity": "passed",
+    })
+    return ({
+        "schema_version": MAPPING_SCHEMA_VERSION_V2,
+        "mapping_method": (
+            "direct SDF-to-input-PDBQT preparation provenance followed by verified Vina "
+            "serial/order/name/AutoDock-type preservation"
+        ),
+        "rdkit_version": rdBase.rdkitVersion,
+        "positional_identity_assumed": False,
+        "hydrogen_mapping_policy": "explicit SDF hydrogen parent propagated through PDBQT/Vina identity",
+        "heavy_atom_count": len(entries),
+        "polar_hydrogen_count": len(polar_hydrogens),
+        "entries": sorted(entries, key=lambda item: int(item["template_atom_index"])),
+        "polar_hydrogen_entries": polar_hydrogens,
+        "coordinate_tiebreaker": {
+            "status": "not_used",
+            "reason": "direct preparation identity has priority over graph automorphism geometry",
+        },
+        "validation": validation,
+    }, provenance)
+
+
 def build_interaction_analysis_input(
     *,
     docking_result: Mapping[str, object],
@@ -262,8 +452,9 @@ def build_interaction_analysis_input(
     prepared_receptor_pdbqt_path: str | Path,
     meeko_input_pdb_path: str | Path,
     receptor_preparation_provenance_path: str | Path,
+    ligand_input_pdbqt_path: str | Path | None = None,
 ) -> dict[str, object]:
-    """Build the v1 immutable input contract without running interaction analysis."""
+    """Build a v1 historical or direct-provenance v2 immutable input contract."""
 
     template_path = Path(ligand_template_path)
     metadata_path = Path(ligand_template_metadata_path)
@@ -284,15 +475,28 @@ def build_interaction_analysis_input(
     expected_pose_sha = docking_result.get("pose_sha256")
     if expected_pose_sha and extracted["parent_pose_sha256"] != expected_pose_sha:
         raise InteractionAnalysisInputError("pose_parse_failed", "Authoritative pose SHA-256 mismatch.")
-    mapping = resolve_template_pose_mapping(template_path, extracted)
+    if ligand_input_pdbqt_path is None:
+        mapping = resolve_template_pose_mapping(template_path, extracted)
+        input_pdbqt_provenance = None
+        schema_version = INPUT_SCHEMA_VERSION
+    else:
+        mapping, input_pdbqt_provenance = resolve_template_pose_mapping_v2(
+            template_path, ligand_input_pdbqt_path, extracted
+        )
+        expected_pdbqt_sha = template_metadata.get("input_pdbqt_sha256")
+        if expected_pdbqt_sha and expected_pdbqt_sha != input_pdbqt_provenance["input_pdbqt_sha256"]:
+            raise InteractionAnalysisInputError(
+                "ligand_input_pdbqt_hash_mismatch", "Pre-docking PDBQT SHA-256 mismatch."
+            )
+        schema_version = INPUT_SCHEMA_VERSION_V2
     receptor = _build_receptor_analysis_region(
         prepared_receptor_pdbqt_path,
         meeko_input_pdb_path,
         receptor_preparation_provenance_path,
         extracted["atoms"],
     )
-    return {
-        "schema_version": INPUT_SCHEMA_VERSION,
+    payload = {
+        "schema_version": schema_version,
         "docking_job_id": docking_job_id,
         "receptor_identity": docking_result.get("receptor_id"),
         "authoritative_receptor_sha256": receptor["authoritative_receptor_sha256"],
@@ -322,6 +526,9 @@ def build_interaction_analysis_input(
             "The 8 A pocket policy is qualified only for ProLIF 2.2.3 default interactions.",
         ],
     }
+    if input_pdbqt_provenance is not None:
+        payload["ligand_input_pdbqt"] = input_pdbqt_provenance
+    return payload
 
 
 def write_interaction_analysis_input(path: str | Path, payload: Mapping[str, object]) -> None:

@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from rdkit import Chem
 
 from molecular_prioritization.admet_multitask_predictor import unavailable_admet_prediction
 from molecular_prioritization.bbb_predictor import UnavailableBBBPredictor
@@ -23,6 +24,32 @@ from molecular_prioritization.vina_docking import (
     resolve_obabel_executable,
     resolve_vina_executable,
 )
+
+
+def write_mock_openbabel_pdbqt(source: Path, destination: Path) -> None:
+    """Emit the identity-bearing heavy/polar-H subset expected from Open Babel."""
+
+    molecule = Chem.SDMolSupplier(str(source), removeHs=False)[0]
+    conformer = molecule.GetConformer()
+    included = []
+    for atom in molecule.GetAtoms():
+        if atom.GetSymbol() != "H" or any(
+            neighbor.GetSymbol() in {"N", "O", "S"} for neighbor in atom.GetNeighbors()
+        ):
+            included.append(atom.GetIdx())
+    lines = ["ROOT\n"]
+    for serial, atom_index in enumerate(included, start=1):
+        atom = molecule.GetAtomWithIdx(atom_index)
+        point = conformer.GetAtomPosition(atom_index)
+        atom_type = {
+            "H": "HD", "O": "OA", "N": "NA", "S": "SA",
+        }.get(atom.GetSymbol(), "A" if atom.GetIsAromatic() else atom.GetSymbol())
+        lines.append(
+            f"ATOM  {serial:5d} {atom.GetSymbol():^4s} UNL     1    "
+            f"{point.x:8.3f}{point.y:8.3f}{point.z:8.3f}  0.00  0.00    +0.000 {atom_type}\n"
+        )
+    lines.append("ENDROOT\n")
+    destination.write_text("".join(lines), encoding="utf-8")
 
 
 def prepared_receptor(tmp_path: Path):
@@ -146,7 +173,8 @@ def test_valid_receptor_and_vina_path_returns_provenance_and_safe_commands(tmp_p
             openbabel_sdf["bytes"] = source.read_bytes()
             openbabel_sdf["sha256"] = hashlib.sha256(openbabel_sdf["bytes"]).hexdigest()
             openbabel_sdf["pdbqt_path"] = arguments[arguments.index("-O") + 1]
-            Path(openbabel_sdf["pdbqt_path"]).write_text("ROOT\nENDROOT\n", encoding="utf-8")
+            write_mock_openbabel_pdbqt(source, Path(openbabel_sdf["pdbqt_path"]))
+            openbabel_sdf["pdbqt_bytes"] = Path(openbabel_sdf["pdbqt_path"]).read_bytes()
             return subprocess.CompletedProcess(arguments, 0, "", "")
         pose = Path(arguments[arguments.index("--out") + 1])
         pose.write_text(
@@ -190,6 +218,16 @@ def test_valid_receptor_and_vina_path_returns_provenance_and_safe_commands(tmp_p
     assert template.read_bytes() == openbabel_sdf["bytes"]
     assert result["ligand_template"]["sdf_sha256"] == openbabel_sdf["sha256"]
     assert json.loads(template_metadata.read_text(encoding="utf-8"))["sdf_sha256"] == openbabel_sdf["sha256"]
+    persisted_pdbqt = tmp_path / "job" / result["ligand_template"]["input_pdbqt_artifact_path"]
+    assert persisted_pdbqt.read_bytes() == openbabel_sdf["pdbqt_bytes"]
+    assert result["ligand_template"]["input_pdbqt_sha256"] == hashlib.sha256(
+        openbabel_sdf["pdbqt_bytes"]
+    ).hexdigest()
+    persisted_metadata = json.loads(template_metadata.read_text(encoding="utf-8"))
+    assert persisted_metadata["input_pdbqt_sha256"] == result["ligand_template"]["input_pdbqt_sha256"]
+    assert persisted_metadata["input_pdbqt_provenance"]["schema_version"] == (
+        "moloptima-ligand-input-pdbqt-provenance-v1"
+    )
     assert result["ligand_template"]["optimization_method"] == "RDKit MMFF"
     assert result["ligand_template"]["docking_job_id"] == "job"
     assert result["ligand_template"]["docking_configuration_id"] == "config-123"
@@ -250,7 +288,7 @@ def test_nonfinite_modes_are_retained_but_excluded_from_best_selection(
         if "-V" in arguments:
             return subprocess.CompletedProcess(arguments, 0, "Open Babel 3.1.1\n", "")
         if "-O" in arguments:
-            Path(arguments[arguments.index("-O") + 1]).write_text("ROOT\nENDROOT\n", encoding="utf-8")
+            write_mock_openbabel_pdbqt(Path(arguments[1]), Path(arguments[arguments.index("-O") + 1]))
             return subprocess.CompletedProcess(arguments, 0, "", "")
         Path(arguments[arguments.index("--out") + 1]).write_text(pose_text, encoding="utf-8")
         return subprocess.CompletedProcess(arguments, 0, "", "")
@@ -284,7 +322,7 @@ def test_optional_energy_range_is_passed_exactly_and_recorded(tmp_path, energy_r
         if "-V" in arguments:
             return subprocess.CompletedProcess(arguments, 0, "Open Babel 3.1.1\n", "")
         if "-O" in arguments:
-            Path(arguments[arguments.index("-O") + 1]).write_text("ROOT\nENDROOT\n", encoding="utf-8")
+            write_mock_openbabel_pdbqt(Path(arguments[1]), Path(arguments[arguments.index("-O") + 1]))
             return subprocess.CompletedProcess(arguments, 0, "", "")
         docking_commands.append(arguments)
         Path(arguments[arguments.index("--out") + 1]).write_text(
@@ -315,7 +353,7 @@ def test_omitted_energy_range_preserves_existing_command_and_provenance(tmp_path
         if "-V" in arguments:
             return subprocess.CompletedProcess(arguments, 0, "Open Babel 3.1.1\n", "")
         if "-O" in arguments:
-            Path(arguments[arguments.index("-O") + 1]).write_text("ROOT\nENDROOT\n", encoding="utf-8")
+            write_mock_openbabel_pdbqt(Path(arguments[1]), Path(arguments[arguments.index("-O") + 1]))
             return subprocess.CompletedProcess(arguments, 0, "", "")
         docking_commands.append(arguments)
         Path(arguments[arguments.index("--out") + 1]).write_text(
@@ -556,7 +594,7 @@ def test_cancellation_stops_scheduling_and_preserves_incremental_rows(tmp_path):
         if "-V" in arguments:
             return subprocess.CompletedProcess(arguments, 0, "Open Babel 3.1.1\n", "")
         if "-O" in arguments:
-            Path(arguments[arguments.index("-O") + 1]).write_text("ROOT\nENDROOT\n", encoding="utf-8")
+            write_mock_openbabel_pdbqt(Path(arguments[1]), Path(arguments[arguments.index("-O") + 1]))
             return subprocess.CompletedProcess(arguments, 0, "", "")
         vina_calls.append(arguments)
         Path(arguments[arguments.index("--out") + 1]).write_text(
