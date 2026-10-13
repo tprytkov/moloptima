@@ -195,6 +195,53 @@ def _validate_output(result: object, identity: Mapping[str, object] | None = Non
     return result
 
 
+def get_cached_docking_pose_interactions(
+    analysis_input: Mapping[str, object],
+    *,
+    cache_root: str | Path | None = None,
+    application_root: str | Path | None = None,
+    python_override: str | Path | None = None,
+    runner_override: str | Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object] | None:
+    """Return one validated cached fingerprint without starting the isolated runtime."""
+
+    if analysis_input.get("schema_version") not in {
+        "moloptima-interaction-analysis-input-v1",
+        "moloptima-interaction-analysis-input-v2",
+    }:
+        raise InteractionAnalysisError("interaction_input_invalid", "analysis input schema is unsupported")
+    runtime = resolve_prolif_runtime(
+        application_root=application_root,
+        python_override=python_override,
+        runner_override=runner_override,
+        environ=environ,
+        verify_runtime=False,
+    )
+    identity = _cache_identity(analysis_input, runtime)
+    key = _canonical_hash(identity)
+    root = (
+        Path(cache_root)
+        if cache_root is not None
+        else resolve_runtime_data_root(environ=dict(environ) if environ is not None else None)
+        / "interaction_analysis_cache"
+    )
+    cache_path = root / "v1" / f"{key}.json"
+    if not cache_path.is_file():
+        return None
+    started = time.perf_counter()
+    try:
+        cached = _validate_output(json.loads(cache_path.read_text(encoding="utf-8")), identity)
+    except (OSError, UnicodeError, json.JSONDecodeError, InteractionAnalysisError):
+        return None
+    returned = dict(cached)
+    returned["cache_status"] = "hit"
+    returned.setdefault("performance_seconds", {})["cached_retrieval"] = round(
+        time.perf_counter() - started, 8
+    )
+    return returned
+
+
 def analyze_docking_pose_interactions(
     analysis_input: Mapping[str, object],
     *,

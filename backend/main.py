@@ -9,7 +9,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadF
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend import services
+from backend import design_logic_service, services
 from backend.schemas import (
     CandidateSdfExportRequest,
     ChemicalSpaceNeighborRequest,
@@ -20,6 +20,10 @@ from backend.schemas import (
     DockingConfigurationRequest,
     DockingConfigurationResponse,
     DockingReceptorResponse,
+    DesignLogicAnalyzeRequest,
+    DesignLogicDepictionResponse,
+    DesignLogicResponse,
+    DesignLogicWorkspaceRequest,
     ExperimentalDataResponse,
     ExperimentalMeasurementListResponse,
     ExperimentalNeighborhoodRecordsRequest,
@@ -299,6 +303,33 @@ def get_chemical_space_neighbors(request: ChemicalSpaceNeighborRequest) -> Chemi
 @app.post("/api/chemical-space/scaffolds", response_model=ChemicalSpaceScaffoldResponse)
 def get_chemical_space_scaffolds(request: ChemicalSpaceProjectRequest) -> ChemicalSpaceScaffoldResponse:
     return ChemicalSpaceScaffoldResponse(**services.chemical_space_scaffolds(request.upload_id))
+
+
+@app.post("/api/design-logic/workspace", response_model=DesignLogicResponse)
+def get_design_logic_workspace(request: DesignLogicWorkspaceRequest) -> DesignLogicResponse:
+    return DesignLogicResponse(**design_logic_service.workspace(
+        request.job_id,
+        request.reference_molecule_id,
+        request.reference_mode,
+        request.comparison_mode,
+        request.limit,
+    ))
+
+
+@app.post("/api/design-logic/analyze", response_model=DesignLogicResponse)
+def analyze_design_logic_pose(request: DesignLogicAnalyzeRequest) -> DesignLogicResponse:
+    return DesignLogicResponse(**design_logic_service.analyze_pose(
+        request.job_id, request.molecule_id, request.mode,
+    ))
+
+
+@app.get("/api/design-logic/depiction", response_model=DesignLogicDepictionResponse)
+def get_design_logic_depiction(
+    smiles: str = Query(..., min_length=1),
+    width: int = Query(420, ge=240, le=800),
+    height: int = Query(300, ge=180, le=600),
+) -> DesignLogicDepictionResponse:
+    return DesignLogicDepictionResponse(**design_logic_service.ligand_depiction(smiles, width, height))
 
 
 @app.post("/api/experimental-neighborhood/search", response_model=ExperimentalNeighborhoodResponse)

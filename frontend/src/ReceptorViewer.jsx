@@ -2,6 +2,7 @@ import React, {
   forwardRef, useEffect, useImperativeHandle, useRef, useState,
 } from 'react';
 import { Box, Typography } from '@mui/material';
+import { canonicalInteractionToken, INTERACTION_STYLES } from './interactionVisualization.js';
 
 const RECEPTOR_STYLE = { cartoon: { color: 'spectrum' } };
 export const DOCKED_RECEPTOR_STYLE = { cartoon: { color: 'spectrum', opacity: 0.58 } };
@@ -275,11 +276,112 @@ export function renderResidueHighlights(
 export function observeViewerResize(host, viewer, ResizeObserverClass = globalThis.ResizeObserver) {
   if (!host || !viewer || typeof ResizeObserverClass !== 'function') return () => {};
   const observer = new ResizeObserverClass(() => {
+    if (!host.isConnected || host.clientWidth < 1 || host.clientHeight < 1) return;
     viewer.resize();
     viewer.render();
   });
   observer.observe(host);
   return () => observer.disconnect();
+}
+
+function atomPoint(atom) {
+  return atom && [atom.x, atom.y, atom.z].every((value) => Number.isFinite(Number(value)))
+    ? { x: Number(atom.x), y: Number(atom.y), z: Number(atom.z) } : null;
+}
+
+function centroid(atoms) {
+  const points = atoms.map(atomPoint).filter(Boolean);
+  if (!points.length) return null;
+  return points.reduce((sum, point) => ({ x: sum.x + point.x / points.length, y: sum.y + point.y / points.length, z: sum.z + point.z / points.length }), { x: 0, y: 0, z: 0 });
+}
+
+export function resolveInteractionEndpoints(receptorModel, ligandModel, record = {}) {
+  const receptorSerials = (record.receptor?.atoms || []).map((atom) => Number(atom.atom_serial)).filter(Number.isFinite);
+  const ligandSerials = (record.ligand?.pose_atoms || []).map((atom) => Number(atom.pose_atom_serial)).filter(Number.isFinite);
+  if (!receptorSerials.length || !ligandSerials.length) return null;
+  const proteinAtoms = receptorModel?.selectedAtoms?.({ predicate: (atom) => receptorSerials.includes(Number(atom.serial)) }) || [];
+  const ligandAtoms = ligandModel?.selectedAtoms?.({ predicate: (atom) => ligandSerials.includes(Number(atom.serial)) }) || [];
+  const start = centroid(proteinAtoms.filter((atom) => receptorSerials.includes(Number(atom.serial))));
+  const end = centroid(ligandAtoms.filter((atom) => ligandSerials.includes(Number(atom.serial))));
+  return start && end ? { start, end, proteinAtoms, ligandAtoms } : null;
+}
+
+function interpolate(start, end, fraction) {
+  return { x: start.x + (end.x - start.x) * fraction, y: start.y + (end.y - start.y) * fraction, z: start.z + (end.z - start.z) * fraction };
+}
+
+export function renderInteractionConnectors(viewer, previousShapes = [], receptorModel, ligandModel, records = [], selectedToken = '') {
+  previousShapes.forEach((shape) => viewer.removeShape?.(shape));
+  const shapes = [];
+  const diagnostics = [];
+  records.forEach((record) => {
+    const token = canonicalInteractionToken(record);
+    const endpoints = resolveInteractionEndpoints(receptorModel, ligandModel, record);
+    if (!endpoints) {
+      diagnostics.push({ token, status: 'authoritative_atom_unavailable' });
+      return;
+    }
+    const style = INTERACTION_STYLES[record.interaction_type] || INTERACTION_STYLES.VdWContact;
+    const shape = viewer.addShape({ color: style.color, opacity: 1 });
+    const segments = style.dash === '3 5' || style.dash === '2 7' ? 5 : style.dash === '1 5' ? 7 : 3;
+    for (let index = 0; index < segments; index += 1) {
+      const from = index / segments;
+      const to = Math.min(1, from + 0.55 / segments);
+      shape.addCylinder({
+        start: interpolate(endpoints.start, endpoints.end, from),
+        end: interpolate(endpoints.start, endpoints.end, to),
+        color: style.color,
+        radius: (token === selectedToken ? 0.18 : 0.1) * Math.max(1, style.width / 2),
+        fromCap: 1, toCap: 1,
+      });
+    }
+    shape.addSphere?.({ center: endpoints.end, radius: token === selectedToken ? 0.3 : 0.2, color: style.color });
+    shape.userData = { token, interactionType: record.interaction_type };
+    shapes.push(shape);
+  });
+  viewer.render();
+  return { shapes, diagnostics };
+}
+
+export function renderQualifiedPocket(viewer, receptorModel, ligandModel, enabled, interactionRecords = [], selectedToken = '') {
+  if (!viewer || !receptorModel || !ligandModel) return;
+  setModelStyle(receptorModel, viewer, {}, DOCKED_RECEPTOR_STYLE);
+  if (enabled) setModelStyle(receptorModel, viewer, {
+    byres: true, within: { distance: 8, sel: { model: ligandModel } },
+  }, { stick: { radius: 0.14, colorscheme: 'Jmol', opacity: 0.38 } }, 'addStyle');
+  const residues = new Map();
+  interactionRecords.forEach((record) => {
+    const receptor = record.receptor || {};
+    const key = `${receptor.chain}:${receptor.residue_name}:${receptor.residue_number}:${receptor.insertion_code || ''}`;
+    if (!residues.has(key)) residues.set(key, { receptor, selected: canonicalInteractionToken(record) === selectedToken });
+    else if (canonicalInteractionToken(record) === selectedToken) residues.get(key).selected = true;
+  });
+  residues.forEach(({ receptor, selected }) => setModelStyle(receptorModel, viewer, {
+    chain: receptor.chain, resn: receptor.residue_name, resi: receptor.residue_number,
+  }, { stick: { radius: selected ? 0.34 : 0.24, color: selected ? '#126d5b' : '#df6c3b' } }, 'addStyle'));
+}
+
+export async function renderViewerPngAtResolution(viewer, host, width, height, transparent = false) {
+  if (!viewer || !host || !Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+    throw new Error('A valid viewer and output dimensions are required.');
+  }
+  const view = viewer.getView?.();
+  const previous = { width: host.style.width, height: host.style.height };
+  host.style.width = `${width}px`; host.style.height = `${height}px`;
+  try {
+    viewer.setBackgroundColor?.('#ffffff', transparent ? 0 : 1);
+    viewer.resize();
+    if (view) viewer.setView(view);
+    viewer.render();
+    const uri = await Promise.resolve(viewer.pngURI());
+    return { uri, width, height };
+  } finally {
+    host.style.width = previous.width; host.style.height = previous.height;
+    viewer.setBackgroundColor?.('#f7f9fb', 1);
+    viewer.resize();
+    if (view) viewer.setView(view);
+    viewer.render();
+  }
 }
 
 const ReceptorViewer = forwardRef(function ReceptorViewer({
@@ -292,12 +394,17 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
   onAtomSelect,
   onLigandRender,
   onError,
+  interactionRecords = [],
+  selectedInteractionToken = '',
+  pocketMode = 'interactions',
+  viewerAspectRatio = '',
 }, ref) {
   const hostRef = useRef(null);
   const viewerRef = useRef(null);
   const receptorModelRef = useRef(null);
   const ligandModelRef = useRef(null);
   const boxShapeRef = useRef(null);
+  const interactionShapesRef = useRef([]);
   const onAtomSelectRef = useRef(onAtomSelect);
   const onLigandRenderRef = useRef(onLigandRender);
   const onErrorRef = useRef(onError);
@@ -320,6 +427,14 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
     },
     focusBox() {
       return focusViewerOnBox(viewerRef.current, box);
+    },
+    exportPng(width, height, transparent = false) {
+      return renderViewerPngAtResolution(viewerRef.current, hostRef.current, width, height, transparent);
+    },
+    aspectRatio() {
+      const width = hostRef.current?.clientWidth;
+      const height = hostRef.current?.clientHeight;
+      return width && height ? width / height : 16 / 9;
     },
   }), [box]);
 
@@ -344,6 +459,7 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
       boxShapeRef.current = null;
       receptorModelRef.current = null;
       ligandModelRef.current = null;
+      interactionShapesRef.current = [];
       if (viewer) viewer.clear();
       viewerRef.current = null;
     };
@@ -398,6 +514,20 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
 
   useEffect(() => {
     const viewer = viewerRef.current;
+    if (!viewer || !receptorModelRef.current || !ligandModelRef.current) return;
+    renderQualifiedPocket(
+      viewer, receptorModelRef.current, ligandModelRef.current, pocketMode === 'pocket',
+      interactionRecords, selectedInteractionToken,
+    );
+    const rendered = renderInteractionConnectors(
+      viewer, interactionShapesRef.current, receptorModelRef.current, ligandModelRef.current,
+      interactionRecords, selectedInteractionToken,
+    );
+    interactionShapesRef.current = rendered.shapes;
+  }, [interactionRecords, selectedInteractionToken, pocketMode, artifactIdentity, dockedLigandIdentity, viewerGeneration]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
     if (!viewer) return undefined;
     return observeViewerResize(hostRef.current, viewer);
   }, [viewerGeneration]);
@@ -408,7 +538,8 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
         ref={hostRef}
         data-testid="receptor-viewer"
         sx={{
-          height: 430,
+          height: viewerAspectRatio ? 'auto' : 430,
+          aspectRatio: viewerAspectRatio || 'auto',
           border: '1px solid',
           borderColor: 'divider',
           borderRadius: 1,

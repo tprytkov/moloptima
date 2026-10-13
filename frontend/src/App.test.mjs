@@ -21,7 +21,7 @@ after(async () => vite?.close());
 test('primary navigation follows the scientific workflow and hides history tools', () => {
   const labels = module.PRIMARY_NAVIGATION.flatMap((group) => group.items.map((item) => item.label));
   assert.deepEqual(labels, [
-    'Molecules', 'Experimental Data', 'Receptor & Docking', 'ADMET', 'Chemical Space',
+    'Molecules', 'Experimental Data', 'Receptor & Docking', 'ADMET', 'Chemical Space', 'Design Logic',
     'Prioritization', 'Results', 'Analysis', 'Settings',
   ]);
   assert.deepEqual(module.PRIMARY_NAVIGATION.map((group) => group.section), ['WORKSPACE', 'SYSTEM']);

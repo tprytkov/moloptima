@@ -45,6 +45,7 @@ import MedicationOutlinedIcon from '@mui/icons-material/MedicationOutlined';
 import PendingOutlinedIcon from '@mui/icons-material/PendingOutlined';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
+import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
 import moloptimaLogo from './assets/moloptima-logo.png';
@@ -57,6 +58,7 @@ import AdmetPlots from './AdmetPlots.jsx';
 import AdmetComparison from './AdmetComparison.jsx';
 import AdmetExportActions from './AdmetExportActions.jsx';
 import ChemicalSpaceWorkspace from './ChemicalSpaceWorkspace.jsx';
+import DesignLogicWorkspace from './DesignLogicWorkspace.jsx';
 import ExperimentalDataWorkspace from './ExperimentalDataWorkspace.jsx';
 import CompoundProfileIntegration from './CompoundProfileIntegration.jsx';
 import AdmetModelInfo from './AdmetModelInfo.jsx';
@@ -192,6 +194,7 @@ export const PRIMARY_NAVIGATION = [
       { label: 'Receptor & Docking', icon: HubOutlinedIcon },
       { label: 'ADMET', icon: MedicationOutlinedIcon },
       { label: 'Chemical Space', icon: InsightsOutlinedIcon },
+      { label: 'Design Logic', icon: AccountTreeOutlinedIcon },
       { label: 'Prioritization', icon: ScienceOutlinedIcon },
       { label: 'Results', icon: FactCheckOutlinedIcon },
       { label: 'Analysis', icon: InsightsOutlinedIcon },
@@ -270,6 +273,7 @@ export function deriveWorkflowStatuses({ uploadState, targetContext, prioritizat
       ? 'Running' : dockingConfigured ? 'Ready' : uploaded ? 'Needs attention' : 'Not started',
     ADMET: admetPresent ? 'Complete' : running && stage.includes('admet')
       ? 'Running' : uploaded ? 'Ready' : 'Not started',
+    'Design Logic': dockingPresent ? 'Ready' : 'Not started',
     Prioritization: completed ? 'Complete' : running ? 'Running' : failed
       ? 'Needs attention' : uploaded ? 'Ready' : 'Not started',
     Results: completed ? 'Complete' : running ? 'Running' : failed ? 'Needs attention' : 'Not started',
@@ -1126,6 +1130,10 @@ function ActivePage({
 
   if (activeItem === 'Chemical Space') {
     return <ChemicalSpaceWorkspace upload={uploadState.upload} admetRows={prioritizationState.result?.results ?? []} baseUrl={apiBaseUrl} />;
+  }
+
+  if (activeItem === 'Design Logic') {
+    return <DesignLogicWorkspace result={prioritizationState.result} baseUrl={apiBaseUrl} />;
   }
 
   if (activeItem === 'Prioritization' || activeItem === 'Molecular Prioritization') {

@@ -44,8 +44,9 @@ function fakeViewer() {
     },
     addShape(spec) {
       const shape = {
-        spec, cylinders: [],
+        spec, cylinders: [], spheres: [],
         addCylinder(cylinder) { this.cylinders.push(cylinder); },
+        addSphere(sphere) { this.spheres.push(sphere); },
       };
       this.shapes.push(shape);
       return shape;
@@ -66,6 +67,7 @@ function fakeViewer() {
     zoom() { this.cameraZoom = (this.cameraZoom ?? 0) + 1; },
     pan() { this.cameraPan = (this.cameraPan ?? 0) + 1; },
     clear() {},
+    pngURI() { return 'data:image/png;base64,TRUE_RESOLUTION'; },
   };
 }
 
@@ -83,6 +85,61 @@ test('viewer legend displays selected ligand identity and current rounded box di
   assert.match(html, /I33 · Chain A · Residue 603/);
   assert.match(html, /Vina search volume/);
   assert.match(html, /20.13 × 21.50 × 22.75 Å/);
+});
+
+test('interaction endpoints use exact receptor and ligand serials without nearest-atom guessing', () => {
+  const receptor = { selectedAtoms: () => [{ serial: 20, x: 1, y: 2, z: 3 }, { serial: 99, x: 9, y: 9, z: 9 }] };
+  const ligand = { selectedAtoms: () => [{ serial: 7, x: 4, y: 5, z: 6 }] };
+  const record = {
+    receptor: { atoms: [{ atom_serial: 20 }] }, ligand: { pose_atoms: [{ pose_atom_serial: 7 }] },
+  };
+  const endpoints = module.resolveInteractionEndpoints(receptor, ligand, record);
+  assert.deepEqual(endpoints.start, { x: 1, y: 2, z: 3 });
+  assert.deepEqual(endpoints.end, { x: 4, y: 5, z: 6 });
+  assert.equal(module.resolveInteractionEndpoints(receptor, ligand, { receptor: { atoms: [] }, ligand: {} }), null);
+});
+
+test('qualified connector rendering distinguishes classes by segmented geometry and reports unresolved provenance', () => {
+  const viewer = fakeViewer();
+  const receptor = { selectedAtoms: ({ predicate }) => [{ serial: 20, x: 1, y: 2, z: 3 }].filter(predicate) };
+  const ligand = { selectedAtoms: ({ predicate }) => [{ serial: 7, x: 4, y: 5, z: 6 }].filter(predicate) };
+  const valid = { receptor: { chain: 'B', residue_name: 'ASN', residue_number: 236, atoms: [{ atom_serial: 20 }] }, ligand: { pose_atoms: [{ pose_atom_serial: 7 }] }, interaction_type: 'HBDonor', direction: 'ligand_donor' };
+  const missing = { receptor: { chain: 'A', residue_name: 'MET', residue_number: 301, atoms: [{ atom_serial: 999 }] }, ligand: { pose_atoms: [{ pose_atom_serial: 7 }] }, interaction_type: 'Hydrophobic' };
+  const rendered = module.renderInteractionConnectors(viewer, [], receptor, ligand, [valid, missing], 'B:ASN:236:HBDonor:ligand_donor');
+  assert.equal(rendered.shapes.length, 1);
+  assert.equal(rendered.shapes[0].cylinders.length, 3);
+  assert.equal(rendered.shapes[0].spheres.length, 1);
+  assert.deepEqual(rendered.diagnostics, [{ token: 'A:MET:301:Hydrophobic', status: 'authoritative_atom_unavailable' }]);
+});
+
+test('Pocket display uses the qualified 8 Å complete-residue context and retains interaction emphasis', () => {
+  const viewer = fakeViewer();
+  const receptor = {
+    styles: [],
+    setStyle(selection, style) { this.styles.push({ operation: 'set', selection, style }); },
+    addStyle(selection, style) { this.styles.push({ operation: 'add', selection, style }); },
+  };
+  const ligand = {};
+  const records = [{
+    receptor: { chain: 'B', residue_name: 'ASN', residue_number: 236, atoms: [{ atom_serial: 20 }] },
+    ligand: { pose_atoms: [{ pose_atom_serial: 7 }] }, interaction_type: 'HBDonor', direction: 'ligand_donor',
+  }];
+  module.renderQualifiedPocket(viewer, receptor, ligand, true, records, 'B:ASN:236:HBDonor:ligand_donor');
+  assert.deepEqual(receptor.styles[1].selection, { byres: true, within: { distance: 8, sel: { model: ligand } } });
+  assert.deepEqual(receptor.styles[2].selection, { chain: 'B', resn: 'ASN', resi: 236 });
+  assert.equal(receptor.styles[2].style.stick.color, '#126d5b');
+});
+
+test('true-resolution PNG render resizes the scene and restores host size and camera', async () => {
+  const viewer = fakeViewer();
+  const host = { style: { width: '100%', height: '430px' } };
+  const originalView = [...viewer.view];
+  const result = await module.renderViewerPngAtResolution(viewer, host, 3840, 2160);
+  assert.deepEqual(result, { uri: 'data:image/png;base64,TRUE_RESOLUTION', width: 3840, height: 2160 });
+  assert.deepEqual(host.style, { width: '100%', height: '430px' });
+  assert.deepEqual(viewer.view, originalView);
+  assert.equal(viewer.resizeCount, 2);
+  assert.equal(viewer.setViewCount, 2);
 });
 
 test('switching or clearing ligand updates identity without stale metadata', () => {
@@ -411,7 +468,7 @@ test('camera operations cannot alter authoritative box values', () => {
 
 test('resize observer resizes and renders without changing camera or box state', () => {
   const viewer = fakeViewer();
-  const host = {};
+  const host = { isConnected: true, clientWidth: 800, clientHeight: 430 };
   const box = validBox();
   let callback;
   let disconnected = false;
@@ -428,4 +485,21 @@ test('resize observer resizes and renders without changing camera or box state',
   assert.deepEqual(box, validBox());
   disconnect();
   assert.equal(disconnected, true);
+});
+
+test('resize observer ignores a detached or zero-size host during viewer teardown', () => {
+  const viewer = fakeViewer();
+  let callback;
+  class Observer {
+    constructor(next) { callback = next; }
+    observe() {}
+    disconnect() {}
+  }
+  const host = { isConnected: false, clientWidth: 800, clientHeight: 430 };
+  module.observeViewerResize(host, viewer, Observer);
+  callback();
+  host.isConnected = true; host.clientWidth = 0;
+  callback();
+  assert.equal(viewer.resizeCount, 0);
+  assert.equal(viewer.renderCount, 0);
 });

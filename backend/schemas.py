@@ -197,6 +197,36 @@ class ChemicalSpaceScaffoldResponse(BaseModel):
     metadata: dict[str, Any]
 
 
+class DesignLogicWorkspaceRequest(BaseModel):
+    job_id: str = Field(..., min_length=1, max_length=64)
+    reference_molecule_id: str = Field(..., min_length=1, max_length=200)
+    reference_mode: int = Field(..., ge=1, le=100)
+    comparison_mode: int = Field(..., ge=1, le=100)
+    limit: int = Field(default=50, ge=1, le=50)
+
+
+class DesignLogicAnalyzeRequest(BaseModel):
+    job_id: str = Field(..., min_length=1, max_length=64)
+    molecule_id: str = Field(..., min_length=1, max_length=200)
+    mode: int = Field(..., ge=1, le=100)
+
+
+class DesignLogicResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    job_id: str
+
+
+class DesignLogicDepictionResponse(BaseModel):
+    schema_version: Literal["moloptima-design-logic-depiction-v1"]
+    width: int
+    height: int
+    svg: str
+    atom_positions: list[dict[str, Any]]
+    orientation: str
+    placement_caveat: str
+
+
 class ExperimentalNeighborhoodSearchRequest(BaseModel):
     upload_id: str = Field(..., min_length=32, max_length=32)
     molecule_id: str = Field(..., min_length=1, max_length=200)

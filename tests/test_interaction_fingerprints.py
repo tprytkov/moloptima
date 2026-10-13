@@ -13,6 +13,7 @@ from molecular_prioritization.interaction_fingerprints import (
     _scientific_fingerprint_payload,
     analyze_docking_pose_interactions,
     compare_interaction_fingerprints,
+    get_cached_docking_pose_interactions,
     resolve_prolif_runtime,
 )
 
@@ -145,6 +146,27 @@ def test_cache_hit_does_not_invoke_analysis_again(tmp_path):
     assert second["cache_status"] == "hit"
     assert len([call for call in calls if "--request" in call]) == 1
     assert len([call for call in calls if "--probe" in call]) == 1
+
+
+def test_cached_lookup_never_starts_the_isolated_runtime(tmp_path):
+    runner, python = make_runtime(tmp_path)
+    command, calls = fake_command(success_result(["A:MET:301:Hydrophobic"]))
+    kwargs = dict(
+        ligand_template_path=tmp_path / "lig.sdf", receptor_topology_path=tmp_path / "rec.pdb",
+        prepared_receptor_path=tmp_path / "rec.pdbqt", cache_root=tmp_path / "cache",
+        application_root=tmp_path, python_override=python, runner_override=runner,
+        command_runner=command,
+    )
+    analyze_docking_pose_interactions(contract(), **kwargs)
+    calls.clear()
+    cached = get_cached_docking_pose_interactions(
+        contract(), cache_root=tmp_path / "cache", application_root=tmp_path,
+        python_override=python, runner_override=runner,
+    )
+    assert cached is not None
+    assert cached["cache_status"] == "hit"
+    assert cached["canonical_tokens"] == ["A:MET:301:Hydrophobic"]
+    assert calls == []
 
 
 def test_corrupt_cache_recomputes(tmp_path):
