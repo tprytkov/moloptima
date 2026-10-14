@@ -24,7 +24,7 @@ function validBox(overrides = {}) {
 
 function fakeViewer() {
   return {
-    models: [], shapes: [], removedShapes: [], styles: [],
+    models: [], shapes: [], removedShapes: [], labels: [], removedLabels: [], styles: [],
     renderCount: 0, zoomToCount: 0, resizeCount: 0,
     view: [0, 0, 0, 10, 0, 0, 0, 1], setViewCount: 0,
     removeAllModels() { this.models = []; },
@@ -55,6 +55,8 @@ function fakeViewer() {
       this.removedShapes.push(shape);
       this.shapes = this.shapes.filter((item) => item !== shape);
     },
+    addLabel(text, spec) { const label = { text, spec }; this.labels.push(label); return label; },
+    removeLabel(label) { this.removedLabels.push(label); this.labels = this.labels.filter((item) => item !== label); },
     selectedAtoms(selection = {}) {
       return this.atoms?.filter((atom) => !selection.predicate || selection.predicate(atom)) ?? [];
     },
@@ -110,6 +112,54 @@ test('qualified connector rendering distinguishes classes by segmented geometry 
   assert.equal(rendered.shapes[0].cylinders.length, 3);
   assert.equal(rendered.shapes[0].spheres.length, 1);
   assert.deepEqual(rendered.diagnostics, [{ token: 'A:MET:301:Hydrophobic', status: 'authoritative_atom_unavailable' }]);
+});
+
+test('pharmacophore markers encode reference outlines, comparison fills, selection, and aromatic planes', () => {
+  const viewer = fakeViewer();
+  const reference = [
+    { feature_id: 'r-hba', canonical_class: 'HBA', feature_center_xyz: [1, 2, 3], plane_normal: null },
+    { feature_id: 'r-ring', canonical_class: 'AROMATIC', feature_center_xyz: [4, 5, 6], plane_normal: [0, 0, -1] },
+  ];
+  const comparison = [
+    { feature_id: 'c-hba', canonical_class: 'HBA', feature_center_xyz: [1.3, 2, 3], plane_normal: null },
+  ];
+  const matches = [{ reference_feature_id: 'r-hba', comparison_feature_id: 'c-hba', distance_angstrom: 0.3 }];
+  const shapes = module.renderPharmacophoreFeatures(viewer, [], reference, comparison, matches, 'r-ring');
+  assert.equal(shapes.length, 3);
+  assert.equal(shapes[0].spheres[0].wireframe, true);
+  assert.equal(shapes[2].spheres[0].wireframe, false);
+  assert.ok(shapes[2].spheres[0].opacity > shapes[0].spheres[0].opacity);
+  assert.equal(shapes[1].userData.aromaticPlane.normal[2], -1);
+  assert.equal(shapes[1].cylinders.length, 1);
+  assert.equal(shapes[1].userData.radius, 0.72);
+  assert.equal(shapes[0].userData.status, 'matched');
+});
+
+test('pharmacophore connectors are thin neutral segmented match cues without direction arrows', () => {
+  const viewer = fakeViewer();
+  const reference = [{ feature_id: 'r1', canonical_class: 'HBD', feature_center_xyz: [0, 0, 0] }];
+  const comparison = [{ feature_id: 'c1', canonical_class: 'HBD', feature_center_xyz: [1, 0, 0] }];
+  const matches = [{ reference_feature_id: 'r1', comparison_feature_id: 'c1', distance_angstrom: 1 }];
+  const shapes = module.renderPharmacophoreConnectors(viewer, [], reference, comparison, matches);
+  assert.equal(shapes.length, 1);
+  assert.equal(shapes[0].cylinders.length, 5);
+  assert.ok(shapes[0].cylinders.every((segment) => segment.radius === 0.055));
+  assert.equal(shapes[0].spheres.length, 0);
+  assert.equal(shapes[0].userData.kind, 'pharmacophore_match');
+  const cleared = module.renderPharmacophoreConnectors(viewer, shapes, reference, comparison, matches, false);
+  assert.deepEqual(cleared, []);
+  assert.equal(viewer.shapes.length, 0);
+});
+
+test('pharmacophore matched-pair selection highlights both feature identities and labels clear cleanly', () => {
+  assert.deepEqual([...module.selectedPharmacophoreIds('r1', [{ reference_feature_id: 'r1', comparison_feature_id: 'c1' }])], ['r1', 'c1']);
+  const viewer = fakeViewer();
+  const reference = [{ feature_id: 'r1', canonical_class: 'HBA', feature_center_xyz: [0, 0, 0] }];
+  const comparison = [{ feature_id: 'c1', canonical_class: 'HBA', feature_center_xyz: [1, 0, 0] }];
+  const labels = module.renderPharmacophoreLabels(viewer, [], reference, comparison, true);
+  assert.deepEqual(labels.map((label) => label.text), ['R · HBA', 'C · HBA']);
+  assert.deepEqual(module.renderPharmacophoreLabels(viewer, labels, reference, comparison, false), []);
+  assert.equal(viewer.labels.length, 0);
 });
 
 test('Pocket display uses the qualified 8 Å complete-residue context and retains interaction emphasis', () => {
@@ -502,4 +552,31 @@ test('resize observer ignores a detached or zero-size host during viewer teardow
   callback();
   assert.equal(viewer.resizeCount, 0);
   assert.equal(viewer.renderCount, 0);
+});
+
+test('overlay redraw preparation restores a nonzero viewer framebuffer', () => {
+  const viewer = fakeViewer();
+  const host = { isConnected: true, clientWidth: 800, clientHeight: 430 };
+  assert.equal(module.prepareViewerForRender(host, viewer), true);
+  assert.equal(viewer.resizeCount, 1);
+});
+
+test('overlay redraw preparation skips detached or zero-size viewer hosts', () => {
+  const viewer = fakeViewer();
+  assert.equal(module.prepareViewerForRender(
+    { isConnected: false, clientWidth: 800, clientHeight: 430 }, viewer,
+  ), false);
+  assert.equal(module.prepareViewerForRender(
+    { isConnected: true, clientWidth: 0, clientHeight: 430 }, viewer,
+  ), false);
+  assert.equal(viewer.resizeCount, 0);
+});
+
+test('viewer disposal releases its WebGL context without rendering a cleared zero-size frame', () => {
+  let lost = 0;
+  let replaced = 0;
+  const canvas = { getContext: () => ({ getExtension: () => ({ loseContext: () => { lost += 1; } }) }) };
+  module.disposeViewer({ querySelector: () => canvas, replaceChildren: () => { replaced += 1; } });
+  assert.equal(lost, 1);
+  assert.equal(replaced, 1);
 });

@@ -212,6 +212,15 @@ class DesignLogicAnalyzeRequest(BaseModel):
     mode: int = Field(..., ge=1, le=100)
 
 
+class DesignLogicPharmacophoreRequest(BaseModel):
+    job_id: str = Field(..., min_length=1, max_length=64)
+    reference_molecule_id: str = Field(..., min_length=1, max_length=200)
+    reference_mode: int = Field(..., ge=1, le=100)
+    comparison_molecule_ids: list[str] = Field(default_factory=list, max_length=5)
+    comparison_mode: int = Field(..., ge=1, le=100)
+    distance_threshold_angstrom: Literal[0.75, 1.0, 1.5, 2.0] = 1.5
+
+
 class DesignLogicResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 

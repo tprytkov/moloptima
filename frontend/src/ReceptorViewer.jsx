@@ -3,6 +3,7 @@ import React, {
 } from 'react';
 import { Box, Typography } from '@mui/material';
 import { canonicalInteractionToken, INTERACTION_STYLES } from './interactionVisualization.js';
+import { PHARMACOPHORE_STYLES } from './pharmacophoreVisualization.js';
 
 const RECEPTOR_STYLE = { cartoon: { color: 'spectrum' } };
 export const DOCKED_RECEPTOR_STYLE = { cartoon: { color: 'spectrum', opacity: 0.58 } };
@@ -15,6 +16,14 @@ export const SELECTED_LIGAND_STYLE = {
 export const DOCKED_LIGAND_CARBON_STYLE = {
   stick: { radius: 0.48, color: '#df6c3b' },
   sphere: { scale: 0.58, color: '#df6c3b' },
+};
+export const COMPARISON_LIGAND_STYLE = {
+  stick: { radius: 0.34, colorscheme: 'Jmol' },
+  sphere: { scale: 0.38, colorscheme: 'Jmol' },
+};
+export const COMPARISON_LIGAND_CARBON_STYLE = {
+  stick: { radius: 0.34, color: '#2f8f6f' },
+  sphere: { scale: 0.38, color: '#2f8f6f' },
 };
 export const VINA_BOX_SOLID_STYLE = { color: '#df6c3b', opacity: 0.08, wireframe: false };
 export const VINA_BOX_EDGE_STYLE = {
@@ -103,7 +112,7 @@ export function replaceReceptorModel(viewer, structure, onAtomSelect = () => {},
   return model;
 }
 
-export function replaceDockedLigandModel(viewer, previousModel, structure) {
+export function replaceDockedLigandModel(viewer, previousModel, structure, role = 'reference') {
   const preservedView = typeof viewer.getView === 'function' ? viewer.getView() : null;
   if (previousModel && typeof viewer.removeModel === 'function') viewer.removeModel(previousModel);
   if (!structure) {
@@ -112,11 +121,154 @@ export function replaceDockedLigandModel(viewer, previousModel, structure) {
     return null;
   }
   const model = viewer.addModel(structure.text, structure.format || 'pdbqt');
-  setModelStyle(model, viewer, {}, SELECTED_LIGAND_STYLE);
-  setModelStyle(model, viewer, { elem: 'C' }, DOCKED_LIGAND_CARBON_STYLE, 'addStyle');
+  const baseStyle = role === 'comparison' ? COMPARISON_LIGAND_STYLE : SELECTED_LIGAND_STYLE;
+  const carbonStyle = role === 'comparison' ? COMPARISON_LIGAND_CARBON_STYLE : DOCKED_LIGAND_CARBON_STYLE;
+  setModelStyle(model, viewer, {}, baseStyle);
+  setModelStyle(model, viewer, { elem: 'C' }, carbonStyle, 'addStyle');
   if (preservedView && typeof viewer.setView === 'function') viewer.setView(preservedView);
   viewer.render();
   return model;
+}
+
+function featurePoint(feature) {
+  const values = feature?.feature_center_xyz || [];
+  return values.length === 3 && values.every((value) => Number.isFinite(Number(value)))
+    ? { x: Number(values[0]), y: Number(values[1]), z: Number(values[2]) } : null;
+}
+
+export function pharmacophoreStatusMaps(matches = []) {
+  const reference = new Map();
+  const comparison = new Map();
+  matches.forEach((match) => {
+    reference.set(match.reference_feature_id, match);
+    comparison.set(match.comparison_feature_id, match);
+  });
+  return { reference, comparison };
+}
+
+export function selectedPharmacophoreIds(selectedFeatureId = '', matches = []) {
+  const selected = new Set(selectedFeatureId ? [selectedFeatureId] : []);
+  matches.forEach((match) => {
+    if (match.reference_feature_id === selectedFeatureId || match.comparison_feature_id === selectedFeatureId) {
+      selected.add(match.reference_feature_id); selected.add(match.comparison_feature_id);
+    }
+  });
+  return selected;
+}
+
+export function pharmacophoreFeatureMarker(feature, role = 'reference', matched = false, selected = false) {
+  const center = featurePoint(feature);
+  if (!center) return null;
+  const style = PHARMACOPHORE_STYLES[feature.canonical_class] || PHARMACOPHORE_STYLES.HYDROPHOBIC;
+  const reference = role === 'reference';
+  return {
+    center,
+    color: style.color,
+    radius: selected ? 0.72 : 0.52,
+    opacity: reference ? 0.18 : 0.74,
+    wireframe: reference,
+    featureId: feature.feature_id,
+    canonicalClass: feature.canonical_class,
+    role,
+    status: matched ? 'matched' : `${role}_only`,
+    aromaticPlane: feature.canonical_class === 'AROMATIC' && Array.isArray(feature.plane_normal)
+      ? { normal: feature.plane_normal.map(Number), radius: selected ? 1.05 : 0.82 }
+      : null,
+  };
+}
+
+export function renderPharmacophoreFeatures(
+  viewer, previousShapes = [], referenceFeatures = [], comparisonFeatures = [], matches = [],
+  selectedFeatureId = '', visibility = {},
+  onSelect = () => {},
+) {
+  previousShapes.forEach((shape) => viewer.removeShape?.(shape));
+  const shapes = [];
+  const statusMaps = pharmacophoreStatusMaps(matches);
+  const selectedIds = selectedPharmacophoreIds(selectedFeatureId, matches);
+  const renderRole = (features, role) => {
+    if (visibility[role] === false) return;
+    features.forEach((feature) => {
+      if (visibility[feature.canonical_class] === false) return;
+      const marker = pharmacophoreFeatureMarker(
+        feature, role, statusMaps[role].has(feature.feature_id), selectedIds.has(feature.feature_id),
+      );
+      if (!marker) return;
+      const shape = viewer.addShape({
+        color: marker.color, opacity: 1, clickable: true,
+        callback: () => onSelect(feature.feature_id),
+      });
+      shape.addSphere({
+        center: marker.center, radius: marker.radius, color: marker.color,
+        opacity: marker.opacity, wireframe: marker.wireframe,
+      });
+      if (marker.aromaticPlane) {
+        const normal = marker.aromaticPlane.normal;
+        const half = 0.12;
+        shape.addCylinder({
+          start: { x: marker.center.x - normal[0] * half, y: marker.center.y - normal[1] * half, z: marker.center.z - normal[2] * half },
+          end: { x: marker.center.x + normal[0] * half, y: marker.center.y + normal[1] * half, z: marker.center.z + normal[2] * half },
+          radius: marker.aromaticPlane.radius, color: marker.color, opacity: marker.opacity,
+          fromCap: 2, toCap: 2,
+        });
+      }
+      shape.userData = marker;
+      shapes.push(shape);
+    });
+  };
+  renderRole(referenceFeatures, 'reference');
+  renderRole(comparisonFeatures, 'comparison');
+  viewer.render();
+  return shapes;
+}
+
+export function renderPharmacophoreLabels(
+  viewer, previousLabels = [], referenceFeatures = [], comparisonFeatures = [], visible = true,
+) {
+  previousLabels.forEach((label) => viewer.removeLabel?.(label));
+  if (!visible || typeof viewer.addLabel !== 'function') { viewer.render(); return []; }
+  const labels = [];
+  [[referenceFeatures, 'R'], [comparisonFeatures, 'C']].forEach(([features, role]) => {
+    features.forEach((feature) => {
+      const position = featurePoint(feature);
+      if (!position) return;
+      const style = PHARMACOPHORE_STYLES[feature.canonical_class] || PHARMACOPHORE_STYLES.HYDROPHOBIC;
+      labels.push(viewer.addLabel(`${role} · ${style.label}`, {
+        position, fontColor: style.color, backgroundColor: '#ffffff', backgroundOpacity: 0.76,
+        borderColor: style.color, borderThickness: 1, fontSize: 10, inFront: true,
+      }));
+    });
+  });
+  viewer.render();
+  return labels;
+}
+
+export function renderPharmacophoreConnectors(
+  viewer, previousShapes = [], referenceFeatures = [], comparisonFeatures = [], matches = [], visible = true,
+) {
+  previousShapes.forEach((shape) => viewer.removeShape?.(shape));
+  if (!visible) { viewer.render(); return []; }
+  const referenceById = new Map(referenceFeatures.map((feature) => [feature.feature_id, feature]));
+  const comparisonById = new Map(comparisonFeatures.map((feature) => [feature.feature_id, feature]));
+  const shapes = [];
+  matches.forEach((match) => {
+    const start = featurePoint(referenceById.get(match.reference_feature_id));
+    const end = featurePoint(comparisonById.get(match.comparison_feature_id));
+    if (!start || !end) return;
+    const shape = viewer.addShape({ color: '#6f7b84', opacity: 0.75 });
+    for (let index = 0; index < 5; index += 1) {
+      const from = index / 5;
+      const to = Math.min(1, from + 0.11);
+      shape.addCylinder({
+        start: interpolate(start, end, from), end: interpolate(start, end, to),
+        color: '#6f7b84', radius: 0.055, opacity: 0.75, fromCap: 1, toCap: 1,
+      });
+    }
+    shape.userData = { kind: 'pharmacophore_match', ...match };
+    shapes.push(shape);
+  });
+  viewer.render();
+  return shapes;
 }
 
 export function renderVinaBox(viewer, previousShapes, box) {
@@ -284,6 +436,24 @@ export function observeViewerResize(host, viewer, ResizeObserverClass = globalTh
   return () => observer.disconnect();
 }
 
+export function prepareViewerForRender(host, viewer) {
+  if (!host || !viewer || !host.isConnected || host.clientWidth < 1 || host.clientHeight < 1) return false;
+  viewer.resize?.();
+  return true;
+}
+
+export function disposeViewer(host) {
+  const canvas = host?.querySelector?.('canvas');
+  if (!canvas) return;
+  try {
+    const context = canvas.getContext?.('webgl2') || canvas.getContext?.('webgl');
+    context?.getExtension?.('WEBGL_lose_context')?.loseContext?.();
+  } catch {
+    // A browser may revoke the context during teardown; DOM removal remains sufficient.
+  }
+  host.replaceChildren?.();
+}
+
 function atomPoint(atom) {
   return atom && [atom.x, atom.y, atom.z].every((value) => Number.isFinite(Number(value)))
     ? { x: Number(atom.x), y: Number(atom.y), z: Number(atom.z) } : null;
@@ -391,20 +561,36 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
   selectedResidues,
   selectedLigand,
   dockedLigand,
+  comparisonLigand = null,
+  showReferenceLigand = true,
+  showComparisonLigand = true,
   onAtomSelect,
   onLigandRender,
   onError,
   interactionRecords = [],
   selectedInteractionToken = '',
   pocketMode = 'interactions',
+  pharmacophoreReferenceFeatures = [],
+  pharmacophoreComparisonFeatures = [],
+  pharmacophoreMatches = [],
+  selectedPharmacophoreFeatureId = '',
+  pharmacophoreVisibility = {},
+  showPharmacophoreConnectors = true,
+  showPharmacophoreLabels = true,
+  onSelectPharmacophoreFeature = () => {},
+  showViewerLegend = true,
   viewerAspectRatio = '',
 }, ref) {
   const hostRef = useRef(null);
   const viewerRef = useRef(null);
   const receptorModelRef = useRef(null);
   const ligandModelRef = useRef(null);
+  const comparisonLigandModelRef = useRef(null);
   const boxShapeRef = useRef(null);
   const interactionShapesRef = useRef([]);
+  const pharmacophoreShapesRef = useRef([]);
+  const pharmacophoreConnectorShapesRef = useRef([]);
+  const pharmacophoreLabelsRef = useRef([]);
   const onAtomSelectRef = useRef(onAtomSelect);
   const onLigandRenderRef = useRef(onLigandRender);
   const onErrorRef = useRef(onError);
@@ -412,6 +598,7 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
   const [viewerGeneration, setViewerGeneration] = useState(0);
   const artifactIdentity = receptorStructureIdentity(structure);
   const dockedLigandIdentity = dockedLigandStructureIdentity(dockedLigand);
+  const comparisonLigandIdentity = dockedLigandStructureIdentity(comparisonLigand);
   const hasDockedLigand = Boolean(dockedLigand);
 
   useEffect(() => { onAtomSelectRef.current = onAtomSelect; }, [onAtomSelect]);
@@ -441,33 +628,47 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
   useEffect(() => {
     let disposed = false;
     let viewer;
-    createReceptorViewer(hostRef.current)
-      .then((createdViewer) => {
-        if (disposed) {
-          createdViewer.clear();
-          return;
-        }
-        viewer = createdViewer;
-        viewerRef.current = viewer;
-        setViewerGeneration((current) => current + 1);
-      })
-      .catch((viewerError) => {
-        if (!disposed) onErrorRef.current?.(viewerError);
-      });
+    let pendingObserver;
+    let started = false;
+    const mountedHost = hostRef.current;
+    const initialize = () => {
+      const host = hostRef.current;
+      if (disposed || started || !host || host.clientWidth < 1 || host.clientHeight < 1) return;
+      started = true;
+      pendingObserver?.disconnect();
+      createReceptorViewer(host)
+        .then((createdViewer) => {
+          if (disposed) { disposeViewer(host); return; }
+          viewer = createdViewer;
+          viewerRef.current = viewer;
+          setViewerGeneration((current) => current + 1);
+        })
+        .catch((viewerError) => { if (!disposed) onErrorRef.current?.(viewerError); });
+    };
+    if (typeof ResizeObserver === 'function') {
+      pendingObserver = new ResizeObserver(initialize);
+      pendingObserver.observe(hostRef.current);
+    }
+    initialize();
     return () => {
       disposed = true;
+      pendingObserver?.disconnect();
       boxShapeRef.current = null;
       receptorModelRef.current = null;
       ligandModelRef.current = null;
+      comparisonLigandModelRef.current = null;
       interactionShapesRef.current = [];
-      if (viewer) viewer.clear();
+      pharmacophoreShapesRef.current = [];
+      pharmacophoreConnectorShapesRef.current = [];
+      pharmacophoreLabelsRef.current = [];
+      disposeViewer(mountedHost);
       viewerRef.current = null;
     };
   }, []);
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer || !structure) return;
+    if (!viewer || !structure || !prepareViewerForRender(hostRef.current, viewer)) return;
     const receptorId = structure.identity?.receptorId || '';
     receptorModelRef.current = replaceReceptorModel(
       viewer,
@@ -476,27 +677,39 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
       { preserveCamera: Boolean(receptorId && receptorId === renderedReceptorIdRef.current) },
     );
     ligandModelRef.current = null;
+    comparisonLigandModelRef.current = null;
     renderedReceptorIdRef.current = receptorId;
   }, [artifactIdentity, viewerGeneration]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer) return;
+    if (!viewer || !prepareViewerForRender(hostRef.current, viewer)) return;
     const started = performance.now();
     ligandModelRef.current = replaceDockedLigandModel(
       viewer,
       ligandModelRef.current,
-      structure ? dockedLigand : null,
+      structure && showReferenceLigand ? dockedLigand : null,
     );
     onLigandRenderRef.current?.({
       durationMs: performance.now() - started,
       mode: dockedLigand?.identity?.mode ?? null,
     });
-  }, [artifactIdentity, dockedLigandIdentity, viewerGeneration]);
+  }, [artifactIdentity, dockedLigandIdentity, showReferenceLigand, viewerGeneration]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer) return;
+    if (!viewer || !prepareViewerForRender(hostRef.current, viewer)) return;
+    comparisonLigandModelRef.current = replaceDockedLigandModel(
+      viewer,
+      comparisonLigandModelRef.current,
+      structure && showComparisonLigand ? comparisonLigand : null,
+      'comparison',
+    );
+  }, [artifactIdentity, comparisonLigandIdentity, showComparisonLigand, viewerGeneration]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !prepareViewerForRender(hostRef.current, viewer)) return;
     boxShapeRef.current = renderVinaBox(
       viewer,
       boxShapeRef.current,
@@ -506,7 +719,7 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer || !structure) return;
+    if (!viewer || !structure || !prepareViewerForRender(hostRef.current, viewer)) return;
     renderResidueHighlights(
       viewer, selectedResidues, selectedLigand, receptorModelRef.current, hasDockedLigand,
     );
@@ -514,7 +727,8 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer || !receptorModelRef.current || !ligandModelRef.current) return;
+    if (!viewer || !receptorModelRef.current || !ligandModelRef.current
+      || !prepareViewerForRender(hostRef.current, viewer)) return;
     renderQualifiedPocket(
       viewer, receptorModelRef.current, ligandModelRef.current, pocketMode === 'pocket',
       interactionRecords, selectedInteractionToken,
@@ -525,6 +739,36 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
     );
     interactionShapesRef.current = rendered.shapes;
   }, [interactionRecords, selectedInteractionToken, pocketMode, artifactIdentity, dockedLigandIdentity, viewerGeneration]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !prepareViewerForRender(hostRef.current, viewer)) return;
+    pharmacophoreShapesRef.current = renderPharmacophoreFeatures(
+      viewer,
+      pharmacophoreShapesRef.current,
+      pharmacophoreReferenceFeatures,
+      pharmacophoreComparisonFeatures,
+      pharmacophoreMatches,
+      selectedPharmacophoreFeatureId,
+      pharmacophoreVisibility,
+      onSelectPharmacophoreFeature,
+    );
+    pharmacophoreConnectorShapesRef.current = renderPharmacophoreConnectors(
+      viewer,
+      pharmacophoreConnectorShapesRef.current,
+      pharmacophoreReferenceFeatures,
+      pharmacophoreComparisonFeatures,
+      pharmacophoreMatches,
+      showPharmacophoreConnectors,
+    );
+    pharmacophoreLabelsRef.current = renderPharmacophoreLabels(
+      viewer, pharmacophoreLabelsRef.current, pharmacophoreReferenceFeatures,
+      pharmacophoreComparisonFeatures, showPharmacophoreLabels,
+    );
+  }, [pharmacophoreReferenceFeatures, pharmacophoreComparisonFeatures, pharmacophoreMatches,
+    selectedPharmacophoreFeatureId, pharmacophoreVisibility, showPharmacophoreConnectors,
+    showPharmacophoreLabels, onSelectPharmacophoreFeature,
+    artifactIdentity, dockedLigandIdentity, comparisonLigandIdentity, viewerGeneration]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -547,7 +791,7 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
           bgcolor: '#f7f9fb',
         }}
       />
-      <ViewerLegend selectedLigand={selectedLigand} dockedLigand={dockedLigand?.identity} box={box} />
+      {showViewerLegend ? <ViewerLegend selectedLigand={selectedLigand} dockedLigand={dockedLigand?.identity} box={box} /> : null}
       {!structure ? (
         <Box sx={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}>
           <Typography color="text.secondary">Upload a PDB or prepared PDBQT to view the receptor.</Typography>

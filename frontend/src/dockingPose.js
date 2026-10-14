@@ -102,8 +102,9 @@ export function dockingPoseArtifactUrl(apiBaseUrl, jobId, poseFile) {
   if (typeof poseFile !== 'string' || !SAFE_POSE_PATH.test(poseFile)) {
     throw new Error('Docking pose artifact path is invalid.');
   }
-  const encodedPath = poseFile.split('/').map(encodeURIComponent).join('/');
-  return `${apiBaseUrl}/api/results/${encodeURIComponent(jobId)}/artifacts/${encodedPath}`;
+  return `${apiBaseUrl}/api/design-logic/pose-artifact?${new URLSearchParams({
+    job_id: jobId, artifact_path: poseFile,
+  })}`;
 }
 
 async function sha256Hex(bytes) {

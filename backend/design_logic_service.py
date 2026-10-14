@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from pathlib import Path
 from typing import Callable, Mapping
 
@@ -24,6 +25,12 @@ from molecular_prioritization.interaction_fingerprints import (
     compare_interaction_fingerprints,
     get_cached_docking_pose_interactions,
 )
+from molecular_prioritization.pharmacophore import (
+    PharmacophoreError,
+    build_pose_resolved_molecule,
+    compare_pharmacophore_features,
+    extract_pharmacophore_features,
+)
 from molecular_prioritization.scaffolds import (
     classify_scaffold_relationship,
     organize_scaffolds,
@@ -32,6 +39,8 @@ from molecular_prioritization.scaffolds import (
 
 
 WORKSPACE_SCHEMA = "moloptima-design-logic-workspace-v1"
+PHARMACOPHORE_WORKSPACE_SCHEMA = "moloptima-design-logic-pharmacophore-v1"
+PHARMACOPHORE_THRESHOLDS = (0.75, 1.0, 1.5, 2.0)
 MAX_COMPARISON_MOLECULES = 50
 MAX_MATRIX_COLUMNS = 12
 MAX_SELECTED_COMPARISONS = 5
@@ -300,6 +309,194 @@ def analyze_pose(job_id: str, molecule_id: str, mode: int) -> dict[str, object]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Molecule is not in this job.")
     state = _fingerprint_state(job_id, dict(row), mode, analyze=True)
     return {"job_id": job_id, "molecule_id": molecule_id, "mode": mode, **state}
+
+
+def pose_artifact(job_id: str, artifact_path: str) -> Path:
+    """Resolve only a pose artifact already named by this job's docking results."""
+
+    result = services.get_result(job_id)
+    allowed = {
+        str(path)
+        for row in result.get("results", [])
+        for path in (
+            (row.get("docking_result") or {}).get("pose_file"),
+            (row.get("docking_result") or {}).get("pose_path"),
+        )
+        if path
+    }
+    if artifact_path not in allowed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Docking pose artifact is not part of this job.")
+    try:
+        return _job_artifact((services.JOB_OUTPUT_DIR / job_id).resolve(), artifact_path, "pose")
+    except InteractionAnalysisInputError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+def pharmacophore_workspace(
+    job_id: str,
+    reference_molecule_id: str,
+    reference_mode: int,
+    comparison_molecule_ids: list[str],
+    comparison_mode: int,
+    distance_threshold_angstrom: float,
+    *,
+    state_loader: Callable[[str, Mapping[str, object], int], dict[str, object]] | None = None,
+) -> dict[str, object]:
+    """Return qualified pose pharmacophores and bounded backend-derived comparisons."""
+
+    threshold = float(distance_threshold_angstrom)
+    if threshold not in PHARMACOPHORE_THRESHOLDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Pharmacophore distance threshold must be 0.75, 1.00, 1.50, or 2.00 Å.",
+        )
+    result = services.get_result(job_id)
+    rows = [dict(row) for row in result.get("results", [])]
+    rows_by_id = {str(row.get("molecule_id")): row for row in rows}
+    reference_row = rows_by_id.get(reference_molecule_id)
+    if reference_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reference molecule is not in this job.")
+    selected_ids = _validated_selected_ids(comparison_molecule_ids, reference_molecule_id, rows_by_id)
+    loader = state_loader or _pharmacophore_state
+    started = time.perf_counter()
+    reference = loader(job_id, reference_row, reference_mode)
+    comparisons = []
+    for molecule_id in selected_ids:
+        comparison = loader(job_id, rows_by_id[molecule_id], comparison_mode)
+        pair = _pharmacophore_comparison(reference, comparison, threshold)
+        sensitivity = [
+            {
+                "distance_threshold_angstrom": candidate,
+                **_pharmacophore_comparison(reference, comparison, candidate),
+            }
+            for candidate in PHARMACOPHORE_THRESHOLDS
+        ]
+        comparisons.append({
+            "molecule_id": molecule_id,
+            "mode": comparison_mode,
+            "feature_state": comparison,
+            "comparison": pair,
+            "threshold_sensitivity": sensitivity,
+        })
+    matrix = _pharmacophore_reference_matrix(reference, comparisons)
+    return {
+        "schema_version": PHARMACOPHORE_WORKSPACE_SCHEMA,
+        "job_id": job_id,
+        "reference_molecule_id": reference_molecule_id,
+        "reference_mode": reference_mode,
+        "comparison_mode": comparison_mode,
+        "distance_threshold_angstrom": threshold,
+        "standard_thresholds_angstrom": list(PHARMACOPHORE_THRESHOLDS),
+        "reference": reference,
+        "comparisons": comparisons,
+        "reference_feature_matrix": matrix,
+        "request_duration_seconds": time.perf_counter() - started,
+        "metadata": {
+            "comparison_limit": MAX_SELECTED_COMPARISONS,
+            "matching_authority": "molecular_prioritization.pharmacophore.compare_pharmacophore_features",
+            "ligand_realignment_used": False,
+            "aromatic_orientation_filter_used": False,
+            "threshold_policy": "explicit_qualified_presets_no_universal_cutoff",
+            "cache_status": "not_cached",
+        },
+    }
+
+
+def _pharmacophore_state(job_id: str, row: Mapping[str, object], mode: int) -> dict[str, object]:
+    molecule_id = str(row.get("molecule_id") or "")
+    docking = dict(row.get("docking_result") or {})
+    try:
+        if docking.get("status") != "success":
+            raise PharmacophoreError("pose_missing", "Successful docking output is unavailable.")
+        if not any(int(item.get("mode", -1)) == mode for item in docking.get("modes", [])):
+            raise PharmacophoreError("pose_missing", f"Vina mode {mode} is unavailable.")
+        root = (services.JOB_OUTPUT_DIR / job_id).resolve()
+        pose = _job_artifact(root, docking.get("pose_path"), "pose")
+        template_info = dict(docking.get("ligand_template") or {})
+        template = _job_artifact(root, template_info.get("artifact_path"), "ligand template")
+        input_pdbqt = _job_artifact(root, template_info.get("input_pdbqt_artifact_path"), "ligand input PDBQT")
+        prepared, _, _ = _receptor_artifacts(docking)
+        resolved = build_pose_resolved_molecule(
+            template_path=template,
+            input_pdbqt_path=input_pdbqt,
+            pose_path=pose,
+            mode_number=mode,
+            receptor_identity=str(docking.get("receptor_id") or ""),
+            receptor_sha256=hashlib.sha256(prepared.read_bytes()).hexdigest(),
+        )
+        feature_set = extract_pharmacophore_features(resolved)
+        return {
+            "status": feature_set["status"],
+            "molecule_id": molecule_id,
+            "mode": mode,
+            "feature_set": feature_set,
+            "visualization": _visualization_contract(job_id, molecule_id, mode, docking, {}),
+        }
+    except PharmacophoreError as exc:
+        return {"status": exc.code, "molecule_id": molecule_id, "mode": mode, "message": str(exc)}
+    except InteractionAnalysisInputError as exc:
+        mapped = "template_missing" if exc.code == "ligand_template_missing" else "pose_missing"
+        return {"status": mapped, "molecule_id": molecule_id, "mode": mode, "message": str(exc)}
+    except (HTTPException, OSError, ValueError, KeyError) as exc:
+        return {
+            "status": "mapping_incompatible", "molecule_id": molecule_id, "mode": mode,
+            "message": str(getattr(exc, "detail", exc)),
+        }
+
+
+def _pharmacophore_comparison(
+    reference: Mapping[str, object], comparison: Mapping[str, object], threshold: float,
+) -> dict[str, object]:
+    valid = {"available", "no_supported_features"}
+    if reference.get("status") not in valid:
+        return {"status": "unavailable_reference", "message": reference.get("message", "Reference pharmacophore is unavailable.")}
+    if comparison.get("status") not in valid:
+        return {"status": comparison.get("status"), "message": comparison.get("message", "Comparison pharmacophore is unavailable.")}
+    return compare_pharmacophore_features(
+        reference["feature_set"], comparison["feature_set"],
+        distance_threshold_angstrom=threshold,
+    )
+
+
+def _pharmacophore_reference_matrix(
+    reference: Mapping[str, object], comparisons: list[Mapping[str, object]],
+) -> dict[str, object]:
+    feature_set = reference.get("feature_set") if reference.get("status") in {"available", "no_supported_features"} else None
+    features = list((feature_set or {}).get("features") or [])
+    rows = []
+    for feature in features:
+        cells = []
+        matched_count = 0
+        for comparison in comparisons:
+            pair = comparison["comparison"]
+            match = next(
+                (item for item in pair.get("matches", []) if item["reference_feature_id"] == feature["feature_id"]),
+                None,
+            )
+            if match is not None:
+                matched_count += 1
+            cells.append({
+                "molecule_id": comparison["molecule_id"],
+                "mode": comparison["mode"],
+                "status": "matched" if match is not None else (
+                    "unmatched" if pair.get("status") in {"available", "one_empty", "both_empty"} else "unavailable"
+                ),
+                "comparison_feature_id": match.get("comparison_feature_id") if match else None,
+                "distance_angstrom": match.get("distance_angstrom") if match else None,
+            })
+        rows.append({
+            "reference_feature_id": feature["feature_id"],
+            "canonical_class": feature["canonical_class"],
+            "template_atom_indices": feature["template_atom_indices"],
+            "matched_comparison_count": matched_count,
+            "selected_comparison_count": len(comparisons),
+            "cells": cells,
+        })
+    return {
+        "rows": rows,
+        "columns": [{"molecule_id": item["molecule_id"], "mode": item["mode"]} for item in comparisons],
+        "semantics": "actual backend one-to-one matches at the selected distance threshold",
+    }
 
 
 def _fingerprint_state(

@@ -67,7 +67,7 @@ export async function compose3dPng(uri, options, identity) {
   return await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
 }
 
-export function ExportControls({ kind, aspectRatio, onExport, supportsSvg = false }) {
+export function ExportControls({ kind, aspectRatio, onExport, supportsSvg = false, legendLabel = 'Interaction legend' }) {
   const [width, setWidth] = useState(3840);
   const [customWidth, setCustomWidth] = useState('3840');
   const [includeTitle, setIncludeTitle] = useState(true);
@@ -89,7 +89,7 @@ export function ExportControls({ kind, aspectRatio, onExport, supportsSvg = fals
       </Stack>
       <Stack direction="row" flexWrap="wrap" useFlexGap spacing={1}>
         <FormControlLabel control={<Checkbox size="small" checked={includeTitle} onChange={(event) => setIncludeTitle(event.target.checked)} />} label="Title / identity" />
-        <FormControlLabel control={<Checkbox size="small" checked={includeLegend} onChange={(event) => setIncludeLegend(event.target.checked)} />} label="Interaction legend" />
+        <FormControlLabel control={<Checkbox size="small" checked={includeLegend} onChange={(event) => setIncludeLegend(event.target.checked)} />} label={legendLabel} />
         {kind === '2D' ? <FormControlLabel control={<Checkbox size="small" checked={includeDistances} onChange={(event) => setIncludeDistances(event.target.checked)} />} label="Distances" /> : null}
         <FormControlLabel control={<Checkbox size="small" checked={transparent} onChange={(event) => setTransparent(event.target.checked)} />} label="Transparent background" />
       </Stack>

@@ -12,6 +12,7 @@ import {
 } from './designLogicData.js';
 import InteractionVisualizationPanel from './InteractionVisualizationPanel.jsx';
 import MultiLigandComparison from './MultiLigandComparison.jsx';
+import PharmacophorePanel from './PharmacophorePanel.jsx';
 import {
   MAX_SELECTED_COMPARISONS, addComparison, removeComparison, selectedComparisonPoints,
   selectedSetMatrix,
@@ -182,6 +183,7 @@ export default function DesignLogicWorkspace({
   result, baseUrl = 'http://localhost:8000', initialWorkspace = null,
   initialReferenceId = '', initialSelectedId = '', initialReferenceMode = null,
   initialComparisonMode = null, initialComparisonIds = [], initialViewMode = 'single',
+  initialEvidenceView = 'interactions', initialPharmacophore = null,
 }) {
   const rows = result?.results || [];
   const jobId = result?.job_id || '';
@@ -199,6 +201,11 @@ export default function DesignLogicWorkspace({
   const [comparisonIds, setComparisonIds] = useState(() => initialComparisonIds.slice(0, MAX_SELECTED_COMPARISONS).filter((id) => id !== initialReference));
   const [viewMode, setViewMode] = useState(initialViewMode);
   const [filters, setFilters] = useState({ interactionType: 'all', chain: 'all', residueQuery: '' });
+  const [evidenceView, setEvidenceView] = useState(initialEvidenceView);
+  const [pharmacophoreThreshold, setPharmacophoreThreshold] = useState(1.5);
+  const [pharmacophore, setPharmacophore] = useState(initialPharmacophore);
+  const [pharmacophoreLoading, setPharmacophoreLoading] = useState(false);
+  const [pharmacophoreError, setPharmacophoreError] = useState('');
 
   const loadWorkspace = useCallback(async () => {
     if (!jobId || !referenceId) return;
@@ -215,6 +222,35 @@ export default function DesignLogicWorkspace({
   }, [baseUrl, jobId, referenceId, referenceMode, comparisonMode]);
 
   useEffect(() => { loadWorkspace(); }, [loadWorkspace]);
+
+  const pharmacophoreComparisonIds = useMemo(() => {
+    if (viewMode === 'compare') return comparisonIds.filter((id) => id !== referenceId);
+    return selectedId && selectedId !== referenceId ? [selectedId] : [];
+  }, [viewMode, comparisonIds, selectedId, referenceId]);
+  const pharmacophoreComparisonKey = pharmacophoreComparisonIds.join('|');
+
+  useEffect(() => {
+    if (evidenceView !== 'pharmacophore' || !jobId || !referenceId || !pharmacophoreComparisonIds.length) {
+      if (!pharmacophoreComparisonIds.length) setPharmacophore(null);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setPharmacophoreLoading(true); setPharmacophoreError('');
+    fetch(`${baseUrl}/api/design-logic/pharmacophore`, {
+      method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: jobId, reference_molecule_id: referenceId, reference_mode: referenceMode,
+        comparison_molecule_ids: pharmacophoreComparisonIds, comparison_mode: comparisonMode,
+        distance_threshold_angstrom: pharmacophoreThreshold,
+      }),
+    }).then(async (response) => {
+      if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.detail?.message || body.detail || `Request failed (${response.status}).`); }
+      return response.json();
+    }).then(setPharmacophore).catch((requestError) => { if (!controller.signal.aborted) setPharmacophoreError(requestError.message); })
+      .finally(() => { if (!controller.signal.aborted) setPharmacophoreLoading(false); });
+    return () => controller.abort();
+  }, [baseUrl, jobId, referenceId, referenceMode, comparisonMode, pharmacophoreThreshold,
+    pharmacophoreComparisonKey, evidenceView]);
 
   async function analyze(point) {
     if (!point || analyzingId) return;
@@ -250,14 +286,25 @@ export default function DesignLogicWorkspace({
       </Paper>
       {viewMode === 'compare' && comparisonIds.length ? <MultiLigandComparison points={comparisonPoints} referenceId={referenceId} baseUrl={baseUrl} selectedToken={selectedToken} onSelectToken={setSelectedToken} onFocus3d={(moleculeId) => { setSelectedId(moleculeId); setSelectedToken(''); }} /> : null}
       {viewMode === 'compare' && !comparisonIds.length ? <Alert severity="info">Add one to five molecules to the comparison set, then use Compare to inspect selected-set interactions and scaffolds.</Alert> : null}
-      <InteractionVisualizationPanel
+      <Paper component="section" variant="outlined" sx={{ p: 1.25, minWidth: 0 }}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} gap={1}>
+          <Box><Typography variant="h2">Scientific evidence view</Typography><Typography variant="caption" color="text.secondary">Interaction fingerprints and pharmacophore geometry remain separate interpretations of explicit docking poses.</Typography></Box>
+          <ToggleButtonGroup exclusive size="small" value={evidenceView} onChange={(_event, value) => { if (value) setEvidenceView(value); }} aria-label="Scientific evidence view"><ToggleButton value="interactions">Interactions</ToggleButton><ToggleButton value="pharmacophore">Pharmacophore</ToggleButton></ToggleButtonGroup>
+        </Stack>
+        {evidenceView === 'pharmacophore' ? <TextField select size="small" label="Feature center threshold" value={pharmacophoreThreshold} onChange={(event) => setPharmacophoreThreshold(Number(event.target.value))} helperText="Explicit qualified preset; not a universal cutoff." sx={{ mt: 1, minWidth: 240 }}>{[0.75, 1, 1.5, 2].map((value) => <MenuItem key={value} value={value}>{value.toFixed(2)} Å</MenuItem>)}</TextField> : null}
+      </Paper>
+      {evidenceView === 'interactions' ? <InteractionVisualizationPanel
         baseUrl={baseUrl}
         jobId={jobId}
         point={selected}
         resultRow={rows.find((row) => String(row.molecule_id) === selected?.molecule_id)}
         selectedToken={selectedToken}
         onSelectToken={setSelectedToken}
-      />
+      /> : null}
+      {evidenceView === 'pharmacophore' && pharmacophoreLoading ? <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={18} /><Typography variant="body2">Loading qualified backend pharmacophore evidence…</Typography></Stack> : null}
+      {evidenceView === 'pharmacophore' && pharmacophoreError ? <Alert severity="error">{pharmacophoreError}</Alert> : null}
+      {evidenceView === 'pharmacophore' && !pharmacophoreComparisonIds.length ? <Alert severity="info">Select a non-reference molecule, or add one to five molecules in Compare mode, to request pharmacophore evidence.</Alert> : null}
+      {evidenceView === 'pharmacophore' && pharmacophore ? <PharmacophorePanel baseUrl={baseUrl} jobId={jobId} payload={pharmacophore} points={points} rows={rows} focusedMoleculeId={selectedId} onFocusComparison={setSelectedId} /> : null}
     </Stack>
   );
 }

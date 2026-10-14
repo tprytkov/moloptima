@@ -21,6 +21,7 @@ from backend.schemas import (
     DockingConfigurationResponse,
     DockingReceptorResponse,
     DesignLogicAnalyzeRequest,
+    DesignLogicPharmacophoreRequest,
     DesignLogicDepictionResponse,
     DesignLogicResponse,
     DesignLogicWorkspaceRequest,
@@ -322,6 +323,26 @@ def analyze_design_logic_pose(request: DesignLogicAnalyzeRequest) -> DesignLogic
     return DesignLogicResponse(**design_logic_service.analyze_pose(
         request.job_id, request.molecule_id, request.mode,
     ))
+
+
+@app.post("/api/design-logic/pharmacophore", response_model=DesignLogicResponse)
+def get_design_logic_pharmacophore(
+    request: DesignLogicPharmacophoreRequest,
+) -> DesignLogicResponse:
+    return DesignLogicResponse(**design_logic_service.pharmacophore_workspace(
+        request.job_id,
+        request.reference_molecule_id,
+        request.reference_mode,
+        request.comparison_molecule_ids,
+        request.comparison_mode,
+        request.distance_threshold_angstrom,
+    ))
+
+
+@app.get("/api/design-logic/pose-artifact")
+def get_design_logic_pose_artifact(job_id: str, artifact_path: str) -> FileResponse:
+    path = design_logic_service.pose_artifact(job_id, artifact_path)
+    return FileResponse(path, filename=path.name, media_type="chemical/x-pdbqt")
 
 
 @app.get("/api/design-logic/depiction", response_model=DesignLogicDepictionResponse)

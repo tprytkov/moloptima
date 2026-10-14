@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from backend import design_logic_service
 from backend.main import app
 from molecular_prioritization.interaction_fingerprints import InteractionAnalysisError
+from molecular_prioritization.pharmacophore import PHARMACOPHORE_SCHEMA_VERSION
 
 
 def _fingerprint(tokens, *, receptor_sha="receptor-a"):
@@ -252,3 +255,152 @@ def test_design_logic_depiction_endpoint_returns_vector_contract():
 def test_design_logic_depiction_endpoint_rejects_invalid_structure():
     response = TestClient(app).get("/api/design-logic/depiction", params={"smiles": "not-a-smiles"})
     assert response.status_code == 422
+
+
+def _pharmacophore_feature_set(molecule_id, features, *, receptor_sha="receptor-a"):
+    return {
+        "status": "available" if features else "no_supported_features",
+        "molecule_id": molecule_id,
+        "mode": 1,
+        "feature_set": {
+            "schema_version": PHARMACOPHORE_SCHEMA_VERSION,
+            "status": "available" if features else "no_supported_features",
+            "receptor_identity": "receptor-1",
+            "receptor_sha256": receptor_sha,
+            "mapping_schema": "moloptima-template-pose-atom-mapping-v2",
+            "feature_definition": {
+                "feature_definition_sha256": "fdef",
+                "canonical_feature_mapping_sha256": "mapping",
+            },
+            "features": features,
+        },
+        "visualization": {"receptor_id": "receptor-1", "mode": 1},
+    }
+
+
+def _pharmacophore_feature(feature_id, class_name, x):
+    return {
+        "feature_id": feature_id, "canonical_class": class_name,
+        "template_atom_indices": [int(feature_id[-1])], "pose_atom_indices": [int(feature_id[-1])],
+        "feature_center_xyz": [x, 0.0, 0.0], "plane_normal": None,
+    }
+
+
+def _configure_pharmacophore(monkeypatch, states):
+    monkeypatch.setattr(
+        design_logic_service.services, "get_result",
+        lambda job_id: {"job_id": job_id, "results": _rows()},
+    )
+    return lambda job_id, row, mode: {
+        **states[str(row["molecule_id"])], "mode": mode,
+    }
+
+
+def test_pharmacophore_workspace_preserves_explicit_modes_threshold_and_matches(monkeypatch):
+    states = {
+        "ref": _pharmacophore_feature_set("ref", [
+            _pharmacophore_feature("ref0", "HBA", 0.0),
+            _pharmacophore_feature("ref1", "HBD", 2.0),
+        ]),
+        "near": _pharmacophore_feature_set("near", [
+            _pharmacophore_feature("cmp0", "HBA", 0.5),
+            _pharmacophore_feature("cmp1", "HBD", 4.0),
+        ]),
+    }
+    payload = design_logic_service.pharmacophore_workspace(
+        "job-1", "ref", 1, ["near"], 2, 1.5,
+        state_loader=_configure_pharmacophore(monkeypatch, states),
+    )
+    pair = payload["comparisons"][0]["comparison"]
+    assert payload["schema_version"] == design_logic_service.PHARMACOPHORE_WORKSPACE_SCHEMA
+    assert payload["reference_mode"] == 1 and payload["comparison_mode"] == 2
+    assert payload["distance_threshold_angstrom"] == 1.5
+    assert pair["matched_feature_count"] == 1
+    assert pair["single_match_distance_angstrom"] == 0.5
+    assert pair["matched_feature_center_rmsd_angstrom"] is None
+    assert payload["metadata"]["ligand_realignment_used"] is False
+    assert payload["metadata"]["aromatic_orientation_filter_used"] is False
+
+
+def test_pharmacophore_threshold_sensitivity_and_reference_matrix_are_backend_derived(monkeypatch):
+    states = {
+        "ref": _pharmacophore_feature_set("ref", [_pharmacophore_feature("ref0", "HBA", 0.0)]),
+        "near": _pharmacophore_feature_set("near", [_pharmacophore_feature("cmp0", "HBA", 1.2)]),
+    }
+    payload = design_logic_service.pharmacophore_workspace(
+        "job-1", "ref", 1, ["near"], 1, 1.5,
+        state_loader=_configure_pharmacophore(monkeypatch, states),
+    )
+    sensitivity = payload["comparisons"][0]["threshold_sensitivity"]
+    assert [row["matched_feature_count"] for row in sensitivity] == [0, 0, 1, 1]
+    matrix = payload["reference_feature_matrix"]
+    assert matrix["rows"][0]["matched_comparison_count"] == 1
+    assert matrix["rows"][0]["cells"][0]["distance_angstrom"] == 1.2
+    assert "backend one-to-one" in matrix["semantics"]
+
+
+def test_pharmacophore_workspace_preserves_typed_unavailable_and_incompatible_states(monkeypatch):
+    states = {
+        "ref": _pharmacophore_feature_set("ref", [_pharmacophore_feature("ref0", "HBA", 0.0)]),
+        "near": {"status": "template_missing", "molecule_id": "near", "mode": 1, "message": "Template missing."},
+        "far": _pharmacophore_feature_set("far", [_pharmacophore_feature("cmp0", "HBA", 0.0)], receptor_sha="other"),
+    }
+    payload = design_logic_service.pharmacophore_workspace(
+        "job-1", "ref", 1, ["near", "far"], 1, 1.5,
+        state_loader=_configure_pharmacophore(monkeypatch, states),
+    )
+    assert payload["comparisons"][0]["comparison"]["status"] == "template_missing"
+    assert payload["comparisons"][1]["comparison"]["status"] == "incompatible"
+    assert payload["reference_feature_matrix"]["rows"][0]["cells"][0]["status"] == "unavailable"
+
+
+def test_pharmacophore_workspace_is_bounded_and_rejects_unqualified_threshold(monkeypatch):
+    monkeypatch.setattr(
+        design_logic_service.services, "get_result",
+        lambda job_id: {"job_id": job_id, "results": _rows()},
+    )
+    with pytest.raises(HTTPException) as error:
+        design_logic_service.pharmacophore_workspace("job-1", "ref", 1, ["near"], 1, 1.25)
+    assert error.value.status_code == 422
+
+
+def test_pharmacophore_route_is_thin_and_typed(monkeypatch):
+    monkeypatch.setattr(
+        design_logic_service, "pharmacophore_workspace",
+        lambda job_id, *args: {
+            "job_id": job_id, "schema_version": design_logic_service.PHARMACOPHORE_WORKSPACE_SCHEMA,
+        },
+    )
+    response = TestClient(app).post("/api/design-logic/pharmacophore", json={
+        "job_id": "job-1", "reference_molecule_id": "ref", "reference_mode": 1,
+        "comparison_molecule_ids": ["near"], "comparison_mode": 2,
+        "distance_threshold_angstrom": 1.5,
+    })
+    assert response.status_code == 200
+    assert response.json()["schema_version"] == design_logic_service.PHARMACOPHORE_WORKSPACE_SCHEMA
+
+
+def test_pose_artifact_is_job_scoped_and_limited_to_result_manifest(tmp_path, monkeypatch):
+    job = tmp_path / "job-1"
+    pose = job / "docking" / "poses" / "ligand.pdbqt"
+    pose.parent.mkdir(parents=True)
+    pose.write_text("MODEL 1\nENDMDL\n", encoding="utf-8")
+    monkeypatch.setattr(design_logic_service.services, "JOB_OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(design_logic_service.services, "get_result", lambda _job_id: {
+        "results": [{"docking_result": {"pose_path": "docking/poses/ligand.pdbqt"}}],
+    })
+    assert design_logic_service.pose_artifact("job-1", "docking/poses/ligand.pdbqt") == pose
+    with pytest.raises(HTTPException) as error:
+        design_logic_service.pose_artifact("job-1", "docking/poses/other.pdbqt")
+    assert error.value.status_code == 404
+
+
+def test_pose_artifact_route_serves_manifest_pose(tmp_path, monkeypatch):
+    pose = tmp_path / "pose.pdbqt"
+    pose.write_text("MODEL 1\nENDMDL\n", encoding="utf-8")
+    monkeypatch.setattr(design_logic_service, "pose_artifact", lambda job_id, artifact_path: pose)
+    response = TestClient(app).get("/api/design-logic/pose-artifact", params={
+        "job_id": "job-1", "artifact_path": "docking/poses/ligand.pdbqt",
+    })
+    assert response.status_code == 200
+    assert response.content.startswith(b"MODEL 1")

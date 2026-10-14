@@ -80,7 +80,7 @@ test('fails closed for invalid, missing, out-of-range, or mismatched mode metada
 test('builds only a job-scoped authorized docking-pose URL', () => {
   assert.equal(
     dockingPoseArtifactUrl('http://localhost:8000', 'job 1', 'docking/poses/0001_pose.pdbqt'),
-    'http://localhost:8000/api/results/job%201/artifacts/docking/poses/0001_pose.pdbqt',
+    'http://localhost:8000/api/design-logic/pose-artifact?job_id=job+1&artifact_path=docking%2Fposes%2F0001_pose.pdbqt',
   );
   assert.throws(() => dockingPoseArtifactUrl('', 'job', '../../secret.pdbqt'), /path is invalid/);
   assert.throws(() => dockingPoseArtifactUrl('', '', 'docking/poses/a.pdbqt'), /job context/);
