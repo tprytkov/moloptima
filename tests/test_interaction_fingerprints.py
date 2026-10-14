@@ -101,6 +101,56 @@ def test_runtime_resolver_verifies_override_without_importing_prolif(tmp_path):
     assert calls[0][0] == str(python)
 
 
+def test_successful_runtime_resolution_is_reused_process_locally(tmp_path):
+    runner, python = make_runtime(tmp_path)
+    command, calls = fake_command()
+    kwargs = {
+        "application_root": tmp_path,
+        "python_override": python,
+        "runner_override": runner,
+        "command_runner": command,
+    }
+    first = resolve_prolif_runtime(**kwargs)
+    second = resolve_prolif_runtime(**kwargs)
+    assert first == second
+    assert len([call for call in calls if "--probe" in call]) == 1
+
+
+def test_runtime_resolution_cache_invalidates_when_manifest_changes(tmp_path):
+    runner, python = make_runtime(tmp_path)
+    command, calls = fake_command()
+    kwargs = {
+        "application_root": tmp_path,
+        "python_override": python,
+        "runner_override": runner,
+        "command_runner": command,
+    }
+    resolve_prolif_runtime(**kwargs)
+    manifest_path = tmp_path / "resources" / "prolif" / "runtime_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["expected_versions"]["prolif"] = "changed"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(InteractionAnalysisError) as error:
+        resolve_prolif_runtime(**kwargs)
+    assert error.value.code == "interaction_runtime_incompatible"
+    assert len([call for call in calls if "--probe" in call]) == 2
+
+
+def test_runtime_resolution_cache_invalidates_when_runner_changes(tmp_path):
+    runner, python = make_runtime(tmp_path)
+    command, calls = fake_command()
+    kwargs = {
+        "application_root": tmp_path,
+        "python_override": python,
+        "runner_override": runner,
+        "command_runner": command,
+    }
+    resolve_prolif_runtime(**kwargs)
+    runner.write_text("# changed fake runner\n", encoding="utf-8")
+    resolve_prolif_runtime(**kwargs)
+    assert len([call for call in calls if "--probe" in call]) == 2
+
+
 def test_missing_runtime_is_typed(tmp_path):
     runner, _ = make_runtime(tmp_path)
     with pytest.raises(InteractionAnalysisError) as error:

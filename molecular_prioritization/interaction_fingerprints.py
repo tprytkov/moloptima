@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,10 @@ class ResolvedProLIFRuntime:
     manifest: Mapping[str, object]
 
 
+_verified_runtime_cache_lock = threading.Lock()
+_verified_runtime_cache: tuple[tuple[object, ...], ResolvedProLIFRuntime] | None = None
+
+
 def _load_manifest(root: Path) -> dict[str, object]:
     try:
         manifest = json.loads((root / RUNTIME_MANIFEST).read_text(encoding="utf-8-sig"))
@@ -67,6 +72,38 @@ def _run(command_runner: Callable[..., object], args: list[str], **kwargs: objec
         raise InteractionAnalysisError("interaction_runtime_timeout", "isolated ProLIF process timed out") from exc
     except OSError as exc:
         raise InteractionAnalysisError("interaction_runtime_unavailable", "isolated ProLIF process could not start") from exc
+
+
+def _runtime_file_identity(path: Path) -> tuple[str, int, int]:
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise InteractionAnalysisError("interaction_runtime_unavailable", "isolated ProLIF runtime file is unavailable") from exc
+    return str(path.resolve()), stat.st_size, stat.st_mtime_ns
+
+
+def _verified_runtime_identity(
+    *,
+    root: Path,
+    python: Path,
+    runner: Path,
+    python_source: str,
+    runner_source: str,
+    manifest: Mapping[str, object],
+    command_runner: Callable[..., object],
+) -> tuple[object, ...]:
+    manifest_identity = hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return (
+        str(root),
+        _runtime_file_identity(python),
+        _runtime_file_identity(runner),
+        python_source,
+        runner_source,
+        manifest_identity,
+        id(command_runner),
+    )
 
 
 def resolve_prolif_runtime(
@@ -113,24 +150,46 @@ def resolve_prolif_runtime(
         raise InteractionAnalysisError("interaction_runtime_incompatible", "frozen runtime versions are invalid")
     observed: Mapping[str, object] = expected
     if verify_runtime:
-        with tempfile.TemporaryDirectory(prefix="moloptima-prolif-probe-") as temporary:
-            output = Path(temporary) / "probe.json"
-            completed = _run(
-                command_runner,
-                [str(python), str(runner), "--probe", "--output", str(output)],
-                capture_output=True,
-                text=True,
-                shell=False,
-                env=isolated_runtime_environment(values),
-                timeout=DEFAULT_TIMEOUT_SECONDS,
+        cache_identity = _verified_runtime_identity(
+            root=root,
+            python=python,
+            runner=runner,
+            python_source=python_source,
+            runner_source=runner_source,
+            manifest=manifest,
+            command_runner=command_runner,
+        )
+        global _verified_runtime_cache
+        with _verified_runtime_cache_lock:
+            if _verified_runtime_cache is not None and _verified_runtime_cache[0] == cache_identity:
+                return _verified_runtime_cache[1]
+            with tempfile.TemporaryDirectory(prefix="moloptima-prolif-probe-") as temporary:
+                output = Path(temporary) / "probe.json"
+                completed = _run(
+                    command_runner,
+                    [str(python), str(runner), "--probe", "--output", str(output)],
+                    capture_output=True,
+                    text=True,
+                    shell=False,
+                    env=isolated_runtime_environment(values),
+                    timeout=DEFAULT_TIMEOUT_SECONDS,
+                )
+                if getattr(completed, "returncode", 1) != 0:
+                    raise InteractionAnalysisError("interaction_runtime_incompatible", "isolated runtime probe failed")
+                try:
+                    probe = json.loads(output.read_text(encoding="utf-8"))
+                    observed = probe["versions"]
+                except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                    raise InteractionAnalysisError("interaction_output_malformed", "runtime probe output is malformed") from exc
+            if any(observed.get(name) != version for name, version in expected.items()):
+                raise InteractionAnalysisError("interaction_runtime_incompatible", "runtime versions differ from the frozen manifest")
+            resolved = ResolvedProLIFRuntime(
+                python=python.resolve(), runner=runner.resolve(), python_source=python_source,
+                runner_source=runner_source, versions={key: str(value) for key, value in observed.items()},
+                manifest=manifest,
             )
-            if getattr(completed, "returncode", 1) != 0:
-                raise InteractionAnalysisError("interaction_runtime_incompatible", "isolated runtime probe failed")
-            try:
-                probe = json.loads(output.read_text(encoding="utf-8"))
-                observed = probe["versions"]
-            except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
-                raise InteractionAnalysisError("interaction_output_malformed", "runtime probe output is malformed") from exc
+            _verified_runtime_cache = (cache_identity, resolved)
+            return resolved
     if any(observed.get(name) != version for name, version in expected.items()):
         raise InteractionAnalysisError("interaction_runtime_incompatible", "runtime versions differ from the frozen manifest")
     return ResolvedProLIFRuntime(
