@@ -203,6 +203,7 @@ class DesignLogicWorkspaceRequest(BaseModel):
     reference_mode: int = Field(..., ge=1, le=100)
     comparison_mode: int = Field(..., ge=1, le=100)
     limit: int = Field(default=50, ge=1, le=50)
+    comparison_molecule_ids: list[str] = Field(default_factory=list, max_length=5)
 
 
 class DesignLogicAnalyzeRequest(BaseModel):

@@ -2,7 +2,12 @@ import copy
 
 import rdkit
 
-from molecular_prioritization.scaffolds import NO_RING_SCAFFOLD_ID, organize_scaffolds
+from molecular_prioritization.scaffolds import (
+    NO_RING_SCAFFOLD_ID,
+    classify_scaffold_relationship,
+    organize_scaffolds,
+    scaffold_identity,
+)
 
 
 def record(molecule_id, smiles, *, status="valid", duplicate=False):
@@ -71,3 +76,33 @@ def test_metadata_completely_describes_scaffold_science_and_import_context():
     assert "stereochemistry removed" in metadata["canonicalization"]
     assert "fragment-parent" in metadata["input_context"]
     assert "descriptive" in metadata["caveat"]
+
+
+def test_exact_and_generic_murcko_relationships_use_rdkit_topology():
+    phenol = scaffold_identity("Oc1ccccc1")
+    aniline = scaffold_identity("Nc1ccccc1")
+    pyridine = scaffold_identity("n1ccccc1")
+    cyclopropane = scaffold_identity("C1CC1")
+    assert classify_scaffold_relationship(phenol, aniline)["code"] == "SAME_EXACT_MURCKO"
+    generic = classify_scaffold_relationship(phenol, pyridine)
+    assert generic["code"] == "SAME_GENERIC_FRAMEWORK"
+    assert phenol["exact_scaffold_smiles"] != pyridine["exact_scaffold_smiles"]
+    assert phenol["generic_framework_smiles"] == pyridine["generic_framework_smiles"]
+    assert classify_scaffold_relationship(phenol, cyclopropane)["code"] == "DIFFERENT_FRAMEWORK"
+
+
+def test_acyclic_scaffolds_are_not_forced_into_ring_classes():
+    no_ring = scaffold_identity("CCO")
+    ring = scaffold_identity("c1ccccc1")
+    assert no_ring["status"] == "no_ring_scaffold"
+    assert no_ring["generic_framework_id"] is None
+    assert classify_scaffold_relationship(no_ring, ring)["code"] == "ACYCLIC_OR_NO_MURCKO"
+
+
+def test_scaffold_identity_is_canonical_stable_and_order_independent():
+    first = [scaffold_identity(smiles) for smiles in ["Oc1ccccc1", "n1ccccc1"]]
+    second = [scaffold_identity(smiles) for smiles in ["n1ccccc1", "Oc1ccccc1"]]
+    assert first == list(reversed(second))
+    assert scaffold_identity("c1ccccc1O") == scaffold_identity("Oc1ccccc1")
+    source = classify_scaffold_relationship.__code__.co_names
+    assert not {"Morgan", "Tanimoto", "Jaccard", "vina"}.intersection(source)

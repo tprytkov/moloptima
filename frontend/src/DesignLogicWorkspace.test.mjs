@@ -41,6 +41,10 @@ function render(selected = 'cmp') {
   return renderToStaticMarkup(React.createElement(Workspace, { result, initialWorkspace: workspace, initialReferenceId: 'ref', initialSelectedId: selected, initialReferenceMode: 1, initialComparisonMode: 1 }));
 }
 
+function renderCompare() {
+  return renderToStaticMarkup(React.createElement(Workspace, { result, initialWorkspace: workspace, initialReferenceId: 'ref', initialSelectedId: 'cmp', initialReferenceMode: 1, initialComparisonMode: 1, initialComparisonIds: ['cmp'], initialViewMode: 'compare' }));
+}
+
 test('workspace renders explicit reference and pose semantics with independent metrics', () => {
   const html = render();
   assert.match(html, /Design Logic/);
@@ -79,4 +83,17 @@ test('source confirms analysis is explicit and hover or selection never calls th
   assert.doesNotMatch(source, /onMouse(Enter|Move).*postJson/);
   assert.match(source, /explicit Vina poses/);
   assert.doesNotMatch(source, /scaffold hop/i);
+});
+
+test('compare mode keeps persistent selection separate from current point and retains one 3D surface', async () => {
+  const html = renderCompare();
+  assert.match(html, /Comparison set/);
+  assert.match(html, /Clear comparisons/);
+  assert.match(html, /Selected-set scientific comparison/);
+  assert.match(html, /Remove cmp from comparison set/);
+  assert.match(html, /Add to comparison|In comparison set/);
+  const source = await readFile(new URL('./DesignLogicWorkspace.jsx', import.meta.url), 'utf8');
+  assert.equal((source.match(/<InteractionVisualizationPanel/g) || []).length, 1);
+  assert.match(source, /setSelectedId\(moleculeId\)/);
+  assert.match(source, /addComparison\(current, moleculeId, referenceId\)/);
 });

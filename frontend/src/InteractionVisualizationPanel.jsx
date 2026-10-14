@@ -67,7 +67,7 @@ export async function compose3dPng(uri, options, identity) {
   return await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
 }
 
-function ExportControls({ kind, aspectRatio, onExport, supportsSvg = false }) {
+export function ExportControls({ kind, aspectRatio, onExport, supportsSvg = false }) {
   const [width, setWidth] = useState(3840);
   const [customWidth, setCustomWidth] = useState('3840');
   const [includeTitle, setIncludeTitle] = useState(true);

@@ -37,14 +37,24 @@ test('preferred direction follows the contacted ligand atom and placement is det
   assert.ok(Math.abs(first[0].x - first[1].x) >= 146 || Math.abs(first[0].y - first[1].y) >= 58);
 });
 
+test('reference position hints are reused when readable and comparison-only placement stays deterministic', () => {
+  const mapped = view.mapInteractionRecords(records, atoms);
+  const hints = view.interactionPositionHints(mapped, { width: 420, height: 300 });
+  const comparison = view.layoutInteractionMap(mapped.slice(0, 1), { width: 420, height: 300 }, hints);
+  assert.equal(comparison[0].x, hints[comparison[0].token].x);
+  assert.equal(comparison[0].y, hints[comparison[0].token].y);
+  assert.deepEqual(comparison, view.layoutInteractionMap(mapped.slice(0, 1), { width: 420, height: 300 }, hints));
+});
+
 test('SVG contains vector ligand, connectors, atom provenance labels, legend, and no raster image', () => {
   const mapped = view.mapInteractionRecords(records, atoms);
-  const svg = view.buildInteractionMapSvg({ depiction: { width: 420, height: 300, svg: '<svg><path d="M0 0L1 1"/><text>C</text></svg>' }, interactions: mapped, selectedToken: mapped[1].token, moleculeId: 'gen_1', mode: 2, receptorId: '9IIR' });
+  const svg = view.buildInteractionMapSvg({ depiction: { width: 420, height: 300, svg: '<svg><path d="M0 0L1 1"/><text>C</text></svg>' }, interactions: mapped, selectedToken: mapped[1].token, moleculeId: 'gen_1', mode: 2, contextLabel: 'Different scaffold framework', receptorId: '9IIR' });
   assert.match(svg, /<path d="M0 0L1 1"/);
   assert.match(svg, /<line/);
   assert.match(svg, /B:ASN236/);
   assert.match(svg, /2\.91 Å/);
   assert.match(svg, /H-bond · ligand donor/);
+  assert.match(svg, /Different scaffold framework/);
   assert.match(svg, /data-token=/);
   assert.doesNotMatch(svg, /<image\b|data:image/i);
 });

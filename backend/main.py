@@ -313,6 +313,7 @@ def get_design_logic_workspace(request: DesignLogicWorkspaceRequest) -> DesignLo
         request.reference_mode,
         request.comparison_mode,
         request.limit,
+        request.comparison_molecule_ids,
     ))
 
 
@@ -328,8 +329,9 @@ def get_design_logic_depiction(
     smiles: str = Query(..., min_length=1),
     width: int = Query(420, ge=240, le=800),
     height: int = Query(300, ge=180, le=600),
+    reference_smiles: str | None = Query(None, min_length=1),
 ) -> DesignLogicDepictionResponse:
-    return DesignLogicDepictionResponse(**design_logic_service.ligand_depiction(smiles, width, height))
+    return DesignLogicDepictionResponse(**design_logic_service.ligand_depiction(smiles, width, height, reference_smiles))
 
 
 @app.post("/api/experimental-neighborhood/search", response_model=ExperimentalNeighborhoodResponse)

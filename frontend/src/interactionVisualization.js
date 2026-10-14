@@ -61,18 +61,20 @@ function overlaps(candidate, placed) {
   return placed.some((item) => Math.abs(candidate.x - item.x) < 146 && Math.abs(candidate.y - item.y) < 58);
 }
 
-export function layoutInteractionMap(interactions = [], depiction = { width: 420, height: 300 }) {
+export function layoutInteractionMap(interactions = [], depiction = { width: 420, height: 300 }, positionHints = {}) {
   const center = { x: depiction.width / 2, y: depiction.height / 2 };
   const placed = [];
   const radiusX = 315;
   const radiusY = 215;
   for (const interaction of interactions) {
     if (!interaction.ligandAtoms?.length) continue;
+    const hinted = positionHints[interaction.token];
     const direction = preferredResidueDirection(interaction, center);
     const base = Math.atan2(direction.y, direction.x);
     let candidate;
     const offsets = [0, 0.22, -0.22, 0.44, -0.44, 0.66, -0.66, 0.88, -0.88, 1.1, -1.1];
-    for (const offset of offsets) {
+    if (hinted) candidate = { ...interaction, x: hinted.x, y: hinted.y };
+    for (const offset of hinted && !overlaps(candidate, placed) ? [] : offsets) {
       const angle = base + offset;
       candidate = {
         ...interaction,
@@ -112,11 +114,13 @@ export function interactionDisplayLabel(interaction) {
 
 export function buildInteractionMapSvg({
   depiction, interactions, selectedToken = '', moleculeId = '', mode = 1, receptorId = '',
+  contextLabel = '',
   includeTitle = true, includeLegend = true, includeDistances = true, transparent = false,
+  residuePositionHints = {},
 }) {
-  const placed = layoutInteractionMap(interactions, depiction);
+  const placed = layoutInteractionMap(interactions, depiction, residuePositionHints);
   const background = transparent ? '' : `<rect width="${MAP_WIDTH}" height="${MAP_HEIGHT}" fill="#ffffff"/>`;
-  const title = includeTitle ? `<text x="24" y="30" class="map-title">Predicted protein–ligand interactions</text><text x="24" y="50" class="map-subtitle">${escapeXml(moleculeId)} · Vina Mode ${escapeXml(mode)}${receptorId ? ` · Receptor: ${escapeXml(receptorId)}` : ''}</text>` : '';
+  const title = includeTitle ? `<text x="24" y="30" class="map-title">Predicted protein–ligand interactions</text><text x="24" y="50" class="map-subtitle">${escapeXml(moleculeId)} · Vina Mode ${escapeXml(mode)}${contextLabel ? ` · ${escapeXml(contextLabel)}` : ''}${receptorId ? ` · Receptor: ${escapeXml(receptorId)}` : ''}</text>` : '';
   const connectors = placed.map((item) => {
     const style = INTERACTION_STYLES[item.records[0]?.interaction_type] || INTERACTION_STYLES.VdWContact;
     const selected = item.token === selectedToken;
@@ -127,6 +131,10 @@ export function buildInteractionMapSvg({
   }).join('');
   const legendItems = includeLegend ? Object.entries(INTERACTION_STYLES).map(([type, style], index) => `<g transform="translate(${24 + (index % 3) * 238} ${MAP_HEIGHT - 54 + Math.floor(index / 3) * 15})"><line x1="0" y1="0" x2="28" y2="0" stroke="${style.color}" stroke-width="${style.width}" stroke-dasharray="${style.dash}"/><text x="35" y="4" class="legend">${escapeXml(style.marker)} ${escapeXml(style.label)}</text></g>`).join('') : '';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${MAP_WIDTH}" height="${MAP_HEIGHT}" viewBox="0 0 ${MAP_WIDTH} ${MAP_HEIGHT}" role="img" aria-label="2D interaction map for ${escapeXml(moleculeId)}, Vina mode ${escapeXml(mode)}"><style>.map-title{font:700 17px Arial;fill:#20262e}.map-subtitle,.distance,.legend{font:11px Arial;fill:#52616c}.residue{font:700 12px Arial;fill:#20262e}.interaction-label{font:10px Arial;fill:#52616c}.ligand *{vector-effect:non-scaling-stroke}.selected{filter:drop-shadow(0 0 3px rgba(18,109,91,.45))}</style>${background}${title}<g class="ligand" transform="translate(${LIGAND_OFFSET.x} ${LIGAND_OFFSET.y})">${extractSvgInner(depiction.svg)}</g>${connectors}${legendItems}</svg>`;
+}
+
+export function interactionPositionHints(interactions = [], depiction = { width: 420, height: 300 }) {
+  return Object.fromEntries(layoutInteractionMap(interactions, depiction).map((item) => [item.token, { x: item.x, y: item.y }]));
 }
 
 export function resolveExportDimensions(width = 3840, aspectRatio = MAP_WIDTH / MAP_HEIGHT) {

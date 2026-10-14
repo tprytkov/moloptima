@@ -24,12 +24,17 @@ from molecular_prioritization.interaction_fingerprints import (
     compare_interaction_fingerprints,
     get_cached_docking_pose_interactions,
 )
-from molecular_prioritization.scaffolds import organize_scaffolds
+from molecular_prioritization.scaffolds import (
+    classify_scaffold_relationship,
+    organize_scaffolds,
+    scaffold_identity,
+)
 
 
 WORKSPACE_SCHEMA = "moloptima-design-logic-workspace-v1"
 MAX_COMPARISON_MOLECULES = 50
 MAX_MATRIX_COLUMNS = 12
+MAX_SELECTED_COMPARISONS = 5
 _RESIDUE_NUMBER = re.compile(r"^(-?\d+)(.*)$")
 
 
@@ -54,6 +59,7 @@ def workspace(
     reference_mode: int,
     comparison_mode: int,
     limit: int = MAX_COMPARISON_MOLECULES,
+    comparison_molecule_ids: list[str] | None = None,
     *,
     cached_loader: Callable[..., dict[str, object] | None] = get_cached_docking_pose_interactions,
 ) -> dict[str, object]:
@@ -70,7 +76,15 @@ def workspace(
     similarities.update({str(item["molecule_id"]): item["similarity"] for item in structural["neighbors"]})
     scaffold_payload = organize_scaffolds(records)
     scaffold_by_id = {
-        str(member["molecule_id"]): group["scaffold_id"]
+        str(member["molecule_id"]): {
+            "status": "no_ring_scaffold" if group["category"] == "no_ring" else "valid",
+            "exact_scaffold_id": group["scaffold_id"],
+            "exact_scaffold_smiles": group["scaffold_smiles"],
+            "generic_framework_id": group.get("generic_framework_id"),
+            "generic_framework_smiles": group.get("generic_framework_smiles"),
+            "scaffold_atom_count": group.get("scaffold_atom_count", 0),
+            "ring_count": group.get("ring_count", 0),
+        }
         for group in scaffold_payload["scaffolds"]
         for member in group["members"]
     }
@@ -94,15 +108,22 @@ def workspace(
         comparison = _comparison_state(reference_state, fingerprint_state)
         docking = dict(row.get("docking_result") or {})
         mode_row = next((item for item in docking.get("modes", []) if int(item.get("mode", -1)) == mode), {})
+        scaffold = scaffold_by_id.get(molecule_id)
+        scaffold_relationship = (
+            classify_scaffold_relationship(reference_scaffold, scaffold)
+            if reference_scaffold is not None and scaffold is not None else None
+        )
         points.append({
             "molecule_id": molecule_id,
             "display_name": str(row.get("original_molecule_id") or molecule_id),
             "canonical_smiles": str(row.get("canonical_smiles") or ""),
             "source": str(row.get("source_filename") or row.get("source_type") or "Imported"),
-            "scaffold_id": scaffold_by_id.get(molecule_id),
+            "scaffold_id": scaffold.get("exact_scaffold_id") if scaffold else None,
+            "scaffold": scaffold,
+            "scaffold_relationship": scaffold_relationship,
             "same_scaffold_as_reference": (
-                scaffold_by_id.get(molecule_id) == reference_scaffold
-                if scaffold_by_id.get(molecule_id) is not None and reference_scaffold is not None
+                scaffold_relationship["code"] == "SAME_EXACT_MURCKO"
+                if scaffold_relationship is not None
                 else None
             ),
             "mode": mode,
@@ -127,6 +148,11 @@ def workspace(
         "failed": sum(point["fingerprint_status"] not in {"available", "not_analyzed", "missing_pose"} for point in points),
         "missing_pose": sum(point["fingerprint_status"] == "missing_pose" for point in points),
     }
+    selected_ids = _validated_selected_ids(comparison_molecule_ids or [], reference_molecule_id, rows_by_id)
+    selected_points = [
+        point for molecule_id in [reference_molecule_id, *selected_ids]
+        if (point := next((item for item in points if item["molecule_id"] == molecule_id), None)) is not None
+    ]
     return {
         "schema_version": WORKSPACE_SCHEMA,
         "job_id": job_id,
@@ -137,17 +163,84 @@ def workspace(
         "coverage": coverage,
         "points": points,
         "matrix": _interaction_matrix(points),
+        "selected_set": _selected_set_summary(selected_points, reference_molecule_id),
         "metadata": {
             "structural_similarity": structural["metadata"],
             "interaction_similarity": "Jaccard over unique canonical ProLIF interaction tokens",
             "comparison_policy": "explicit_vina_mode_no_substitution",
             "bounded_limit": MAX_COMPARISON_MOLECULES,
             "matrix_column_limit": MAX_MATRIX_COLUMNS,
+            "selected_comparison_limit": MAX_SELECTED_COMPARISONS,
+            "scaffold_classification": "exact canonical Murcko, then RDKit generic Murcko topology",
         },
     }
 
 
-def ligand_depiction(smiles: str, width: int = 420, height: int = 300) -> dict[str, object]:
+def _validated_selected_ids(
+    molecule_ids: list[str], reference_molecule_id: str, rows_by_id: Mapping[str, object]
+) -> list[str]:
+    selected: list[str] = []
+    for raw in molecule_ids:
+        molecule_id = str(raw)
+        if molecule_id == reference_molecule_id or molecule_id in selected:
+            continue
+        if molecule_id not in rows_by_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Comparison molecule {molecule_id} is not in this job.")
+        if len(selected) == MAX_SELECTED_COMPARISONS:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"At most {MAX_SELECTED_COMPARISONS} comparison molecules may be selected.")
+        selected.append(molecule_id)
+    return selected
+
+
+def _selected_set_summary(points: list[dict[str, object]], reference_molecule_id: str) -> dict[str, object]:
+    available = [point for point in points if point.get("fingerprint_status") == "available"]
+    counts: dict[str, int] = {}
+    for point in available:
+        for token in set(point["fingerprint"].get("canonical_tokens", [])):
+            counts[token] = counts.get(token, 0) + 1
+    reference = next((point for point in points if point["molecule_id"] == reference_molecule_id), None)
+    reference_fingerprint = (reference.get("fingerprint") or {}) if reference else {}
+    reference_tokens = set(reference_fingerprint.get("canonical_tokens", []))
+    frequency = []
+    for token in sorted(counts, key=_token_sort_key):
+        count = counts[token]
+        if available and count == len(available):
+            category = "present_in_all"
+        elif token in reference_tokens and count == 1:
+            category = "reference_only"
+        elif token in reference_tokens:
+            category = "reference_plus_some"
+        elif count == 1:
+            category = "comparison_specific"
+        else:
+            category = "variable"
+        frequency.append({"token": token, "present_count": count, "selected_pose_count": len(available), "category": category})
+
+    def groups(key: str, fallback: str) -> list[dict[str, object]]:
+        grouped: dict[str, list[str]] = {}
+        for point in points:
+            identity = point.get("scaffold") or {}
+            group_id = str(identity.get(key) or fallback)
+            grouped.setdefault(group_id, []).append(str(point["molecule_id"]))
+        return [{"id": group_id, "molecule_ids": members} for group_id, members in sorted(grouped.items())]
+
+    return {
+        "molecule_ids": [point["molecule_id"] for point in points],
+        "comparison_count": max(0, len(points) - 1),
+        "matrix": _interaction_matrix(points),
+        "interaction_frequency": frequency,
+        "scaffold_summary": {
+            "unique_exact_scaffolds": len({(point.get("scaffold") or {}).get("exact_scaffold_id") for point in points}),
+            "unique_generic_frameworks": len({(point.get("scaffold") or {}).get("generic_framework_id") for point in points}),
+            "exact_groups": groups("exact_scaffold_id", "scf_no_ring"),
+            "generic_groups": groups("generic_framework_id", "no_generic_framework"),
+        },
+    }
+
+
+def ligand_depiction(
+    smiles: str, width: int = 420, height: int = 300, reference_smiles: str | None = None,
+) -> dict[str, object]:
     """Return a deterministic vector depiction and exact RDKit atom draw coordinates."""
 
     molecule = Chem.MolFromSmiles(str(smiles or "").strip())
@@ -156,7 +249,22 @@ def ligand_depiction(smiles: str, width: int = 420, height: int = 300) -> dict[s
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Invalid or unavailable ligand structure for interaction-map depiction.",
         )
-    rdDepictor.Compute2DCoords(molecule)
+    orientation = "deterministic_rdkit_2d_depiction"
+    reference = Chem.MolFromSmiles(str(reference_smiles or "").strip()) if reference_smiles else None
+    target_identity = scaffold_identity(smiles)
+    reference_identity = scaffold_identity(reference_smiles) if reference_smiles else None
+    if (
+        reference is not None
+        and reference_identity is not None
+        and target_identity["status"] == reference_identity["status"] == "valid"
+        and target_identity["exact_scaffold_smiles"] == reference_identity["exact_scaffold_smiles"]
+    ):
+        rdDepictor.Compute2DCoords(reference)
+        scaffold = Chem.MolFromSmiles(str(reference_identity["exact_scaffold_smiles"]))
+        rdDepictor.GenerateDepictionMatching2DStructure(molecule, reference, refPatt=scaffold)
+        orientation = "exact_murcko_reference_aligned"
+    else:
+        rdDepictor.Compute2DCoords(molecule)
     drawer = rdMolDraw2D.MolDraw2DSVG(width, height)
     drawer.drawOptions().clearBackground = False
     drawer.DrawMolecule(molecule)
@@ -176,7 +284,7 @@ def ligand_depiction(smiles: str, width: int = 420, height: int = 300) -> dict[s
         "height": height,
         "svg": drawer.GetDrawingText(),
         "atom_positions": atom_positions,
-        "orientation": "deterministic_rdkit_2d_depiction",
+        "orientation": orientation,
         "placement_caveat": (
             "Residue placement is schematic and does not represent physical 3D distance."
         ),

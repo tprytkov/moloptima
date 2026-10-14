@@ -185,6 +185,59 @@ def test_ligand_depiction_is_vector_deterministic_and_atom_indexed():
     assert all(0 <= atom["x"] <= 420 and 0 <= atom["y"] <= 300 for atom in first["atom_positions"])
 
 
+def test_selected_set_is_bounded_and_summarizes_binary_features_and_scaffolds(monkeypatch):
+    fingerprints = {
+        ("ref", 1): _fingerprint(["A:MET:301:Hydrophobic", "B:ASN:236:HBDonor:ligand_donor"]),
+        ("near", 1): _fingerprint(["A:MET:301:Hydrophobic"]),
+        ("far", 1): _fingerprint(["C:LEU:10:VdWContact"]),
+    }
+    payload = design_logic_service.workspace(
+        "job-1", "ref", 1, 1, 50, ["near", "near", "far", "ref"],
+        cached_loader=_configure_workspace(monkeypatch, fingerprints),
+    )
+    selected = payload["selected_set"]
+    assert selected["molecule_ids"] == ["ref", "near", "far"]
+    assert selected["comparison_count"] == 2
+    frequency = {row["token"]: row for row in selected["interaction_frequency"]}
+    assert frequency["A:MET:301:Hydrophobic"]["present_count"] == 2
+    assert frequency["B:ASN:236:HBDonor:ligand_donor"]["category"] == "reference_only"
+    assert frequency["C:LEU:10:VdWContact"]["category"] == "comparison_specific"
+    assert len(selected["matrix"]["columns"]) == 3
+
+
+def test_selected_set_fails_closed_when_reference_fingerprint_is_not_analyzed(monkeypatch):
+    payload = design_logic_service.workspace(
+        "job-1", "ref", 1, 1, 50, ["near"],
+        cached_loader=_configure_workspace(monkeypatch, {}),
+    )
+    assert payload["selected_set"]["interaction_frequency"] == []
+    assert payload["selected_set"]["matrix"]["columns"] == []
+
+
+def test_exact_scaffold_depiction_alignment_is_explicit_and_different_framework_falls_back():
+    aligned = design_logic_service.ligand_depiction("Nc1ccccc1", reference_smiles="Oc1ccccc1")
+    independent = design_logic_service.ligand_depiction("C1CC1", reference_smiles="Oc1ccccc1")
+    assert aligned["orientation"] == "exact_murcko_reference_aligned"
+    assert independent["orientation"] == "deterministic_rdkit_2d_depiction"
+
+
+def test_pose_change_preserves_structure_and_scaffold_but_may_change_interactions(monkeypatch):
+    fingerprints = {
+        ("ref", 1): _fingerprint(["A:MET:301:Hydrophobic", "B:ASN:236:HBDonor:ligand_donor"]),
+        ("near", 1): _fingerprint(["A:MET:301:Hydrophobic"]),
+        ("near", 2): _fingerprint(["B:ASN:236:HBDonor:ligand_donor"]),
+    }
+    loader = _configure_workspace(monkeypatch, fingerprints)
+    mode_one = design_logic_service.workspace("job-1", "ref", 1, 1, cached_loader=loader)
+    mode_two = design_logic_service.workspace("job-1", "ref", 1, 2, cached_loader=loader)
+    first = next(point for point in mode_one["points"] if point["molecule_id"] == "near")
+    second = next(point for point in mode_two["points"] if point["molecule_id"] == "near")
+    assert first["structural_similarity"] == second["structural_similarity"]
+    assert first["scaffold_relationship"] == second["scaffold_relationship"]
+    assert first["fingerprint"]["canonical_tokens"] != second["fingerprint"]["canonical_tokens"]
+    assert first["mode"] == 1 and second["mode"] == 2
+
+
 def test_design_logic_depiction_endpoint_returns_vector_contract():
     response = TestClient(app).get(
         "/api/design-logic/depiction", params={"smiles": "c1ccccc1O", "width": 480, "height": 320},

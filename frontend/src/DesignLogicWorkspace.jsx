@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert, Box, Button, Chip, CircularProgress, Divider, FormControl, InputLabel, MenuItem,
   Paper, Select, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TextField, Tooltip, Typography,
+  TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from '@mui/material';
 import {
   DESIGN_LOGIC_LIMIT, RAW_CONTACT_PAGE_SIZE, availablePoseModes, contactsForSelection,
@@ -11,6 +11,11 @@ import {
   scatterCoordinates,
 } from './designLogicData.js';
 import InteractionVisualizationPanel from './InteractionVisualizationPanel.jsx';
+import MultiLigandComparison from './MultiLigandComparison.jsx';
+import {
+  MAX_SELECTED_COMPARISONS, addComparison, removeComparison, selectedComparisonPoints,
+  selectedSetMatrix,
+} from './designLogicComparison.js';
 
 const SCATTER_WIDTH = 700;
 const SCATTER_HEIGHT = 360;
@@ -136,13 +141,14 @@ function TokenList({ title, tokens = [] }) {
   return <Box><Typography variant="caption" fontWeight={700}>{title} ({tokens.length})</Typography><Stack spacing={0.25} sx={{ mt: 0.4 }}>{tokens.length ? tokens.slice(0, 8).map((token) => <Typography key={token} variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{token}</Typography>) : <Typography variant="caption" color="text.secondary">None</Typography>}</Stack></Box>;
 }
 
-function Inspector({ point, referenceId, baseUrl, selectedToken, onSelectToken, onAnalyze, analyzing, onSetReference }) {
+function Inspector({ point, referenceId, baseUrl, selectedToken, onSelectToken, onAnalyze, analyzing, onSetReference, comparisonIds, onAddComparison }) {
   const fingerprint = point?.fingerprint;
   const contacts = contactsForSelection(fingerprint, selectedToken).slice(0, RAW_CONTACT_PAGE_SIZE);
   const partitions = point?.token_partition || { shared: [], reference_only: [], comparison_only: [] };
   return (
     <Stack component="aside" aria-label="Selected molecule interaction inspector" spacing={1.25} sx={{ gridArea: 'inspector', minWidth: 0, borderColor: 'divider', '@media (min-width: 1400px)': { pl: 1.5, borderLeft: '1px solid' } }}>
       <Stack direction="row" justifyContent="space-between" gap={1}><Box><Typography variant="overline" color="text.secondary">Selected molecule</Typography><Typography variant="h2" sx={{ overflowWrap: 'anywhere' }}>{point?.display_name || point?.molecule_id || 'Not selected'}</Typography></Box>{point && point.molecule_id !== referenceId ? <Button size="small" variant="outlined" onClick={() => onSetReference(point.molecule_id)}>Set as reference</Button> : null}</Stack>
+      {point && point.molecule_id !== referenceId ? <Button size="small" variant="contained" disabled={comparisonIds.includes(point.molecule_id) || comparisonIds.length >= MAX_SELECTED_COMPARISONS} onClick={() => onAddComparison(point.molecule_id)}>{comparisonIds.includes(point.molecule_id) ? 'In comparison set' : comparisonIds.length >= MAX_SELECTED_COMPARISONS ? 'Comparison set limit reached' : 'Add to comparison'}</Button> : null}
       {point ? <Box component="img" loading="lazy" src={structureUrl(baseUrl, point, 300, 165)} alt={`2D structure for selected molecule ${point.display_name || point.molecule_id}`} sx={{ width: '100%', height: 165, objectFit: 'contain', bgcolor: '#fff', border: '1px solid', borderColor: 'divider', borderRadius: 1 }} /> : null}
       <StatusValue label="Selected Vina pose" value={point ? `Mode ${point.mode}` : '—'} />
       <StatusValue label="Source" value={point?.source || '—'} />
@@ -161,10 +167,21 @@ function Inspector({ point, referenceId, baseUrl, selectedToken, onSelectToken, 
   );
 }
 
+function ComparisonTray({ reference, points, comparisonIds, onRemove, onClear }) {
+  const byId = new Map(points.map((point) => [point.molecule_id, point]));
+  return (
+    <Paper component="section" variant="outlined" aria-label="Comparison set" sx={{ p: 1.25 }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1}><Box><Typography variant="subtitle2">Comparison set</Typography><Typography variant="caption" color="text.secondary">Reference: {reference?.molecule_id || '—'} · up to {MAX_SELECTED_COMPARISONS} explicit comparisons</Typography></Box><Button size="small" disabled={!comparisonIds.length} onClick={onClear}>Clear comparisons</Button></Stack>
+      <Stack direction="row" useFlexGap flexWrap="wrap" gap={0.75} sx={{ mt: 0.75 }}><Chip label={`${reference?.molecule_id || 'Reference'} · Reference`} color="primary" variant="outlined" />{comparisonIds.map((id) => <Chip key={id} label={`${byId.get(id)?.display_name || id} · Mode ${byId.get(id)?.mode || '—'}`} onDelete={() => onRemove(id)} deleteIcon={<span aria-hidden="true">×</span>} aria-label={`Remove ${id} from comparison set`} />)}</Stack>
+      {comparisonIds.length >= MAX_SELECTED_COMPARISONS ? <Typography variant="caption" color="warning.dark" display="block" sx={{ mt: 0.75 }}>Maximum of {MAX_SELECTED_COMPARISONS} comparison molecules reached. Remove one before adding another.</Typography> : null}
+    </Paper>
+  );
+}
+
 export default function DesignLogicWorkspace({
   result, baseUrl = 'http://localhost:8000', initialWorkspace = null,
   initialReferenceId = '', initialSelectedId = '', initialReferenceMode = null,
-  initialComparisonMode = null,
+  initialComparisonMode = null, initialComparisonIds = [], initialViewMode = 'single',
 }) {
   const rows = result?.results || [];
   const jobId = result?.job_id || '';
@@ -179,6 +196,8 @@ export default function DesignLogicWorkspace({
   const [analyzingId, setAnalyzingId] = useState('');
   const [error, setError] = useState('');
   const [selectedToken, setSelectedToken] = useState('');
+  const [comparisonIds, setComparisonIds] = useState(() => initialComparisonIds.slice(0, MAX_SELECTED_COMPARISONS).filter((id) => id !== initialReference));
+  const [viewMode, setViewMode] = useState(initialViewMode);
   const [filters, setFilters] = useState({ interactionType: 'all', chain: 'all', residueQuery: '' });
 
   const loadWorkspace = useCallback(async () => {
@@ -208,23 +227,29 @@ export default function DesignLogicWorkspace({
     finally { setAnalyzingId(''); }
   }
 
-  if (!jobId || !rows.length) return <Alert severity="info">Complete a docking calculation to use Design Logic. Interaction fingerprints remain tied to explicit Vina poses.</Alert>;
-  if (!initialReference || !modes.length) return <Alert severity="info">No successful pose-bearing docking results are available for Design Logic.</Alert>;
   const points = workspace?.points || [];
   const reference = points.find((point) => point.molecule_id === referenceId) || null;
   const selected = points.find((point) => point.molecule_id === selectedId) || reference;
+  const comparisonPoints = useMemo(() => selectedComparisonPoints(points, referenceId, comparisonIds), [points, referenceId, comparisonIds]);
+  const visibleMatrix = viewMode === 'compare' ? selectedSetMatrix(comparisonPoints) : workspace?.matrix;
+  if (!jobId || !rows.length) return <Alert severity="info">Complete a docking calculation to use Design Logic. Interaction fingerprints remain tied to explicit Vina poses.</Alert>;
+  if (!initialReference || !modes.length) return <Alert severity="info">No successful pose-bearing docking results are available for Design Logic.</Alert>;
   return (
     <Stack spacing={1.25} data-testid="design-logic-workspace" sx={{ minWidth: 0 }}>
       <Alert severity="warning" variant="outlined">Interaction fingerprints describe predicted contacts in selected docking poses. They are not experimental binding evidence, and protonation is not scientifically resolved.</Alert>
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} gap={1}><Box><Typography variant="h1">Design Logic</Typography><Typography variant="body2" color="text.secondary">Compare structural similarity with predicted dock-pose interaction patterns without combining the measurements.</Typography></Box>{loading ? <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={18} /><Typography variant="caption">Loading cached fingerprint states…</Typography></Stack> : <Chip variant="outlined" label={`Explicit comparison mode ${comparisonMode}`} />}</Stack>
+      <ToggleButtonGroup exclusive size="small" value={viewMode} onChange={(_event, value) => { if (value) { setViewMode(value); setSelectedToken(''); } }} aria-label="Design Logic view mode"><ToggleButton value="single">Single</ToggleButton><ToggleButton value="compare">Compare</ToggleButton></ToggleButtonGroup>
+      <ComparisonTray reference={reference} points={points} comparisonIds={comparisonIds} onRemove={(id) => setComparisonIds((current) => removeComparison(current, id))} onClear={() => setComparisonIds([])} />
       {error ? <Alert severity="error">{error}</Alert> : null}
       <Paper variant="outlined" sx={{ p: { xs: 1.25, md: 1.75 }, minWidth: 0 }}>
         <Box sx={{ display: 'grid', gridTemplateAreas: { xs: "'rail' 'center' 'inspector'", md: "'rail center' 'inspector inspector'" }, gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: '200px minmax(0, 1fr)' }, gap: { xs: 2, md: 1.5 }, minWidth: 0, '@media (min-width: 1400px)': { gridTemplateAreas: "'rail center inspector'", gridTemplateColumns: '220px minmax(480px, 1fr) 300px' } }}>
           <ControlRail reference={reference} baseUrl={baseUrl} modes={modes} referenceMode={referenceMode} comparisonMode={comparisonMode} coverage={workspace?.coverage} features={workspace?.matrix?.features || []} filters={filters} onReferenceMode={(mode) => { setReferenceMode(mode); setSelectedToken(''); }} onComparisonMode={(mode) => { setComparisonMode(mode); setSelectedToken(''); }} onFilters={setFilters} onAnalyze={analyze} analyzing={analyzingId === reference?.molecule_id} />
-          <Stack spacing={2} sx={{ gridArea: 'center', minWidth: 0 }}><SimilarityScatter points={points} referenceId={referenceId} selectedId={selected?.molecule_id} onSelect={(moleculeId) => { setSelectedId(moleculeId); setSelectedToken(''); }} /><Divider /><InteractionMatrix matrix={workspace?.matrix} filters={filters} selectedToken={selectedToken} onSelectToken={setSelectedToken} /><Box><Typography variant="subtitle2">Unavailable comparison states</Typography><Stack direction="row" useFlexGap flexWrap="wrap" spacing={0.75} sx={{ mt: 0.5 }}>{points.filter((point) => point.fingerprint_status !== 'available' || !Number.isFinite(point.interaction_similarity)).slice(0, 12).map((point) => <Tooltip key={point.molecule_id} title={point.fingerprint_message || interactionStatusLabel(point.interaction_similarity_status)}><Chip clickable onClick={() => setSelectedId(point.molecule_id)} variant={selectedId === point.molecule_id ? 'filled' : 'outlined'} color={point.fingerprint_status === 'not_analyzed' ? 'default' : 'warning'} label={`${point.molecule_id} · ${interactionStatusLabel(point.fingerprint_status === 'available' ? point.interaction_similarity_status : point.fingerprint_status)}`} /></Tooltip>)}</Stack></Box></Stack>
-          <Inspector point={selected} referenceId={referenceId} baseUrl={baseUrl} selectedToken={selectedToken} onSelectToken={setSelectedToken} onAnalyze={analyze} analyzing={analyzingId === selected?.molecule_id} onSetReference={(moleculeId) => { setReferenceId(moleculeId); setSelectedId(moleculeId); setSelectedToken(''); }} />
+          <Stack spacing={2} sx={{ gridArea: 'center', minWidth: 0 }}><SimilarityScatter points={points} referenceId={referenceId} selectedId={selected?.molecule_id} onSelect={(moleculeId) => { setSelectedId(moleculeId); setSelectedToken(''); }} /><Divider /><InteractionMatrix matrix={visibleMatrix} filters={filters} selectedToken={selectedToken} onSelectToken={setSelectedToken} /><Box><Typography variant="subtitle2">Unavailable comparison states</Typography><Stack direction="row" useFlexGap flexWrap="wrap" spacing={0.75} sx={{ mt: 0.5 }}>{points.filter((point) => point.fingerprint_status !== 'available' || !Number.isFinite(point.interaction_similarity)).slice(0, 12).map((point) => <Tooltip key={point.molecule_id} title={point.fingerprint_message || interactionStatusLabel(point.interaction_similarity_status)}><Chip clickable onClick={() => setSelectedId(point.molecule_id)} variant={selectedId === point.molecule_id ? 'filled' : 'outlined'} color={point.fingerprint_status === 'not_analyzed' ? 'default' : 'warning'} label={`${point.molecule_id} · ${interactionStatusLabel(point.fingerprint_status === 'available' ? point.interaction_similarity_status : point.fingerprint_status)}`} /></Tooltip>)}</Stack></Box></Stack>
+          <Inspector point={selected} referenceId={referenceId} baseUrl={baseUrl} selectedToken={selectedToken} onSelectToken={setSelectedToken} onAnalyze={analyze} analyzing={analyzingId === selected?.molecule_id} comparisonIds={comparisonIds} onAddComparison={(moleculeId) => setComparisonIds((current) => addComparison(current, moleculeId, referenceId))} onSetReference={(moleculeId) => { setReferenceId(moleculeId); setSelectedId(moleculeId); setComparisonIds((current) => current.filter((id) => id !== moleculeId)); setSelectedToken(''); }} />
         </Box>
       </Paper>
+      {viewMode === 'compare' && comparisonIds.length ? <MultiLigandComparison points={comparisonPoints} referenceId={referenceId} baseUrl={baseUrl} selectedToken={selectedToken} onSelectToken={setSelectedToken} onFocus3d={(moleculeId) => { setSelectedId(moleculeId); setSelectedToken(''); }} /> : null}
+      {viewMode === 'compare' && !comparisonIds.length ? <Alert severity="info">Add one to five molecules to the comparison set, then use Compare to inspect selected-set interactions and scaffolds.</Alert> : null}
       <InteractionVisualizationPanel
         baseUrl={baseUrl}
         jobId={jobId}
