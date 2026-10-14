@@ -96,4 +96,5 @@ test('compare mode keeps persistent selection separate from current point and re
   assert.equal((source.match(/<InteractionVisualizationPanel/g) || []).length, 1);
   assert.match(source, /setSelectedId\(moleculeId\)/);
   assert.match(source, /addComparison\(current, moleculeId, referenceId\)/);
+  assert.match(source, /setCrossLayerEvidence\(null\); setPharmacophore\(null\)/);
 });

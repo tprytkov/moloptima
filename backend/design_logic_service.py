@@ -40,6 +40,7 @@ from molecular_prioritization.scaffolds import (
 
 WORKSPACE_SCHEMA = "moloptima-design-logic-workspace-v1"
 PHARMACOPHORE_WORKSPACE_SCHEMA = "moloptima-design-logic-pharmacophore-v1"
+CROSS_LAYER_EVIDENCE_SCHEMA = "moloptima-design-logic-cross-layer-evidence-v1"
 PHARMACOPHORE_THRESHOLDS = (0.75, 1.0, 1.5, 2.0)
 MAX_COMPARISON_MOLECULES = 50
 MAX_MATRIX_COLUMNS = 12
@@ -102,10 +103,20 @@ def workspace(
     reference_state = _fingerprint_state(
         job_id, rows_by_id[reference_molecule_id], reference_mode, cached_loader=cached_loader,
     )
-    candidates = sorted(
+    selected_ids = _validated_selected_ids(comparison_molecule_ids or [], reference_molecule_id, rows_by_id)
+    ordered_candidates = sorted(
         rows,
         key=lambda row: (-float(similarities.get(str(row.get("molecule_id")), -1)), str(row.get("molecule_id"))),
-    )[:max(1, min(int(limit), MAX_COMPARISON_MOLECULES))]
+    )
+    if selected_ids:
+        selected_order = [reference_molecule_id, *selected_ids]
+        selected_id_set = set(selected_order)
+        selected_rows = [rows_by_id[molecule_id] for molecule_id in selected_order]
+        remaining = [row for row in ordered_candidates if str(row.get("molecule_id")) not in selected_id_set]
+        candidate_limit = max(len(selected_rows), min(int(limit), MAX_COMPARISON_MOLECULES))
+        candidates = [*selected_rows, *remaining[:max(0, candidate_limit - len(selected_rows))]]
+    else:
+        candidates = ordered_candidates[:max(1, min(int(limit), MAX_COMPARISON_MOLECULES))]
     points = []
     for row in candidates:
         molecule_id = str(row.get("molecule_id"))
@@ -157,7 +168,6 @@ def workspace(
         "failed": sum(point["fingerprint_status"] not in {"available", "not_analyzed", "missing_pose"} for point in points),
         "missing_pose": sum(point["fingerprint_status"] == "missing_pose" for point in points),
     }
-    selected_ids = _validated_selected_ids(comparison_molecule_ids or [], reference_molecule_id, rows_by_id)
     selected_points = [
         point for molecule_id in [reference_molecule_id, *selected_ids]
         if (point := next((item for item in points if item["molecule_id"] == molecule_id), None)) is not None
@@ -399,6 +409,237 @@ def pharmacophore_workspace(
             "threshold_policy": "explicit_qualified_presets_no_universal_cutoff",
             "cache_status": "not_cached",
         },
+    }
+
+
+def cross_layer_evidence(
+    job_id: str,
+    reference_molecule_id: str,
+    reference_mode: int,
+    comparison_molecule_ids: list[str],
+    comparison_mode: int,
+    distance_threshold_angstrom: float,
+    *,
+    workspace_loader: Callable[..., dict[str, object]] = workspace,
+    pharmacophore_loader: Callable[..., dict[str, object]] = pharmacophore_workspace,
+) -> dict[str, object]:
+    """Assemble bounded independent evidence without reimplementing scientific metrics."""
+
+    workspace_payload = workspace_loader(
+        job_id, reference_molecule_id, reference_mode, comparison_mode,
+        max(1, 1 + len(comparison_molecule_ids)), comparison_molecule_ids,
+    )
+    pharmacophore_payload = pharmacophore_loader(
+        job_id, reference_molecule_id, reference_mode, comparison_molecule_ids,
+        comparison_mode, distance_threshold_angstrom,
+    )
+    return assemble_cross_layer_evidence(workspace_payload, pharmacophore_payload)
+
+
+def assemble_cross_layer_evidence(
+    workspace_payload: Mapping[str, object],
+    pharmacophore_payload: Mapping[str, object],
+) -> dict[str, object]:
+    """Join already-authoritative values and preserve independent typed null states."""
+
+    points = {str(point["molecule_id"]): point for point in workspace_payload.get("points", [])}
+    reference_id = str(workspace_payload["reference_molecule_id"])
+    reference = points.get(reference_id, {})
+    pharmacophore_by_id = {
+        str(item["molecule_id"]): item for item in pharmacophore_payload.get("comparisons", [])
+    }
+    selected_ids = list((workspace_payload.get("selected_set") or {}).get("molecule_ids") or [reference_id])[1:]
+    comparisons = []
+    for molecule_id in selected_ids:
+        point = points.get(str(molecule_id), {})
+        pharmacophore_item = pharmacophore_by_id.get(str(molecule_id), {})
+        pair = pharmacophore_item.get("comparison") or {}
+        partition = point.get("token_partition")
+        reference_affinity = reference.get("vina_affinity_kcal_mol")
+        comparison_affinity = point.get("vina_affinity_kcal_mol")
+        affinity_delta = (
+            float(comparison_affinity) - float(reference_affinity)
+            if isinstance(reference_affinity, (int, float)) and isinstance(comparison_affinity, (int, float))
+            else None
+        )
+        relationship = point.get("scaffold_relationship") or {}
+        pharmacophore_status = str(pair.get("status") or pharmacophore_item.get("feature_state", {}).get("status") or "unavailable")
+        comparison = {
+            "identity": {
+                "reference_molecule_id": reference_id,
+                "reference_mode": workspace_payload.get("reference_mode"),
+                "comparison_molecule_id": str(molecule_id),
+                "comparison_mode": point.get("mode", workspace_payload.get("comparison_mode")),
+                "receptor_identity": _receptor_identity(reference, point, pharmacophore_payload),
+            },
+            "structure": {
+                "status": "available" if point.get("structural_similarity") is not None and relationship else "unavailable",
+                "morgan_tanimoto": point.get("structural_similarity"),
+                "exact_scaffold_relationship": _exact_scaffold_relationship(relationship),
+                "generic_framework_relationship": _generic_framework_relationship(relationship),
+                "relationship_code": relationship.get("code"),
+            },
+            "pharmacophore": {
+                "status": pharmacophore_status,
+                "message": pair.get("message") or pharmacophore_item.get("feature_state", {}).get("message"),
+                "distance_threshold_angstrom": pharmacophore_payload.get("distance_threshold_angstrom"),
+                "reference_feature_count": pair.get("reference_feature_count"),
+                "comparison_feature_count": pair.get("comparison_feature_count"),
+                "matched_feature_count": pair.get("matched_feature_count"),
+                "reference_coverage": pair.get("reference_coverage"),
+                "comparison_coverage": pair.get("comparison_coverage"),
+                "feature_overlap": pair.get("pharmacophore_feature_overlap"),
+                "matched_feature_center_rmsd_angstrom": pair.get("matched_feature_center_rmsd_angstrom"),
+                "single_match_distance_angstrom": pair.get("single_match_distance_angstrom"),
+            },
+            "interactions": {
+                "status": point.get("interaction_similarity_status") or point.get("fingerprint_status") or "unavailable",
+                "message": point.get("fingerprint_message") or None,
+                "jaccard": point.get("interaction_similarity"),
+                "shared_count": len(partition.get("shared", [])) if partition is not None else None,
+                "reference_only_count": len(partition.get("reference_only", [])) if partition is not None else None,
+                "comparison_only_count": len(partition.get("comparison_only", [])) if partition is not None else None,
+                "shared_tokens": list(partition.get("shared", [])) if partition is not None else None,
+                "reference_token_count": len((reference.get("fingerprint") or {}).get("canonical_tokens", []))
+                if reference.get("fingerprint_status") == "available" else None,
+            },
+            "docking": {
+                "status": "available" if reference_affinity is not None and comparison_affinity is not None else (
+                    "partial" if reference_affinity is not None or comparison_affinity is not None else "unavailable"
+                ),
+                "reference_affinity_kcal_mol": reference_affinity,
+                "comparison_affinity_kcal_mol": comparison_affinity,
+                "affinity_difference_kcal_mol": affinity_delta,
+                "affinity_difference_definition": "comparison affinity - reference affinity",
+            },
+            "atom_cross_references": _atom_cross_references(pair, point),
+        }
+        comparisons.append(comparison)
+
+    return {
+        "schema_version": CROSS_LAYER_EVIDENCE_SCHEMA,
+        "job_id": workspace_payload.get("job_id"),
+        "reference_molecule_id": reference_id,
+        "reference_mode": workspace_payload.get("reference_mode"),
+        "comparison_mode": workspace_payload.get("comparison_mode"),
+        "distance_threshold_angstrom": pharmacophore_payload.get("distance_threshold_angstrom"),
+        "comparisons": comparisons,
+        "selected_set_frequencies": _cross_layer_frequencies(
+            comparisons, pharmacophore_payload.get("reference_feature_matrix") or {},
+        ),
+        "pharmacophore_workspace": dict(pharmacophore_payload),
+        "provenance": {
+            "workspace_schema": workspace_payload.get("schema_version"),
+            "pharmacophore_workspace_schema": pharmacophore_payload.get("schema_version"),
+            "morgan_method": (workspace_payload.get("metadata") or {}).get("structural_similarity"),
+            "scaffold_method": (workspace_payload.get("metadata") or {}).get("scaffold_classification"),
+            "pharmacophore_matching_authority": (pharmacophore_payload.get("metadata") or {}).get("matching_authority"),
+            "interaction_method": (workspace_payload.get("metadata") or {}).get("interaction_similarity"),
+            "vina_result_source": "stored explicit docking result mode",
+            "assembly_policy": "independent_layers_no_combined_score_or_ranking",
+        },
+        "metadata": {
+            "comparison_limit": MAX_SELECTED_COMPARISONS,
+            "availability_policy": "independent_typed_nulls_unavailable_is_not_zero",
+            "atom_cross_reference_policy": "exact_shared_ligand_template_atom_index_only_no_proximity_inference",
+            "affinity_difference_definition": "comparison affinity - reference affinity",
+        },
+    }
+
+
+def _exact_scaffold_relationship(relationship: Mapping[str, object]) -> str | None:
+    code = relationship.get("code")
+    if code == "SAME_EXACT_MURCKO":
+        return "Same exact Murcko"
+    if code == "ACYCLIC_OR_NO_MURCKO":
+        return "No ring scaffold"
+    return "Different exact Murcko" if code else None
+
+
+def _generic_framework_relationship(relationship: Mapping[str, object]) -> str | None:
+    code = relationship.get("code")
+    if code in {"SAME_EXACT_MURCKO", "SAME_GENERIC_FRAMEWORK"}:
+        return "Same generic framework"
+    if code == "ACYCLIC_OR_NO_MURCKO":
+        return "No ring scaffold"
+    return "Different generic framework" if code else None
+
+
+def _receptor_identity(
+    reference: Mapping[str, object], point: Mapping[str, object], pharmacophore_payload: Mapping[str, object],
+) -> str | None:
+    for candidate in (reference, point):
+        identity = ((candidate.get("fingerprint") or {}).get("receptor") or {}).get("identity")
+        if identity:
+            return str(identity)
+    feature_set = (pharmacophore_payload.get("reference") or {}).get("feature_set") or {}
+    return feature_set.get("receptor_identity")
+
+
+def _interaction_record_token(record: Mapping[str, object]) -> str:
+    receptor = record.get("receptor") or {}
+    residue_number = f"{receptor.get('residue_number', '')}{receptor.get('insertion_code') or ''}"
+    return ":".join(str(value) for value in (
+        receptor.get("chain"), receptor.get("residue_name"), residue_number,
+        record.get("interaction_type"), record.get("direction"),
+    ) if value not in {None, ""})
+
+
+def _atom_cross_references(pair: Mapping[str, object], point: Mapping[str, object]) -> list[dict[str, object]]:
+    features_by_atom: dict[int, list[dict[str, object]]] = {}
+    for match in pair.get("matches", []):
+        for raw_index in match.get("comparison_template_atom_indices", []):
+            index = int(raw_index)
+            features_by_atom.setdefault(index, []).append({
+                "feature_id": match.get("comparison_feature_id"),
+                "canonical_class": match.get("canonical_class"),
+                "reference_feature_id": match.get("reference_feature_id"),
+            })
+    interactions_by_atom: dict[int, list[dict[str, object]]] = {}
+    records = (point.get("fingerprint") or {}).get("raw_interaction_records", [])
+    for record in records:
+        for raw_index in (record.get("ligand") or {}).get("template_atom_indices", []):
+            index = int(raw_index)
+            interactions_by_atom.setdefault(index, []).append({
+                "canonical_token": _interaction_record_token(record),
+                "interaction_type": record.get("interaction_type"),
+            })
+    return [{
+        "template_atom_index": index,
+        "pharmacophore_features": features_by_atom[index],
+        "predicted_interactions": interactions_by_atom[index],
+    } for index in sorted(set(features_by_atom) & set(interactions_by_atom))]
+
+
+def _cross_layer_frequencies(
+    comparisons: list[Mapping[str, object]], reference_feature_matrix: Mapping[str, object],
+) -> dict[str, object]:
+    scaffold_counts: dict[str, int] = {}
+    shared_counts: dict[str, int] = {}
+    for comparison in comparisons:
+        label = comparison["structure"].get("generic_framework_relationship") or "Unavailable"
+        scaffold_counts[label] = scaffold_counts.get(label, 0) + 1
+    for comparison in comparisons:
+        for token in comparison["interactions"].get("shared_tokens") or []:
+            shared_counts[token] = shared_counts.get(token, 0) + 1
+    pharmacophore_rows = [{
+        "reference_feature_id": row.get("reference_feature_id"),
+        "canonical_class": row.get("canonical_class"),
+        "matched_comparison_count": row.get("matched_comparison_count"),
+        "selected_comparison_count": row.get("selected_comparison_count"),
+    } for row in reference_feature_matrix.get("rows", [])]
+    return {
+        "selected_comparison_count": len(comparisons),
+        "generic_framework_relationships": [
+            {"label": label, "count": count, "selected_comparison_count": len(comparisons)}
+            for label, count in sorted(scaffold_counts.items())
+        ],
+        "reference_pharmacophore_features": pharmacophore_rows,
+        "shared_predicted_interactions": [
+            {"token": token, "count": count, "selected_comparison_count": len(comparisons)}
+            for token, count in sorted(shared_counts.items(), key=lambda item: _token_sort_key(item[0]))
+        ],
+        "semantics": "descriptive frequencies across the selected explicit comparison poses only",
     }
 
 

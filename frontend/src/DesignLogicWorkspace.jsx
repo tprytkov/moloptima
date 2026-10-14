@@ -13,6 +13,7 @@ import {
 import InteractionVisualizationPanel from './InteractionVisualizationPanel.jsx';
 import MultiLigandComparison from './MultiLigandComparison.jsx';
 import PharmacophorePanel from './PharmacophorePanel.jsx';
+import CrossLayerEvidencePanel from './CrossLayerEvidencePanel.jsx';
 import {
   MAX_SELECTED_COMPARISONS, addComparison, removeComparison, selectedComparisonPoints,
   selectedSetMatrix,
@@ -183,7 +184,7 @@ export default function DesignLogicWorkspace({
   result, baseUrl = 'http://localhost:8000', initialWorkspace = null,
   initialReferenceId = '', initialSelectedId = '', initialReferenceMode = null,
   initialComparisonMode = null, initialComparisonIds = [], initialViewMode = 'single',
-  initialEvidenceView = 'interactions', initialPharmacophore = null,
+  initialEvidenceView = 'interactions', initialPharmacophore = null, initialCrossLayerEvidence = null,
 }) {
   const rows = result?.results || [];
   const jobId = result?.job_id || '';
@@ -204,6 +205,7 @@ export default function DesignLogicWorkspace({
   const [evidenceView, setEvidenceView] = useState(initialEvidenceView);
   const [pharmacophoreThreshold, setPharmacophoreThreshold] = useState(1.5);
   const [pharmacophore, setPharmacophore] = useState(initialPharmacophore);
+  const [crossLayerEvidence, setCrossLayerEvidence] = useState(initialCrossLayerEvidence);
   const [pharmacophoreLoading, setPharmacophoreLoading] = useState(false);
   const [pharmacophoreError, setPharmacophoreError] = useState('');
 
@@ -230,13 +232,14 @@ export default function DesignLogicWorkspace({
   const pharmacophoreComparisonKey = pharmacophoreComparisonIds.join('|');
 
   useEffect(() => {
-    if (evidenceView !== 'pharmacophore' || !jobId || !referenceId || !pharmacophoreComparisonIds.length) {
-      if (!pharmacophoreComparisonIds.length) setPharmacophore(null);
+    if (!jobId || !referenceId || !pharmacophoreComparisonIds.length) {
+      if (!pharmacophoreComparisonIds.length) { setPharmacophore(null); setCrossLayerEvidence(null); }
       return undefined;
     }
     const controller = new AbortController();
+    setCrossLayerEvidence(null); setPharmacophore(null);
     setPharmacophoreLoading(true); setPharmacophoreError('');
-    fetch(`${baseUrl}/api/design-logic/pharmacophore`, {
+    fetch(`${baseUrl}/api/design-logic/evidence`, {
       method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         job_id: jobId, reference_molecule_id: referenceId, reference_mode: referenceMode,
@@ -246,11 +249,11 @@ export default function DesignLogicWorkspace({
     }).then(async (response) => {
       if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.detail?.message || body.detail || `Request failed (${response.status}).`); }
       return response.json();
-    }).then(setPharmacophore).catch((requestError) => { if (!controller.signal.aborted) setPharmacophoreError(requestError.message); })
+    }).then((payload) => { setCrossLayerEvidence(payload); setPharmacophore(payload.pharmacophore_workspace); }).catch((requestError) => { if (!controller.signal.aborted) setPharmacophoreError(requestError.message); })
       .finally(() => { if (!controller.signal.aborted) setPharmacophoreLoading(false); });
     return () => controller.abort();
   }, [baseUrl, jobId, referenceId, referenceMode, comparisonMode, pharmacophoreThreshold,
-    pharmacophoreComparisonKey, evidenceView]);
+    pharmacophoreComparisonKey]);
 
   async function analyze(point) {
     if (!point || analyzingId) return;
@@ -284,6 +287,10 @@ export default function DesignLogicWorkspace({
           <Inspector point={selected} referenceId={referenceId} baseUrl={baseUrl} selectedToken={selectedToken} onSelectToken={setSelectedToken} onAnalyze={analyze} analyzing={analyzingId === selected?.molecule_id} comparisonIds={comparisonIds} onAddComparison={(moleculeId) => setComparisonIds((current) => addComparison(current, moleculeId, referenceId))} onSetReference={(moleculeId) => { setReferenceId(moleculeId); setSelectedId(moleculeId); setComparisonIds((current) => current.filter((id) => id !== moleculeId)); setSelectedToken(''); }} />
         </Box>
       </Paper>
+      {pharmacophoreLoading ? <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={18} /><Typography variant="body2">Assembling independent cross-layer evidence…</Typography></Stack> : null}
+      {pharmacophoreError ? <Alert severity="error">{pharmacophoreError}</Alert> : null}
+      {!pharmacophoreComparisonIds.length ? <Alert severity="info">Select a non-reference molecule, or add one to five molecules in Compare mode, to inspect cross-layer evidence.</Alert> : null}
+      {crossLayerEvidence ? <CrossLayerEvidencePanel payload={crossLayerEvidence} focusedMoleculeId={selectedId} threshold={pharmacophoreThreshold} onThresholdChange={setPharmacophoreThreshold} onFocusComparison={setSelectedId} /> : null}
       {viewMode === 'compare' && comparisonIds.length ? <MultiLigandComparison points={comparisonPoints} referenceId={referenceId} baseUrl={baseUrl} selectedToken={selectedToken} onSelectToken={setSelectedToken} onFocus3d={(moleculeId) => { setSelectedId(moleculeId); setSelectedToken(''); }} /> : null}
       {viewMode === 'compare' && !comparisonIds.length ? <Alert severity="info">Add one to five molecules to the comparison set, then use Compare to inspect selected-set interactions and scaffolds.</Alert> : null}
       <Paper component="section" variant="outlined" sx={{ p: 1.25, minWidth: 0 }}>
@@ -301,8 +308,6 @@ export default function DesignLogicWorkspace({
         selectedToken={selectedToken}
         onSelectToken={setSelectedToken}
       /> : null}
-      {evidenceView === 'pharmacophore' && pharmacophoreLoading ? <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={18} /><Typography variant="body2">Loading qualified backend pharmacophore evidence…</Typography></Stack> : null}
-      {evidenceView === 'pharmacophore' && pharmacophoreError ? <Alert severity="error">{pharmacophoreError}</Alert> : null}
       {evidenceView === 'pharmacophore' && !pharmacophoreComparisonIds.length ? <Alert severity="info">Select a non-reference molecule, or add one to five molecules in Compare mode, to request pharmacophore evidence.</Alert> : null}
       {evidenceView === 'pharmacophore' && pharmacophore ? <PharmacophorePanel baseUrl={baseUrl} jobId={jobId} payload={pharmacophore} points={points} rows={rows} focusedMoleculeId={selectedId} onFocusComparison={setSelectedId} /> : null}
     </Stack>

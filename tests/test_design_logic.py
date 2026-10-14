@@ -404,3 +404,178 @@ def test_pose_artifact_route_serves_manifest_pose(tmp_path, monkeypatch):
     })
     assert response.status_code == 200
     assert response.content.startswith(b"MODEL 1")
+
+
+def _evidence_workspace(*, interaction_available=True, reference_affinity=-10.1, comparison_affinity=-9.0):
+    ref_fingerprint = _fingerprint(["B:ASN:236:HBAcceptor"])
+    comparison_fingerprint = _fingerprint(["B:ASN:236:HBAcceptor", "A:LEU:10:Hydrophobic"])
+    comparison_fingerprint["raw_interaction_records"] = [{
+        "interaction_type": "HBAcceptor", "direction": None,
+        "receptor": {"chain": "B", "residue_name": "ASN", "residue_number": 236, "insertion_code": ""},
+        "ligand": {"template_atom_indices": [11]},
+    }]
+    comparison_point = {
+        "molecule_id": "near", "mode": 2, "structural_similarity": 0.093,
+        "scaffold_relationship": {"code": "DIFFERENT_FRAMEWORK"},
+        "vina_affinity_kcal_mol": comparison_affinity,
+        "fingerprint_status": "available" if interaction_available else "missing_template",
+        "fingerprint_message": "Template missing." if not interaction_available else "",
+        "fingerprint": comparison_fingerprint if interaction_available else None,
+        "interaction_similarity_status": "valid" if interaction_available else "missing_template",
+        "interaction_similarity": 0.5 if interaction_available else None,
+        "token_partition": {
+            "shared": ["B:ASN:236:HBAcceptor"], "reference_only": [],
+            "comparison_only": ["A:LEU:10:Hydrophobic"],
+        } if interaction_available else None,
+    }
+    return {
+        "schema_version": design_logic_service.WORKSPACE_SCHEMA, "job_id": "job-1",
+        "reference_molecule_id": "ref", "reference_mode": 1, "comparison_mode": 2,
+        "points": [{
+            "molecule_id": "ref", "mode": 1, "vina_affinity_kcal_mol": reference_affinity,
+            "fingerprint_status": "available", "fingerprint": ref_fingerprint,
+        }, comparison_point],
+        "selected_set": {"molecule_ids": ["ref", "near"]},
+        "metadata": {
+            "structural_similarity": {"method": "Morgan"},
+            "scaffold_classification": "exact canonical Murcko, then RDKit generic Murcko topology",
+            "interaction_similarity": "Jaccard over unique canonical ProLIF interaction tokens",
+        },
+    }
+
+
+def _evidence_pharmacophore(*, status="available", threshold=1.5):
+    pair = {
+        "status": status, "reference_feature_count": 5, "comparison_feature_count": 6,
+        "matched_feature_count": 4, "reference_coverage": 0.8, "comparison_coverage": 2 / 3,
+        "pharmacophore_feature_overlap": 4 / 7,
+        "matched_feature_center_rmsd_angstrom": 0.807, "single_match_distance_angstrom": None,
+        "matches": [{
+            "reference_feature_id": "HBA-02", "comparison_feature_id": "HBA-11",
+            "canonical_class": "HBA", "reference_template_atom_indices": [2],
+            "comparison_template_atom_indices": [11], "distance_angstrom": 0.6,
+        }],
+    } if status == "available" else {"status": status, "message": "Pose mapping unavailable."}
+    return {
+        "schema_version": design_logic_service.PHARMACOPHORE_WORKSPACE_SCHEMA,
+        "job_id": "job-1", "reference_mode": 1, "comparison_mode": 2,
+        "distance_threshold_angstrom": threshold,
+        "reference": {"feature_set": {"schema_version": PHARMACOPHORE_SCHEMA_VERSION, "receptor_identity": "9IIR"}},
+        "comparisons": [{
+            "molecule_id": "near", "mode": 2, "feature_state": {"status": status},
+            "comparison": pair,
+        }],
+        "reference_feature_matrix": {"rows": [{
+            "reference_feature_id": "HBA-02", "canonical_class": "HBA",
+            "matched_comparison_count": 1 if status == "available" else 0,
+            "selected_comparison_count": 1,
+        }]},
+        "metadata": {"matching_authority": "qualified backend matcher"},
+    }
+
+
+def test_cross_layer_evidence_assembles_independent_values_and_affinity_delta():
+    payload = design_logic_service.assemble_cross_layer_evidence(
+        _evidence_workspace(), _evidence_pharmacophore(),
+    )
+    row = payload["comparisons"][0]
+    assert payload["schema_version"] == design_logic_service.CROSS_LAYER_EVIDENCE_SCHEMA
+    assert row["identity"] == {
+        "reference_molecule_id": "ref", "reference_mode": 1,
+        "comparison_molecule_id": "near", "comparison_mode": 2, "receptor_identity": "9IIR",
+    }
+    assert row["structure"]["morgan_tanimoto"] == 0.093
+    assert row["structure"]["exact_scaffold_relationship"] == "Different exact Murcko"
+    assert row["structure"]["generic_framework_relationship"] == "Different generic framework"
+    assert row["pharmacophore"]["distance_threshold_angstrom"] == 1.5
+    assert row["pharmacophore"]["matched_feature_count"] == 4
+    assert row["interactions"]["jaccard"] == 0.5
+    assert row["interactions"]["shared_count"] == 1
+    assert row["docking"]["affinity_difference_kcal_mol"] == pytest.approx(1.1)
+    assert row["docking"]["affinity_difference_definition"] == "comparison affinity - reference affinity"
+    assert "score" not in row and "rank" not in row
+
+
+def test_cross_layer_evidence_preserves_independent_unavailable_and_null_states():
+    interactions_missing = design_logic_service.assemble_cross_layer_evidence(
+        _evidence_workspace(interaction_available=False), _evidence_pharmacophore(),
+    )["comparisons"][0]
+    assert interactions_missing["pharmacophore"]["status"] == "available"
+    assert interactions_missing["interactions"]["status"] == "missing_template"
+    assert interactions_missing["interactions"]["jaccard"] is None
+    assert interactions_missing["interactions"]["shared_count"] is None
+    pharmacophore_missing = design_logic_service.assemble_cross_layer_evidence(
+        _evidence_workspace(), _evidence_pharmacophore(status="mapping_incompatible"),
+    )["comparisons"][0]
+    assert pharmacophore_missing["pharmacophore"]["feature_overlap"] is None
+    assert pharmacophore_missing["interactions"]["jaccard"] == 0.5
+    null_affinity = design_logic_service.assemble_cross_layer_evidence(
+        _evidence_workspace(comparison_affinity=None), _evidence_pharmacophore(),
+    )["comparisons"][0]
+    assert null_affinity["docking"]["status"] == "partial"
+    assert null_affinity["docking"]["affinity_difference_kcal_mol"] is None
+
+
+def test_cross_layer_evidence_threshold_changes_only_pharmacophore_fields():
+    first = design_logic_service.assemble_cross_layer_evidence(
+        _evidence_workspace(), _evidence_pharmacophore(threshold=0.75),
+    )["comparisons"][0]
+    second = design_logic_service.assemble_cross_layer_evidence(
+        _evidence_workspace(), _evidence_pharmacophore(threshold=2.0),
+    )["comparisons"][0]
+    assert first["pharmacophore"]["distance_threshold_angstrom"] == 0.75
+    assert second["pharmacophore"]["distance_threshold_angstrom"] == 2.0
+    for layer in ("identity", "structure", "interactions", "docking"):
+        assert first[layer] == second[layer]
+
+
+def test_cross_layer_evidence_uses_exact_template_atom_provenance_and_frequencies():
+    payload = design_logic_service.assemble_cross_layer_evidence(
+        _evidence_workspace(), _evidence_pharmacophore(),
+    )
+    assert payload["comparisons"][0]["atom_cross_references"] == [{
+        "template_atom_index": 11,
+        "pharmacophore_features": [{
+            "feature_id": "HBA-11", "canonical_class": "HBA", "reference_feature_id": "HBA-02",
+        }],
+        "predicted_interactions": [{
+            "canonical_token": "B:ASN:236:HBAcceptor", "interaction_type": "HBAcceptor",
+        }],
+    }]
+    frequencies = payload["selected_set_frequencies"]
+    assert frequencies["generic_framework_relationships"][0]["count"] == 1
+    assert frequencies["reference_pharmacophore_features"][0]["matched_comparison_count"] == 1
+    assert frequencies["shared_predicted_interactions"][0]["token"] == "B:ASN:236:HBAcceptor"
+    assert frequencies["semantics"].startswith("descriptive frequencies")
+
+
+def test_cross_layer_evidence_orchestration_is_bounded_and_preserves_explicit_modes():
+    calls = []
+    def workspace_loader(job_id, reference_id, reference_mode, comparison_mode, limit, ids):
+        calls.append(("workspace", reference_mode, comparison_mode, limit, ids))
+        return _evidence_workspace()
+    def pharmacophore_loader(job_id, reference_id, reference_mode, ids, comparison_mode, threshold):
+        calls.append(("pharmacophore", reference_mode, comparison_mode, threshold, ids))
+        return _evidence_pharmacophore(threshold=threshold)
+    payload = design_logic_service.cross_layer_evidence(
+        "job-1", "ref", 1, ["near"], 2, 1.5,
+        workspace_loader=workspace_loader, pharmacophore_loader=pharmacophore_loader,
+    )
+    assert calls == [
+        ("workspace", 1, 2, 2, ["near"]),
+        ("pharmacophore", 1, 2, 1.5, ["near"]),
+    ]
+    assert payload["comparisons"][0]["identity"]["comparison_mode"] == 2
+
+
+def test_cross_layer_evidence_route_is_thin_and_typed(monkeypatch):
+    monkeypatch.setattr(design_logic_service, "cross_layer_evidence", lambda job_id, *args: {
+        "job_id": job_id, "schema_version": design_logic_service.CROSS_LAYER_EVIDENCE_SCHEMA,
+    })
+    response = TestClient(app).post("/api/design-logic/evidence", json={
+        "job_id": "job-1", "reference_molecule_id": "ref", "reference_mode": 1,
+        "comparison_molecule_ids": ["near"], "comparison_mode": 2,
+        "distance_threshold_angstrom": 1.5,
+    })
+    assert response.status_code == 200
+    assert response.json()["schema_version"] == design_logic_service.CROSS_LAYER_EVIDENCE_SCHEMA

@@ -339,6 +339,20 @@ def get_design_logic_pharmacophore(
     ))
 
 
+@app.post("/api/design-logic/evidence", response_model=DesignLogicResponse)
+def get_design_logic_evidence(
+    request: DesignLogicPharmacophoreRequest,
+) -> DesignLogicResponse:
+    return DesignLogicResponse(**design_logic_service.cross_layer_evidence(
+        request.job_id,
+        request.reference_molecule_id,
+        request.reference_mode,
+        request.comparison_molecule_ids,
+        request.comparison_mode,
+        request.distance_threshold_angstrom,
+    ))
+
+
 @app.get("/api/design-logic/pose-artifact")
 def get_design_logic_pose_artifact(job_id: str, artifact_path: str) -> FileResponse:
     path = design_logic_service.pose_artifact(job_id, artifact_path)
