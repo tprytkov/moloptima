@@ -9,7 +9,7 @@
   "description": "Phase 5A Electron desktop launcher for MolOptima.",
   "main": "main.js",
   "scripts": {
-    "test:lifecycle": "node --test lifecycle.test.js",
+    "test:lifecycle": "node --test lifecycle.test.js build/afterPack.test.js",
     "build:frontend": "cd ../frontend && npm.cmd run build",
     "dev": "electron .",
     "start": "electron .",

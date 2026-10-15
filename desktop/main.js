@@ -329,6 +329,7 @@ function startBackend() {
     env: {
       ...process.env,
       MOLOPTIMA_RUNTIME_DATA_ROOT: getRuntimeDataRoot(),
+      PYTHONDONTWRITEBYTECODE: '1',
     },
     onStderr: (message) => {
       lastBackendStderr = message.slice(-2000);
