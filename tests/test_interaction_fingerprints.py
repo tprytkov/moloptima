@@ -101,6 +101,25 @@ def test_runtime_resolver_verifies_override_without_importing_prolif(tmp_path):
     assert calls[0][0] == str(python)
 
 
+def test_runtime_probe_disables_bytecode_writes_in_packaged_resources(tmp_path):
+    runner, python = make_runtime(tmp_path)
+    observed = {}
+
+    def command(args, **kwargs):
+        observed.update(kwargs["env"])
+        output = Path(args[args.index("--output") + 1])
+        output.write_text(json.dumps({"versions": VERSIONS}), encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    resolve_prolif_runtime(
+        application_root=tmp_path,
+        python_override=python,
+        runner_override=runner,
+        command_runner=command,
+    )
+    assert observed["PYTHONDONTWRITEBYTECODE"] == "1"
+
+
 def test_successful_runtime_resolution_is_reused_process_locally(tmp_path):
     runner, python = make_runtime(tmp_path)
     command, calls = fake_command()

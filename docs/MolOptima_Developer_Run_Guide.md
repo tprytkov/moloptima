@@ -164,6 +164,25 @@ resources/runtime/admet/chemprop_regression/python/python.exe
 
 The resolver checks Chemprop, Lightning, NumPy, RDKit, and Torch versions against the authoritative model production manifest. Scientific Runtime probes use the existing 300-second per-family timeout.
 
+### Isolated ProLIF runtime
+
+ProLIF remains absent from the general backend environment. Its manifest and
+SHA-verified runner are versioned under `resources/prolif/`; the generated
+Windows runtime is staged at `desktop/runtime/prolif/python/` and installed at
+`resources/runtime/prolif/python/`. Development can use
+`MOLOPTIMA_PROLIF_PYTHON`, while packaged execution resolves the installed
+manifest-relative candidate without that override and fails closed on missing,
+corrupt, or version-mismatched resources.
+
+Build the ignored runtime from an already qualified environment:
+
+```bat
+python scripts\build_prolif_runtime_windows.py --source-prefix C:\path\to\moloptima-prolif-qual
+```
+
+Use `--resume-existing` only to finish validation of an already extracted
+artifact after an interrupted audit; it does not repeat `conda-pack`.
+
 ### ChemBERTa and native tools
 
 ChemBERTa loads its frozen local model/cache resources without an implicit download. Vina and Open Babel resolve explicit overrides first, then verified packaged executables/resources. Meeko and Gemmi are provided by the general bundled backend runtime and checked against the qualified versions in the runtime validation script.

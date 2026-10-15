@@ -316,6 +316,10 @@ def test_desktop_packaging_uses_explicit_scientific_runtime_resource_allowlist()
     assert resource["filter"] == [
         "admet/runtime_manifest.json",
         "admet/runners/**/*",
+        "prolif/runtime_manifest.json",
+        "prolif/prolif_runner.py",
+        "prolif/environment-win-64.yml",
+        "prolif/THIRD_PARTY_NOTICES.md",
         "vina/**/*",
         "openbabel/**/*",
         "prioritization_profiles/**/*",

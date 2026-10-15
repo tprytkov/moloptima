@@ -49,6 +49,14 @@ _verified_runtime_cache_lock = threading.Lock()
 _verified_runtime_cache: tuple[tuple[object, ...], ResolvedProLIFRuntime] | None = None
 
 
+def _prolif_runtime_environment(environ: Mapping[str, str] | None) -> dict[str, str]:
+    """Keep packaged ProLIF resources read-only by disabling bytecode writes."""
+
+    environment = isolated_runtime_environment(environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    return environment
+
+
 def _load_manifest(root: Path) -> dict[str, object]:
     try:
         manifest = json.loads((root / RUNTIME_MANIFEST).read_text(encoding="utf-8-sig"))
@@ -171,7 +179,7 @@ def resolve_prolif_runtime(
                     capture_output=True,
                     text=True,
                     shell=False,
-                    env=isolated_runtime_environment(values),
+                    env=_prolif_runtime_environment(values),
                     timeout=DEFAULT_TIMEOUT_SECONDS,
                 )
                 if getattr(completed, "returncode", 1) != 0:
@@ -373,7 +381,7 @@ def analyze_docking_pose_interactions(
             command_runner,
             [str(runtime.python), str(runtime.runner), "--request", str(request_path), "--output", str(output_path)],
             capture_output=True, text=True, shell=False,
-            env=isolated_runtime_environment(environ), timeout=timeout_seconds,
+            env=_prolif_runtime_environment(environ), timeout=timeout_seconds,
         )
         startup_and_execution = time.perf_counter() - subprocess_started
         try:

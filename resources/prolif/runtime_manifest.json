@@ -15,10 +15,10 @@
     "tqdm": "4.70.1"
   },
   "python_relative_candidates": [
-    "resources/prolif/runtime/python/python.exe",
-    "desktop/runtime/prolif/python/python.exe"
+    "desktop/runtime/prolif/python/python.exe",
+    "../runtime/prolif/python/python.exe"
   ],
-  "qualification_status": "qualified_unbundled",
+  "qualification_status": "qualified_packaged_windows",
   "runner_relative_path": "resources/prolif/prolif_runner.py",
   "runner_schema_version": "moloptima-prolif-runner-request-v1",
   "runner_sha256": "8ca4c66238618094a0d1a4ea4df59b176c9ff2aa845f59bf87134b4ea26480db",

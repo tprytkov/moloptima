@@ -3,7 +3,7 @@
 MolOptima runs ProLIF in a separate Python process. ProLIF is intentionally not
 installed in the main `molecule-intelligence` environment.
 
-## Qualified development runtime
+## Qualified Windows runtime
 
 The frozen development contract is recorded in
 `resources/prolif/runtime_manifest.json`. The current qualified versions are:
@@ -27,9 +27,31 @@ source code:
 $env:MOLOPTIMA_PROLIF_PYTHON = "$env:USERPROFILE\miniforge3\envs\moloptima-prolif-qual\python.exe"
 ```
 
-The current runtime is developer-only (`qualified_unbundled`). The manifest also
-supports a future packaged interpreter at one of its relative candidate paths;
-packaging that runtime is outside this qualification batch.
+The Windows runtime is qualified for both development override and packaged use
+(`qualified_packaged_windows`). Build the ignored staging artifact with:
+
+```powershell
+python scripts\build_prolif_runtime_windows.py --source-prefix C:\path\to\moloptima-prolif-qual
+```
+
+The generated runtime remains outside Git at
+`desktop/runtime/prolif/python/`. Electron's existing `afterPack` hook copies it
+to installed `resources/runtime/prolif/python/`; the application manifest then
+resolves `../runtime/prolif/python/python.exe` relative to the installed app
+root. No Conda activation or `MOLOPTIMA_PROLIF_PYTHON` override is required in a
+packaged installation. Runtime binaries, DLLs, package data, and generated
+license inventory must not be committed.
+
+The build validates exact versions and layout, gathers installed license files,
+removes caches/build residue, and scans binary and text content for private
+machine prefixes. Conda's `Scripts/conda-unpack-script.py` is retained as
+documented relocation metadata; any matching prefix outside that exact file is
+an actionable packaging failure.
+
+For relocation and scientific equivalence qualification, run
+`scripts\qualify_packaged_prolif_runtime.py --help`. The harness compares the
+same immutable request under the external qualified interpreter and the
+manifest-resolved packaged interpreter, excluding timing metadata only.
 
 ## Resolution and failure behavior
 

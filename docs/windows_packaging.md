@@ -10,6 +10,40 @@ Phase 5E adds local scripts for building and validating a runtime bundle under `
 
 Task 5 adds the small, versioned GMC-MPNN BBB and Chemprop regression runner sources plus a SHA-256 resource manifest. It also defines separate fail-closed Python resolution for those two scientific families. It does not commit either large family runtime or any model archive.
 
+Design Logic Batch 4C packages the independently frozen ProLIF runtime through
+the same ignored `desktop/runtime/` staging tree and `afterPack` hook. Source
+control contains only its manifest, SHA-verified runner, exact environment
+specification, notices, build/qualification helpers, tests, and documentation.
+
+### ProLIF isolated runtime layout
+
+The build helper stages the generated runtime at:
+
+```text
+desktop/runtime/prolif/python/python.exe
+```
+
+Electron installs it at:
+
+```text
+resources/runtime/prolif/python/python.exe
+```
+
+The small runner and manifest install below
+`resources/moloptima-app/resources/prolif/`. Resolution order is explicit
+constructor override, `MOLOPTIMA_PROLIF_PYTHON`, manifest-relative staged or
+installed runtime, then fail closed. The main backend environment is never a
+ProLIF fallback. Build with the existing environment; do not install ProLIF into
+the general backend environment:
+
+```bat
+python scripts\build_prolif_runtime_windows.py --source-prefix C:\path\to\moloptima-prolif-qual
+```
+
+The runtime build collects actual installed licenses, verifies the frozen
+versions and runner contract, rejects private-prefix leaks outside the retained
+Conda relocation helper, and keeps the generated large artifact ignored by Git.
+
 ### ADMET family resource layout
 
 The source tree contains:
@@ -113,7 +147,7 @@ Close and reopen terminals or the desktop app after `setx`.
 From the repository root:
 
 ```bat
-cd C:\MolOptima
+cd project-name
 cd desktop
 npm.cmd install
 npm.cmd run package
@@ -155,7 +189,7 @@ set MOLOPTIMA_CONDA_ENV=C:\path\to\conda-env
 Build the runtime:
 
 ```bat
-cd C:\MolOptima
+cd project-name
 scripts\build_desktop_runtime_windows.bat
 ```
 
@@ -209,7 +243,7 @@ scripts\check_desktop_runtime_windows.bat /skip-health
 After creating `desktop/runtime/python/`, package the app:
 
 ```bat
-cd C:\MolOptima
+cd project-name
 cd desktop
 npm.cmd run package
 ```
@@ -271,7 +305,7 @@ The diagnostics dialog reports:
 Before packaging or when diagnosing a packaged launch failure:
 
 ```bat
-cd C:\MolOptima
+cd project-name
 %MOLOPTIMA_PYTHON% -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 curl http://127.0.0.1:8000/health
 ```
