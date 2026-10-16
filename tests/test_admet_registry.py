@@ -152,6 +152,7 @@ def test_gmc_adapter_verifies_arithmetic_mean_and_threshold(monkeypatch, tmp_pat
     def fake_run(command, **kwargs):
         assert "RDBASE" not in kwargs["env"]
         assert kwargs["env"]["MOLOPTIMA_TEST"] == "kept"
+        assert kwargs["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
         output = Path(command[command.index("--output-csv") + 1])
         with output.open("w", newline="", encoding="utf-8") as handle:
             fields = ["molecule_id", *(f"seed{s}_probability" for s in SEEDS), "ensemble_probability", "ensemble_standard_deviation", "threshold", "prediction", "status", "model_family", "manifest_version", "model_interface_version", "error_code", "error_message"]
@@ -180,6 +181,7 @@ def test_regression_adapter_exposes_exact_units_and_transforms(monkeypatch, tmp_
     def fake_run(command, **kwargs):
         assert "RDBASE" not in kwargs["env"]
         assert kwargs["env"]["MOLOPTIMA_TEST"] == "kept"
+        assert kwargs["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
         output = Path(command[command.index("--output-csv") + 1])
         base = {"molecule_id": "one", "status": "success", "endpoint_order_json": __import__('json').dumps(ENDPOINTS)}
         for endpoint in ENDPOINTS:

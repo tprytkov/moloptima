@@ -1,5 +1,7 @@
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -234,12 +236,34 @@ def test_runtime_probe_allows_cold_packaged_torch_imports(tmp_path):
     assert observed["timeout"] == RUNTIME_PROBE_TIMEOUT_SECONDS == 300
 
 
-def test_isolated_runtime_environment_removes_only_inherited_rdkit_root():
+def test_isolated_runtime_environment_removes_rdkit_root_and_disables_bytecode():
     environment = isolated_runtime_environment(
         {"PATH": "packaged-runtime-path", "RDBASE": "backend-rdkit-data", "MOLOPTIMA_TEST": "kept"}
     )
 
-    assert environment == {"PATH": "packaged-runtime-path", "MOLOPTIMA_TEST": "kept"}
+    assert environment == {
+        "PATH": "packaged-runtime-path",
+        "MOLOPTIMA_TEST": "kept",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+
+
+def test_isolated_runtime_environment_prevents_import_bytecode_writes(tmp_path):
+    module = tmp_path / "packaged_probe.py"
+    module.write_text("VALUE = 1\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, "-c", "import packaged_probe; assert packaged_probe.VALUE == 1"],
+        cwd=tmp_path,
+        env=isolated_runtime_environment(),
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not (tmp_path / "__pycache__").exists()
 
 
 def test_runtime_probe_does_not_inherit_backend_rdkit_root(tmp_path, monkeypatch):
@@ -267,6 +291,7 @@ def test_runtime_probe_does_not_inherit_backend_rdkit_root(tmp_path, monkeypatch
 
     assert "RDBASE" not in observed["env"]
     assert observed["env"]["MOLOPTIMA_TEST"] == "kept"
+    assert observed["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
 
 
 def test_resource_resolution_from_simulated_installed_app(tmp_path):

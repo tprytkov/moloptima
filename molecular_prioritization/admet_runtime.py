@@ -110,14 +110,16 @@ def portable_runtime_identities(values: object) -> list[dict[str, object]]:
 def isolated_runtime_environment(
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Preserve the host environment without leaking RDKit data roots."""
+    """Preserve the host environment without writes or leaked RDKit data roots."""
 
     source = os.environ if environ is None else environ
-    return {
+    environment = {
         key: value
         for key, value in source.items()
         if key.upper() not in ISOLATED_RUNTIME_ENVIRONMENT_KEYS
     }
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    return environment
 
 
 def resolve_admet_runtime(
