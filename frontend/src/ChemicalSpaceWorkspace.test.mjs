@@ -20,9 +20,21 @@ test('workspace exposes supported scientific configuration before a collection i
   assert.match(html, /Morgan fingerprint/);
   assert.match(html, /PCA/);
   assert.match(html, /Tanimoto/);
-  assert.match(html, /Source \/ scaffold/);
+  assert.match(html, /Default grouping/);
+  assert.match(html, />Source</);
+  assert.match(html, /Configure/);
   assert.match(html, /Distance in the PCA projection/);
   assert.match(html.match(/<button[^>]*disabled[^>]*>/)?.[0] || '', /disabled/);
+});
+
+test('active collection is ready but does not generate until the explicit action', () => {
+  const html = renderToStaticMarkup(React.createElement(ChemicalSpaceWorkspace, { upload: { upload_id: 'upload-1' } }));
+  assert.match(html, />Ready</);
+  assert.match(html, /Generate Chemical Space/);
+  assert.doesNotMatch(html, /Chemical Space workspace views/);
+  const generateButton = html.match(/<button[^>]*>Generate Chemical Space<\/button>/)?.[0] || '';
+  assert.ok(generateButton);
+  assert.doesNotMatch(generateButton, /disabled/);
 });
 
 test('workspace establishes descriptive Map, Neighbors, Scaffolds, and Experimental Neighborhood controls', async () => {
@@ -47,4 +59,23 @@ test('workspace establishes descriptive Map, Neighbors, Scaffolds, and Experimen
   assert.match(source, /Method and provenance/);
   assert.match(source, /Select a molecule on the Map to calculate query-relative neighbors/);
   assert.match(source, /rdkit_version/);
+  assert.match(source, /async function generateChemicalSpace/);
+  assert.match(source, /No scientific request runs when settings are opened, edited, cancelled, or applied/);
+  const resetEffect = source.slice(
+    source.indexOf('useEffect(() => {', source.indexOf('generationRef')),
+    source.indexOf('async function generateChemicalSpace'),
+  );
+  assert.doesNotMatch(resetEffect, /requestJson/);
+});
+
+test('methodology guidance is informational and fixed methods are semantic read-only content', async () => {
+  const source = await (await import('node:fs/promises')).readFile(new URL('./ChemicalSpaceWorkspace.jsx', import.meta.url), 'utf8');
+  assert.match(source, /<Alert severity="info" variant="outlined">PCA map distance is not Tanimoto similarity/);
+  assert.match(source, /<Alert severity="info" variant="outlined">The projection visualizes Morgan fingerprint variation/);
+  assert.match(source, /component="dl" aria-label="Implemented Chemical Space methods"/);
+  assert.match(source, /component="dt"/);
+  assert.match(source, /component="dd"/);
+  assert.match(source, /Implemented · read only/);
+  assert.doesNotMatch(source, /<TextField label="Molecular representation"/);
+  assert.match(source, /<Select[\s\S]*value={setup\.draftConfiguration\.grouping}[\s\S]*onChange=/);
 });

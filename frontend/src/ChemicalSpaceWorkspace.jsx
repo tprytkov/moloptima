@@ -1,14 +1,28 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   Accordion, AccordionDetails, AccordionSummary, Alert, Box, Chip, CircularProgress,
   Button, Divider, FormControl, InputLabel, MenuItem, Paper, Select, Stack, Tab, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import { normalizeAdmetAnalysis } from './admetAnalysisData.js';
 import { numericAdmetPlotValue } from './admetPlotData.js';
 import ScaffoldWorkspace from './ScaffoldWorkspace.jsx';
 import ExperimentalNeighborhood from './ExperimentalNeighborhood.jsx';
+import ModuleConfigurationSummary from './ModuleConfigurationSummary.jsx';
+import ScientificSetupDialog from './ScientificSetupDialog.jsx';
+import {
+  chemicalSpaceConfigurationItems,
+  CHEMICAL_SPACE_GROUPINGS,
+  DEFAULT_CHEMICAL_SPACE_CONFIGURATION,
+  shouldInvalidateChemicalSpaceResult,
+  validateChemicalSpaceConfiguration,
+} from './chemicalSpaceConfiguration.js';
+import {
+  createScientificSetupState,
+  scientificSetupReducer,
+} from './scientificSetupState.js';
 import {
   CHEMICAL_SPACE_TOP_K_OPTIONS, categoricalPointColor, numericPointColor,
   paddedChemicalSpaceDomain, projectChemicalSpacePoints, searchChemicalSpacePoints,
@@ -189,6 +203,7 @@ export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl
   const [projection, setProjection] = useState(null);
   const [scaffoldData, setScaffoldData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [stale, setStale] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState('');
@@ -197,35 +212,91 @@ export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl
   const [neighbors, setNeighbors] = useState(null);
   const [neighborsLoading, setNeighborsLoading] = useState(false);
   const [selectedScaffoldId, setSelectedScaffoldId] = useState('');
+  const [setup, dispatchSetup] = useReducer(
+    scientificSetupReducer,
+    DEFAULT_CHEMICAL_SPACE_CONFIGURATION,
+    createScientificSetupState,
+  );
+  const generationRef = useRef(0);
+  const configureButtonRef = useRef(null);
   const admet = useMemo(() => normalizeAdmetAnalysis(admetRows), [admetRows]);
   const admetById = useMemo(() => new Map(admet.molecules.map((molecule) => [molecule.moleculeId, molecule])), [admet]);
 
   useEffect(() => {
-    if (!upload?.upload_id) { setProjection(null); setScaffoldData(null); return; }
-    let active = true; setLoading(true); setError(''); setProjection(null); setScaffoldData(null);
-    Promise.allSettled([
-      requestJson(baseUrl, '/api/chemical-space/project', { upload_id: upload.upload_id }),
-      requestJson(baseUrl, '/api/chemical-space/scaffolds', { upload_id: upload.upload_id }),
-    ])
-      .then(([projectResult, scaffoldResult]) => {
-        if (!active) return;
-        if (projectResult.status === 'rejected') throw projectResult.reason;
-        const payload = projectResult.value;
-        setProjection(payload);
-        setSelectedId((current) => payload.points.some((point) => point.molecule_id === current) ? current : '');
-        if (scaffoldResult.status === 'fulfilled') {
-          const scaffolds = scaffoldResult.value;
-          setScaffoldData(scaffolds);
-          setSelectedScaffoldId((current) => scaffolds.scaffolds.some((group) => group.scaffold_id === current) ? current : '');
-        } else {
-          setSelectedScaffoldId('');
-          setError(`Scaffold organization is unavailable: ${scaffoldResult.reason.message}`);
-        }
-      })
-      .catch((caught) => { if (active) setError(caught.message); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [baseUrl, upload?.upload_id]);
+    generationRef.current += 1;
+    setProjection(null);
+    setScaffoldData(null);
+    setSelectedId('');
+    setSelectedScaffoldId('');
+    setNeighbors(null);
+    setStale(false);
+    setError('');
+    setLoading(false);
+  }, [upload?.upload_id]);
+
+  async function generateChemicalSpace(configuration = setup.appliedConfiguration) {
+    if (!upload?.upload_id || loading) return false;
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
+    setLoading(true);
+    setError('');
+    try {
+      const [projectResult, scaffoldResult] = await Promise.allSettled([
+        requestJson(baseUrl, '/api/chemical-space/project', { upload_id: upload.upload_id }),
+        requestJson(baseUrl, '/api/chemical-space/scaffolds', { upload_id: upload.upload_id }),
+      ]);
+      if (generationRef.current !== generation) return false;
+      if (projectResult.status === 'rejected') throw projectResult.reason;
+      const payload = projectResult.value;
+      setProjection(payload);
+      setSelectedId((current) => payload.points.some((point) => point.molecule_id === current) ? current : '');
+      if (scaffoldResult.status === 'fulfilled') {
+        const scaffolds = scaffoldResult.value;
+        setScaffoldData(scaffolds);
+        setSelectedScaffoldId((current) => scaffolds.scaffolds.some((group) => group.scaffold_id === current) ? current : '');
+      } else {
+        setScaffoldData(null);
+        setSelectedScaffoldId('');
+        setError(`Scaffold organization is unavailable: ${scaffoldResult.reason.message}`);
+      }
+      setColorMode(configuration.grouping);
+      setStale(false);
+      return true;
+    } catch (caught) {
+      if (generationRef.current === generation) setError(caught.message);
+      return false;
+    } finally {
+      if (generationRef.current === generation) setLoading(false);
+    }
+  }
+
+  function validateDraft() {
+    const errors = validateChemicalSpaceConfiguration(setup.draftConfiguration);
+    if (errors.length) dispatchSetup({ type: 'validation-failed', errors });
+    return errors.length === 0;
+  }
+
+  function applyConfiguration() {
+    if (!validateDraft()) return;
+    const invalidatesResult = shouldInvalidateChemicalSpaceResult(
+      setup.appliedConfiguration,
+      setup.draftConfiguration,
+      projection,
+    );
+    dispatchSetup({ type: 'apply' });
+    setColorMode(setup.draftConfiguration.grouping);
+    if (invalidatesResult) setStale(true);
+  }
+
+  async function applyConfigurationAndRun() {
+    if (!validateDraft() || !upload?.upload_id) return;
+    const configuration = { ...setup.draftConfiguration };
+    dispatchSetup({ type: 'apply-and-run' });
+    setColorMode(configuration.grouping);
+    if (projection) setStale(true);
+    await generateChemicalSpace(configuration);
+    dispatchSetup({ type: 'run-finished' });
+  }
 
   useEffect(() => {
     if (!upload?.upload_id || !selectedId || tab !== 1) return;
@@ -242,39 +313,89 @@ export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl
   const admetColorAvailable = admet.molecules.length > 0;
   const scaffoldByMolecule = useMemo(() => scaffoldMembership(scaffoldData?.scaffolds || []), [scaffoldData]);
   const scaffoldPlan = useMemo(() => scaffoldColorPlan(scaffoldData?.scaffolds || []), [scaffoldData]);
+  const hasActiveCollection = Boolean(upload?.upload_id);
+  const hasCurrentResult = Boolean(projection) && !stale;
+  const analysisStatus = loading
+    ? 'Running'
+    : error && !projection ? 'Failed'
+      : stale ? 'Requires update'
+        : projection ? 'Completed'
+          : hasActiveCollection ? 'Ready' : 'Not generated';
+  const actionLabel = projection || stale ? 'Update Chemical Space' : 'Generate Chemical Space';
 
-  if (!upload?.upload_id) return (
-    <Stack spacing={2} data-testid="chemical-space-empty-state">
-      <Box>
-        <Typography variant="h1">Chemical Space</Typography>
-        <Typography color="text.secondary" sx={{ mt: 0.5 }}>Configure the supported structural analysis method before a molecule collection is active.</Typography>
-      </Box>
-      <Alert severity="info">No active molecule collection. Start a new calculation or open a previous calculation; Chemical Space will use that collection directly.</Alert>
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="h2" sx={{ mb: 1.5 }}>Analysis configuration</Typography>
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' }, gap: 1.5 }}>
-          <TextField label="Molecular representation" value="Morgan fingerprint" InputProps={{ readOnly: true }} />
-          <TextField label="Projection" value="PCA" InputProps={{ readOnly: true }} />
-          <TextField label="Similarity basis" value="Tanimoto" InputProps={{ readOnly: true }} />
-          <TextField label="Default grouping" value="Source / scaffold" InputProps={{ readOnly: true }} />
-        </Box>
-        <Button variant="contained" disabled sx={{ mt: 2 }}>Generate Chemical Space</Button>
-      </Paper>
-      <Alert severity="warning" variant="outlined">The projection visualizes Morgan fingerprint variation. Distance in the PCA projection is not itself molecular similarity; query-relative similarity uses locally recalculated Tanimoto values.</Alert>
-    </Stack>
-  );
   return (
-    <Stack spacing={1.5} data-testid="chemical-space-workstation">
+    <Stack spacing={1.5} data-testid={hasActiveCollection ? 'chemical-space-workstation' : 'chemical-space-empty-state'}>
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'baseline' }} gap={0.5}>
         <Typography variant="h1">Chemical Space</Typography>
-        {projection ? <Typography variant="body2" color="text.secondary">{projection.projected_count.toLocaleString()} projected · {projection.excluded_count.toLocaleString()} excluded · query: {selected?.display_name || selected?.molecule_id || 'not selected'}</Typography> : null}
+        {hasCurrentResult ? <Typography variant="body2" color="text.secondary">{projection.projected_count.toLocaleString()} projected · {projection.excluded_count.toLocaleString()} excluded · query: {selected?.display_name || selected?.molecule_id || 'not selected'}</Typography> : null}
       </Stack>
       <Typography variant="caption" color="text.secondary">Descriptive structural analysis only; activity, potency, applicability domain, confidence, preference, and rank are not inferred.</Typography>
+      <ModuleConfigurationSummary
+        title="Analysis configuration"
+        status={analysisStatus}
+        items={chemicalSpaceConfigurationItems(setup.appliedConfiguration)}
+        actions={<>
+          <Button ref={configureButtonRef} aria-label="Configure Chemical Space" variant="outlined" startIcon={<SettingsOutlinedIcon />} onClick={() => dispatchSetup({ type: 'open' })}>Configure</Button>
+          <Button variant="contained" disabled={!hasActiveCollection || loading} onClick={() => generateChemicalSpace()}>{loading ? 'Generating…' : actionLabel}</Button>
+        </>}
+      />
+      <ScientificSetupDialog
+        open={setup.open}
+        title="Configure Chemical Space"
+        context="Review the implemented structural-analysis methods and choose the default map grouping. Settings are applied only when you confirm them."
+        sections={[{ id: 'methods', label: 'Methods & display' }]}
+        dirty={setup.dirty}
+        validationErrors={setup.validationErrors}
+        loading={loading}
+        runDisabled={!hasActiveCollection}
+        onCancel={() => dispatchSetup({ type: 'cancel' })}
+        onApply={applyConfiguration}
+        onApplyAndRun={applyConfigurationAndRun}
+        restoreFocusRef={configureButtonRef}
+      >
+        <Box component="section" aria-labelledby="chemical-space-methods-heading">
+          <Typography id="chemical-space-methods-heading" variant="h2" sx={{ mb: 0.5 }}>Implemented methods</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>These qualified methods are fixed in the current release.</Typography>
+          <Box component="dl" aria-label="Implemented Chemical Space methods" sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5, m: 0 }}>
+            {[
+              ['Molecular representation', setup.draftConfiguration.representation],
+              ['Projection', setup.draftConfiguration.projection],
+              ['Similarity basis', setup.draftConfiguration.similarity],
+            ].map(([label, value]) => (
+              <Paper key={label} component="div" variant="outlined" sx={{ p: 1.5, minWidth: 0, bgcolor: 'background.default' }}>
+                <Typography component="dt" variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>{label}</Typography>
+                <Typography component="dd" variant="body2" sx={{ m: 0, fontWeight: 700, overflowWrap: 'anywhere' }}>{value}</Typography>
+                <Typography variant="caption" color="text.secondary">Implemented · read only</Typography>
+              </Paper>
+            ))}
+          </Box>
+        </Box>
+        <Box component="section" aria-labelledby="chemical-space-display-heading">
+          <Typography id="chemical-space-display-heading" variant="h2" sx={{ mb: 0.5 }}>Initial display</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Choose the grouping used when a generated map first opens. Display controls remain available in the workspace.</Typography>
+          <FormControl fullWidth size="small">
+            <InputLabel id="chemical-space-grouping-label">Default grouping</InputLabel>
+            <Select
+              labelId="chemical-space-grouping-label"
+              value={setup.draftConfiguration.grouping}
+              label="Default grouping"
+              onChange={(event) => dispatchSetup({ type: 'change', patch: { grouping: event.target.value } })}
+            >
+              {CHEMICAL_SPACE_GROUPINGS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+            </Select>
+          </FormControl>
+        </Box>
+        <Alert severity="info" variant="outlined">PCA map distance is not Tanimoto similarity. Query-relative neighbors are calculated independently with Morgan-fingerprint Tanimoto.</Alert>
+      </ScientificSetupDialog>
+      {!hasActiveCollection ? <Alert severity="info">No active molecule collection. Start a new calculation or open a previous calculation; configuration remains available, but generation requires an active collection.</Alert> : null}
       {error ? <Alert severity="error">{error}</Alert> : null}
       {loading ? <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={20} /><Typography>Projecting the current collection…</Typography></Stack> : null}
-      <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chemical Space workspace views" variant="scrollable" scrollButtons="auto" sx={{ minHeight: 36, borderBottom: '1px solid', borderColor: 'divider', '& .MuiTab-root': { minHeight: 36, py: 0.5 } }}><Tab label="Map" /><Tab label="Neighbors" /><Tab label="Scaffolds" /><Tab label="Experimental Neighborhood" /></Tabs>
-      {projection && projection.projected_count === 0 ? <Alert severity="warning">No valid resolved structures are available to fingerprint. Excluded records remain listed in the import workflow.</Alert> : null}
-      {projection?.projected_count ? (
+      {stale ? <Alert severity="warning">The applied configuration changed. The prior Chemical Space result is retained internally but is not presented as current; select Update Chemical Space to regenerate it.</Alert> : null}
+      {!projection && hasActiveCollection && !loading && !error ? <Paper variant="outlined" sx={{ p: 2 }}><Typography variant="h2">Ready to generate</Typography><Typography color="text.secondary" sx={{ mt: 0.5 }}>Generate the Chemical Space workspace from the active molecule collection. No scientific request runs when settings are opened, edited, cancelled, or applied.</Typography></Paper> : null}
+      {!hasCurrentResult ? <Alert severity="info" variant="outlined">The projection visualizes Morgan fingerprint variation. Distance in the PCA projection is not itself molecular similarity; query-relative similarity uses locally recalculated Tanimoto values.</Alert> : null}
+      {hasCurrentResult ? <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chemical Space workspace views" variant="scrollable" scrollButtons="auto" sx={{ minHeight: 36, borderBottom: '1px solid', borderColor: 'divider', '& .MuiTab-root': { minHeight: 36, py: 0.5 } }}><Tab label="Map" /><Tab label="Neighbors" /><Tab label="Scaffolds" /><Tab label="Experimental Neighborhood" /></Tabs> : null}
+      {hasCurrentResult && projection.projected_count === 0 ? <Alert severity="warning">No valid resolved structures are available to fingerprint. Excluded records remain listed in the import workflow.</Alert> : null}
+      {hasCurrentResult && projection.projected_count ? (
           tab === 0 ? <Paper variant="outlined" sx={{ p: 1.5, minWidth: 0 }}><Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '210px minmax(0, 1fr)', lg: '210px minmax(0, 1fr) 240px', xl: '220px minmax(0, 1fr) 270px' }, gap: 1.75 }}>
           <QueryRail point={selected} baseUrl={baseUrl} query={query} onQueryChange={setQuery} colorMode={colorMode} onColorModeChange={setColorMode} admetColorAvailable={admetColorAvailable} onFindAnalogs={() => setTab(3)} />
           <Stack spacing={1} sx={{ minWidth: 0 }}>
@@ -290,8 +411,8 @@ export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl
         </Box></Paper> : tab === 2 ? (scaffoldData ? <ScaffoldWorkspace data={scaffoldData} selectedScaffoldId={selectedScaffoldId} selectedMoleculeId={selectedId} onSelectScaffold={setSelectedScaffoldId} onSelectMolecule={setSelectedId} onViewMap={(scaffoldId) => { setSelectedScaffoldId(scaffoldId); setColorMode('scaffold'); setTab(0); }} baseUrl={baseUrl} admetById={admetById} /> : null) : <ExperimentalNeighborhood key={selected?.molecule_id || 'no-selection'} upload={upload} queryMolecule={selected} baseUrl={baseUrl} />
       ) : null}
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
-        {projection?.metadata ? <Accordion sx={{ flex: 1 }}><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography variant="body2" fontWeight={700}>Method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">Representation: Morgan radius {projection.metadata.fingerprint_radius}, {projection.metadata.fingerprint_bits}-bit fingerprints · RDKit {projection.metadata.rdkit_version}.</Typography><Typography variant="body2">Similarity: {projection.metadata.similarity_metric}. Projection: {projection.metadata.projection_method} via {projection.metadata.projection_package} {projection.metadata.projection_package_version}, seed {projection.metadata.projection_seed}.</Typography><Typography variant="body2">Projection input: {projection.metadata.projection_input}.</Typography><Alert severity="info">{projection.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}
-        {scaffoldData?.metadata ? <Accordion sx={{ flex: 1 }}><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography variant="body2" fontWeight={700}>Scaffold method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">{scaffoldData.metadata.method} via {scaffoldData.metadata.implementation} · RDKit {scaffoldData.metadata.rdkit_version} · algorithm {scaffoldData.metadata.algorithm_version}.</Typography><Typography variant="body2">{scaffoldData.metadata.canonicalization}. {scaffoldData.metadata.input_context}</Typography><Typography variant="body2">{scaffoldData.metadata.acyclic_policy} {scaffoldData.metadata.invalid_policy} {scaffoldData.metadata.duplicate_policy}</Typography><Alert severity="info">{scaffoldData.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}
+        {hasCurrentResult && projection?.metadata ? <Accordion sx={{ flex: 1 }}><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography variant="body2" fontWeight={700}>Method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">Representation: Morgan radius {projection.metadata.fingerprint_radius}, {projection.metadata.fingerprint_bits}-bit fingerprints · RDKit {projection.metadata.rdkit_version}.</Typography><Typography variant="body2">Similarity: {projection.metadata.similarity_metric}. Projection: {projection.metadata.projection_method} via {projection.metadata.projection_package} {projection.metadata.projection_package_version}, seed {projection.metadata.projection_seed}.</Typography><Typography variant="body2">Projection input: {projection.metadata.projection_input}.</Typography><Alert severity="info">{projection.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}
+        {hasCurrentResult && scaffoldData?.metadata ? <Accordion sx={{ flex: 1 }}><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography variant="body2" fontWeight={700}>Scaffold method and provenance</Typography></AccordionSummary><AccordionDetails><Stack spacing={0.75}><Typography variant="body2">{scaffoldData.metadata.method} via {scaffoldData.metadata.implementation} · RDKit {scaffoldData.metadata.rdkit_version} · algorithm {scaffoldData.metadata.algorithm_version}.</Typography><Typography variant="body2">{scaffoldData.metadata.canonicalization}. {scaffoldData.metadata.input_context}</Typography><Typography variant="body2">{scaffoldData.metadata.acyclic_policy} {scaffoldData.metadata.invalid_policy} {scaffoldData.metadata.duplicate_policy}</Typography><Alert severity="info">{scaffoldData.metadata.caveat}</Alert></Stack></AccordionDetails></Accordion> : null}
       </Stack>
     </Stack>
   );
