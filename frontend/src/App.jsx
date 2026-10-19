@@ -71,6 +71,7 @@ import DockingSetup from './DockingSetup.jsx';
 import PrioritizationExplanationSection from './PrioritizationExplanationSection.jsx';
 import PrioritizationAnalysisPanel from './PrioritizationAnalysisPanel.jsx';
 import PrioritizationSettings from './PrioritizationSettings.jsx';
+import PrioritizationWorkspace from './PrioritizationWorkspace.jsx';
 import MoleculeInputPanel from './MoleculeInputPanel.jsx';
 import {
   applyMoleculeSelectionUpdate,
@@ -90,6 +91,14 @@ import {
   pollJobUntilTerminal,
 } from './jobWorkflow.js';
 import { startBackendHealthPolling } from './backendHealth.js';
+import {
+  activeCalculationKey,
+  activeUploadContext,
+  isCurrentActiveRequest,
+  newCalculationState,
+  openedActiveRun,
+  startupActiveRun,
+} from './activeCalculationLifecycle.js';
 
 const drawerWidth = 216;
 const apiBaseUrl = 'http://localhost:8000';
@@ -224,6 +233,8 @@ const EMPTY_TARGET_CONTEXT = Object.freeze({
   docking_energy_range: '', docking_seed: '', docking_worker_count: '',
 });
 
+class StaleActiveRequestError extends Error {}
+
 export function csvMoleculePreview(csvText, limit = 5) {
   const rows = String(csvText || '').split(/\r?\n/).filter((line) => line.trim());
   if (rows.length < 2) return [];
@@ -347,6 +358,7 @@ function App() {
   const [uploadState, setUploadState] = useState({ ...EMPTY_UPLOAD_STATE });
   const activeImportRef = useRef(null);
   const [prioritizationState, setPrioritizationState] = useState({ ...EMPTY_PRIORITIZATION_STATE });
+  const activeRequestVersionRef = useRef(0);
   const [latestRunState, setLatestRunState] = useState({
     job: null,
     result: null,
@@ -387,20 +399,17 @@ function App() {
     () => annotateAnalysisState(prioritizationState, annotationsState),
     [prioritizationState, annotationsState],
   );
-  const annotatedLatestRunState = useMemo(
-    () => annotateAnalysisState(latestRunState, annotationsState),
-    [latestRunState, annotationsState],
-  );
 
   useEffect(() => {
     let isMounted = true;
+    const requestId = activeRequestVersionRef.current;
+    const requestIsCurrent = () => isMounted
+      && isCurrentActiveRequest(requestId, activeRequestVersionRef.current);
 
     async function loadLatestRun() {
       try {
         const payload = await apiRequest('/api/jobs/latest');
-        if (!isMounted) {
-          return;
-        }
+        if (!isMounted) return;
         if (payload.job) {
           const completeMetadata = payload.job.job_id
             ? await apiRequest(`/api/jobs/${payload.job.job_id}`).catch(() => ({}))
@@ -414,18 +423,69 @@ function App() {
             loading: false,
             error: '',
           });
-          setPrioritizationState({
-            job: latestJob,
-            result: hydratedJob,
-            loading: false,
-            error: '',
-          });
-          setRunHistoryState((current) => ({ ...current, selectedJobId: latestJob.job_id }));
-          await loadAnnotationsForJob(latestJob.job_id);
+          const restorableRun = startupActiveRun(latestJob);
+          if (restorableRun && requestIsCurrent()) {
+            setPrioritizationState(restorableRun);
+            setTargetContext(Object.fromEntries(
+              Object.entries(EMPTY_TARGET_CONTEXT).map(([key, fallback]) => [key, hydratedJob[key] ?? fallback]),
+            ));
+            setPrioritizationSettings({
+              method: hydratedJob.prioritization_method || 'legacy_v1',
+              profile: hydratedJob.prioritization_profile || null,
+              validation: null,
+            });
+            setPubchemLookupEnabled(Boolean(hydratedJob.enable_pubchem_lookup));
+            setChemblLookupEnabled(Boolean(hydratedJob.enable_chembl_lookup));
+            setPatentLookupEnabled(Boolean(hydratedJob.enable_patent_lookup));
+            setTargetReferenceEnabled(Boolean(hydratedJob.enable_target_reference_discovery));
+            setUploadState((current) => ({
+              ...current,
+              upload: activeUploadContext(current.upload, restorableRun),
+            }));
+            setRunHistoryState((current) => ({ ...current, selectedJobId: latestJob.job_id }));
+            const terminalJob = await pollJobUntilTerminal(latestJob.job_id, {
+              request: async (path) => {
+                if (!requestIsCurrent()) throw new StaleActiveRequestError();
+                const response = await apiRequest(path);
+                if (!requestIsCurrent()) throw new StaleActiveRequestError();
+                return response;
+              },
+              onUpdate: (currentJob) => {
+                if (!requestIsCurrent()) return;
+                setPrioritizationState((current) => ({ ...current, job: currentJob }));
+                setLatestRunState((current) => ({ ...current, job: currentJob }));
+                setRunHistoryState((current) => ({
+                  ...current,
+                  jobs: mergeJobIntoHistory(current.jobs, currentJob),
+                }));
+              },
+            });
+            if (!requestIsCurrent()) return;
+            if (['completed', 'completed_with_warnings'].includes(terminalJob.status)) {
+              const result = await apiRequest(`/api/results/${latestJob.job_id}`);
+              if (!requestIsCurrent()) return;
+              setPrioritizationState({ job: terminalJob, result, loading: false, error: '' });
+              setLatestRunState({ job: terminalJob, result, loading: false, error: '' });
+              setUploadState((current) => ({
+                ...current,
+                upload: activeUploadContext(current.upload, { job: terminalJob, result }),
+              }));
+              await loadAnnotationsForJob(latestJob.job_id, requestId);
+            } else {
+              setPrioritizationState({
+                job: terminalJob,
+                result: null,
+                loading: false,
+                error: terminalJob.error_message || `Job ${terminalJob.status}.`,
+              });
+              setLatestRunState({ job: terminalJob, result: null, loading: false, error: '' });
+            }
+          }
         } else {
           setLatestRunState({ job: null, result: null, loading: false, error: '' });
         }
       } catch (error) {
+        if (error instanceof StaleActiveRequestError) return;
         if (isMounted) {
           setLatestRunState({
             job: null,
@@ -505,6 +565,7 @@ function App() {
         isOnline: () => healthRef.current.status === 'online',
         signal: activeImport.controller.signal,
         onJobCreated: (importJobId) => {
+          if (activeImportRef.current !== activeImport) return;
           activeImport.importJobId = importJobId;
           const progress = {
             mode: 'chunked', status: 'running', processedFiles: 0,
@@ -515,10 +576,13 @@ function App() {
           setUploadState((current) => ({ ...current, importProgress: progress }));
         },
         onProgress: (progress) => {
+          if (activeImportRef.current !== activeImport) return;
           activeImport.progress = progress;
           setUploadState((current) => ({ ...current, importProgress: progress }));
         },
       });
+      if (activeImportRef.current !== activeImport) return;
+      activeRequestVersionRef.current += 1;
       setPrioritizationState({ job: null, result: null, loading: false, error: '' });
       setUploadState((current) => ({
         ...current,
@@ -529,6 +593,7 @@ function App() {
       }));
     } catch (error) {
       await cleanupMoleculeImportJob(activeImport.importJobId, apiRequest);
+      if (activeImportRef.current !== activeImport) return;
       const prefix = activeImport.progress
         ? `Import stopped after ${activeImport.progress.processedFiles.toLocaleString()} / ${activeImport.progress.totalFiles.toLocaleString()} files. `
         : '';
@@ -551,8 +616,17 @@ function App() {
   }
 
   function handleNewCalculation() {
-    setUploadState({ ...EMPTY_UPLOAD_STATE });
-    setPrioritizationState({ ...EMPTY_PRIORITIZATION_STATE });
+    activeRequestVersionRef.current += 1;
+    if (activeImportRef.current) {
+      activeImportRef.current.cancelled = true;
+      activeImportRef.current.controller.abort();
+      activeImportRef.current = null;
+    }
+    const reset = newCalculationState(runHistoryState.jobs);
+    setUploadState({ ...EMPTY_UPLOAD_STATE, upload: reset.upload });
+    setPrioritizationState(reset.activeRun);
+    setAnnotationsState(reset.annotations);
+    setRunHistoryState((current) => ({ ...current, selectedJobId: reset.selectedHistoryJobId }));
     setTargetContext({ ...EMPTY_TARGET_CONTEXT });
     setPrioritizationSettings({ method: 'legacy_v1', profile: null, validation: null });
     setPubchemLookupEnabled(false);
@@ -598,6 +672,9 @@ function App() {
       return;
     }
 
+    const requestId = activeRequestVersionRef.current + 1;
+    activeRequestVersionRef.current = requestId;
+    const requestIsCurrent = () => isCurrentActiveRequest(requestId, activeRequestVersionRef.current);
     setPrioritizationState({ job: null, result: null, loading: true, error: '' });
 
     try {
@@ -618,6 +695,7 @@ function App() {
           ...normalizedDockingRequest(targetContext),
         }),
       });
+      if (!requestIsCurrent()) return;
       setPrioritizationState({ job, result: null, loading: true, error: '' });
       setRunHistoryState((current) => ({
         ...current,
@@ -625,8 +703,14 @@ function App() {
         jobs: mergeJobIntoHistory(current.jobs, job),
       }));
       const terminalJob = await pollJobUntilTerminal(job.job_id, {
-        request: apiRequest,
+        request: async (path) => {
+          if (!requestIsCurrent()) throw new StaleActiveRequestError();
+          const response = await apiRequest(path);
+          if (!requestIsCurrent()) throw new StaleActiveRequestError();
+          return response;
+        },
         onUpdate: (currentJob) => {
+          if (!requestIsCurrent()) return;
           setPrioritizationState((current) => ({ ...current, job: currentJob }));
           setRunHistoryState((current) => ({
             ...current,
@@ -635,14 +719,16 @@ function App() {
           }));
         },
       });
+      if (!requestIsCurrent()) return;
       if (terminalJob.status === 'completed' || terminalJob.status === 'completed_with_warnings') {
         const [result, sourceStatus] = await Promise.all([
           apiRequest(`/api/results/${job.job_id}`),
           apiRequest('/api/model-sources/status'),
         ]);
+        if (!requestIsCurrent()) return;
         setPrioritizationState({ job: terminalJob, result, loading: false, error: '' });
         setLatestRunState({ job: terminalJob, result, loading: false, error: '' });
-        await loadAnnotationsForJob(job.job_id);
+        await loadAnnotationsForJob(job.job_id, requestId);
         setSourceStatusState({ payload: sourceStatus, loading: false, error: '' });
       } else {
         setPrioritizationState({
@@ -653,6 +739,8 @@ function App() {
         });
       }
     } catch (error) {
+      if (error instanceof StaleActiveRequestError) return;
+      if (!requestIsCurrent()) return;
       setPrioritizationState((current) => ({
         ...current,
         loading: false,
@@ -663,11 +751,14 @@ function App() {
 
   async function handleCancelPrioritization() {
     const jobId = prioritizationState.job?.job_id;
+    const requestId = activeRequestVersionRef.current;
     if (!jobId || TERMINAL_JOB_STATUSES.has(prioritizationState.job.status)) {
       return;
     }
     try {
       const job = await apiRequest(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+      if (!isCurrentActiveRequest(requestId, activeRequestVersionRef.current)
+        || prioritizationState.job?.job_id !== jobId) return;
       setPrioritizationState((current) => ({ ...current, job }));
       setRunHistoryState((current) => ({
         ...current,
@@ -682,13 +773,38 @@ function App() {
     if (!jobId) {
       return;
     }
+    const requestId = activeRequestVersionRef.current + 1;
+    activeRequestVersionRef.current = requestId;
+    const requestIsCurrent = () => isCurrentActiveRequest(requestId, activeRequestVersionRef.current);
     setRunHistoryState((current) => ({ ...current, loading: true, error: '' }));
+    setPrioritizationState({ job: null, result: null, loading: true, error: '' });
     try {
-      const result = await apiRequest(`/api/results/${jobId}`);
-      const job = latestJobMetadata(result);
-      setPrioritizationState({ job, result, loading: false, error: '' });
-      setLatestRunState({ job, result, loading: false, error: '' });
-      await loadAnnotationsForJob(jobId);
+      const [result, jobPayload] = await Promise.all([
+        apiRequest(`/api/results/${jobId}`),
+        apiRequest(`/api/jobs/${jobId}`).catch(() => ({})),
+      ]);
+      if (!requestIsCurrent()) return;
+      const job = latestJobMetadata({ ...result, ...jobPayload });
+      setPrioritizationState(openedActiveRun(job, result));
+      setTargetContext(Object.fromEntries(
+        Object.entries(EMPTY_TARGET_CONTEXT).map(([key, fallback]) => [key, result[key] ?? job[key] ?? fallback]),
+      ));
+      setPrioritizationSettings({
+        method: result.prioritization_method || job.prioritization_method || 'legacy_v1',
+        profile: result.prioritization_profile || job.prioritization_profile || null,
+        validation: null,
+      });
+      setPubchemLookupEnabled(Boolean(job.enable_pubchem_lookup));
+      setChemblLookupEnabled(Boolean(job.enable_chembl_lookup));
+      setPatentLookupEnabled(Boolean(job.enable_patent_lookup));
+      setTargetReferenceEnabled(Boolean(job.enable_target_reference_discovery));
+      setUploadState((current) => ({
+        ...EMPTY_UPLOAD_STATE,
+        fileInputResetKey: current.fileInputResetKey + 1,
+        upload: activeUploadContext(null, { job, result }),
+      }));
+      await loadAnnotationsForJob(jobId, requestId);
+      if (!requestIsCurrent()) return;
       setRunHistoryState((current) => ({
         ...current,
         selectedJobId: jobId,
@@ -696,8 +812,10 @@ function App() {
         error: '',
         jobs: mergeJobIntoHistory(current.jobs, job),
       }));
-      setActiveItem('Molecular Prioritization');
+      setActiveItem('Prioritization');
     } catch (error) {
+      if (!requestIsCurrent()) return;
+      setPrioritizationState({ ...EMPTY_PRIORITIZATION_STATE, error: readableError(error) });
       setRunHistoryState((current) => ({
         ...current,
         loading: false,
@@ -706,7 +824,7 @@ function App() {
     }
   }
 
-  async function loadAnnotationsForJob(jobId) {
+  async function loadAnnotationsForJob(jobId, requestId = activeRequestVersionRef.current) {
     if (!jobId) {
       setAnnotationsState({
         jobId: '',
@@ -726,6 +844,7 @@ function App() {
     }));
     try {
       const payload = await apiRequest(`/api/jobs/${jobId}/annotations`);
+      if (!isCurrentActiveRequest(requestId, activeRequestVersionRef.current)) return;
       setAnnotationsState({
         jobId,
         annotations: payload.annotations ?? {},
@@ -735,6 +854,7 @@ function App() {
         updatedAt: payload.updated_at ?? null,
       });
     } catch (error) {
+      if (!isCurrentActiveRequest(requestId, activeRequestVersionRef.current)) return;
       setAnnotationsState({
         jobId,
         annotations: {},
@@ -747,7 +867,8 @@ function App() {
   }
 
   async function handleSaveReviewAnnotation(annotationKey, annotation) {
-    const jobId = annotatedLatestRunState.job?.job_id ?? annotatedPrioritizationState.job?.job_id ?? '';
+    const jobId = annotatedPrioritizationState.job?.job_id ?? '';
+    const requestId = activeRequestVersionRef.current;
     if (!jobId || !annotationKey) {
       return;
     }
@@ -771,6 +892,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ annotations: nextAnnotations }),
       });
+      if (!isCurrentActiveRequest(requestId, activeRequestVersionRef.current)) return;
       setAnnotationsState({
         jobId,
         annotations: payload.annotations ?? {},
@@ -780,6 +902,7 @@ function App() {
         updatedAt: payload.updated_at ?? null,
       });
     } catch (error) {
+      if (!isCurrentActiveRequest(requestId, activeRequestVersionRef.current)) return;
       setAnnotationsState((current) => ({
         ...current,
         saving: false,
@@ -864,7 +987,7 @@ function App() {
               uploadState={uploadState}
               setUploadState={setUploadState}
               prioritizationState={annotatedPrioritizationState}
-              latestRunState={annotatedLatestRunState}
+              latestRunState={latestRunState}
               runHistoryState={runHistoryState}
               annotationsState={annotationsState}
               sourceStatusState={sourceStatusState}
@@ -876,6 +999,7 @@ function App() {
               onCancelPrioritization={handleCancelPrioritization}
               onLoadHistoricalRun={handleLoadHistoricalRun}
               onRefreshRunHistory={handleRefreshRunHistory}
+              onNewCalculation={handleNewCalculation}
               pubchemLookupEnabled={pubchemLookupEnabled}
               setPubchemLookupEnabled={setPubchemLookupEnabled}
               chemblLookupEnabled={chemblLookupEnabled}
@@ -1030,10 +1154,9 @@ export function AppStatusBar({ health, currentJob, moleculeCount = 0 }) {
       </Stack>
       <Divider orientation="vertical" flexItem />
       <Typography variant="caption">
-        Current job: {currentJob ? currentJobStatusLabel(currentJob) : 'None'}
+        {currentJob ? `Current job: ${currentJobStatusLabel(currentJob)}` : 'No active calculation'}
       </Typography>
-      <Divider orientation="vertical" flexItem />
-      <Typography variant="caption">{moleculeCount.toLocaleString()} {moleculeCount === 1 ? 'molecule' : 'molecules'}</Typography>
+      {currentJob ? <><Divider orientation="vertical" flexItem /><Typography variant="caption">{moleculeCount.toLocaleString()} {moleculeCount === 1 ? 'molecule' : 'molecules'}</Typography></> : null}
     </Box>
   );
 }
@@ -1056,6 +1179,7 @@ function ActivePage({
   onCancelPrioritization,
   onLoadHistoricalRun,
   onRefreshRunHistory,
+  onNewCalculation,
   onSaveReviewAnnotation,
   pubchemLookupEnabled,
   setPubchemLookupEnabled,
@@ -1075,6 +1199,8 @@ function ActivePage({
   workflowStatuses,
   currentMoleculeCount,
 }) {
+  const activeJobId = prioritizationState.job?.job_id || '';
+  const jobScopeKey = activeCalculationKey(prioritizationState, uploadState.upload);
   if (activeItem === 'Workspace') {
     return (
       <WorkspacePage
@@ -1084,6 +1210,11 @@ function ActivePage({
         moleculeCount={currentMoleculeCount}
         analysisMode={uploadState.upload?.analysis_mode}
         onNavigate={onNavigate}
+        onNewCalculation={onNewCalculation}
+        onOpenPreviousCalculation={() => onNavigate('Run History')}
+        onLoadHistoricalRun={onLoadHistoricalRun}
+        recentJobs={runHistoryState.jobs}
+        historyLoading={runHistoryState.loading}
       />
     );
   }
@@ -1104,6 +1235,7 @@ function ActivePage({
   if (activeItem === 'Receptor & Docking') {
     return (
       <DockingWorkflowPage
+        key={jobScopeKey}
         uploadState={uploadState}
         prioritizationState={prioritizationState}
         targetContext={targetContext}
@@ -1121,6 +1253,7 @@ function ActivePage({
   if (activeItem === 'ADMET') {
     return (
       <AdmetWorkflowPage
+        key={jobScopeKey}
         prioritizationState={prioritizationState}
         sourceStatusState={sourceStatusState}
         onNavigate={onNavigate}
@@ -1129,16 +1262,18 @@ function ActivePage({
   }
 
   if (activeItem === 'Chemical Space') {
-    return <ChemicalSpaceWorkspace upload={uploadState.upload} admetRows={prioritizationState.result?.results ?? []} baseUrl={apiBaseUrl} />;
+    return <ChemicalSpaceWorkspace key={jobScopeKey} upload={uploadState.upload} admetRows={prioritizationState.result?.results ?? []} baseUrl={apiBaseUrl} />;
   }
 
   if (activeItem === 'Design Logic') {
-    return <DesignLogicWorkspace result={prioritizationState.result} baseUrl={apiBaseUrl} />;
+    if (!activeJobId) return <NoActiveCalculation title="Design Logic" description="Design Logic requires an active calculation with molecules that have eligible docking poses." onNewCalculation={onNewCalculation} onOpenPreviousCalculation={() => onNavigate('Run History')} />;
+    return <DesignLogicWorkspace key={activeJobId} result={prioritizationState.result} baseUrl={apiBaseUrl} />;
   }
 
   if (activeItem === 'Prioritization' || activeItem === 'Molecular Prioritization') {
     return (
       <PrioritizationPage
+        key={jobScopeKey}
         uploadState={uploadState}
         prioritizationState={prioritizationState}
         onStartPrioritization={onStartPrioritization}
@@ -1164,8 +1299,10 @@ function ActivePage({
   }
 
   if (activeItem === 'Results') {
+    if (!activeJobId) return <NoActiveCalculation title="Results" description="Results are available after running a calculation or opening a previous calculation." onNewCalculation={onNewCalculation} onOpenPreviousCalculation={() => onNavigate('Run History')} />;
     return (
       <ResultsWorkflowPage
+        key={activeJobId}
         prioritizationState={prioritizationState}
         upload={uploadState.upload}
         annotationsState={annotationsState}
@@ -1175,8 +1312,10 @@ function ActivePage({
   }
 
   if (activeItem === 'Analysis') {
+    if (!activeJobId) return <NoActiveCalculation title="Analysis" description="Analysis is available after running a calculation or opening a previous calculation." onNewCalculation={onNewCalculation} onOpenPreviousCalculation={() => onNavigate('Run History')} />;
     return (
       <AnalysisWorkflowPage
+        key={activeJobId}
         currentRunState={prioritizationState}
         annotationsState={annotationsState}
         onSaveReviewAnnotation={onSaveReviewAnnotation}
@@ -1186,9 +1325,11 @@ function ActivePage({
   }
 
   if (activeItem === 'Biopharma Intelligence') {
+    if (!activeJobId) return <NoActiveCalculation title="Biopharma Intelligence" description="Biopharma context is available after running a calculation or opening a previous calculation." onNewCalculation={onNewCalculation} onOpenPreviousCalculation={() => onNavigate('Run History')} />;
     return (
       <BiopharmaIntelligencePage
-        latestRunState={latestRunState}
+        key={activeJobId}
+        latestRunState={prioritizationState}
         annotationsState={annotationsState}
         onSaveReviewAnnotation={onSaveReviewAnnotation}
       />
@@ -1199,7 +1340,7 @@ function ActivePage({
     return (
       <RunHistoryPage
         runHistoryState={runHistoryState}
-        loadedJobId={latestRunState.job?.job_id ?? prioritizationState.job?.job_id ?? ''}
+        loadedJobId={prioritizationState.job?.job_id ?? ''}
         onLoadHistoricalRun={onLoadHistoricalRun}
         onRefreshRunHistory={onRefreshRunHistory}
       />
@@ -1216,9 +1357,11 @@ function ActivePage({
   }
 
   if (activeItem === 'Reports') {
+    if (!activeJobId) return <NoActiveCalculation title="Reports" description="Reports are available after running a calculation or opening a previous calculation." onNewCalculation={onNewCalculation} onOpenPreviousCalculation={() => onNavigate('Run History')} />;
     return (
       <ReportsPage
-        latestRunState={latestRunState}
+        key={activeJobId}
+        latestRunState={prioritizationState}
         annotationsState={annotationsState}
         onSaveReviewAnnotation={onSaveReviewAnnotation}
       />
@@ -1268,21 +1411,65 @@ function WorkflowStatusItem({ label, status }) {
   );
 }
 
-export function WorkspacePage({ workflowStatuses, currentJob, hasResults, moleculeCount = 0, analysisMode, onNavigate }) {
+export function NoActiveCalculation({ title, description, onNewCalculation, onOpenPreviousCalculation }) {
+  return (
+    <Stack spacing={2} sx={{ width: '100%', maxWidth: SUMMARY_CONTENT_MAX_WIDTH, mx: 'auto' }}>
+      <PageIntro title={title} description={description} />
+      <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, border: '1px solid', borderColor: 'divider' }}>
+        <Stack spacing={1.5} alignItems="flex-start">
+          <Typography variant="h2">No active calculation</Typography>
+          <Typography color="text.secondary">Start a new calculation or explicitly open a saved calculation to use its scientific data.</Typography>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+            <Button variant="contained" startIcon={<AddCircleOutlineIcon />} onClick={onNewCalculation}>New Calculation</Button>
+            <Button variant="outlined" onClick={onOpenPreviousCalculation}>Open Previous Calculation</Button>
+          </Stack>
+        </Stack>
+      </Paper>
+    </Stack>
+  );
+}
+
+export function WorkspacePage({
+  workflowStatuses, currentJob, hasResults, moleculeCount = 0, analysisMode, onNavigate,
+  onNewCalculation, onOpenPreviousCalculation, onLoadHistoricalRun, recentJobs = [], historyLoading = false,
+}) {
   const single = analysisMode === 'single_compound';
   const steps = single
     ? ['Molecule', 'Receptor & Docking', 'ADMET', 'Compound Assessment', 'Results']
     : WORKFLOW_STEPS;
   if (!currentJob && moleculeCount === 0) {
+    const availableJobs = recentJobs
+      .filter((job) => ['completed', 'completed_with_warnings'].includes(job.status))
+      .slice(0, 5);
     return (
-      <Box sx={{ width: '100%', maxWidth: SUMMARY_CONTENT_MAX_WIDTH, mx: 'auto' }}>
+      <Stack spacing={2} sx={{ width: '100%', maxWidth: SUMMARY_CONTENT_MAX_WIDTH, mx: 'auto' }}>
         <Paper elevation={0} sx={{ px: { xs: 2, md: 3 }, py: 3, border: '1px solid', borderColor: 'divider' }}>
-          <Typography variant="h1">Create a calculation</Typography>
+          <Typography variant="h1">No active calculation</Typography>
           <Typography color="text.secondary" sx={{ mt: 1, maxWidth: 620 }}>
-            Import molecules and configure the molecular workflow. Use the action in the application header to begin.
+            Start a new calculation or open a previous calculation. Saved calculations remain in local history until explicitly managed there.
           </Typography>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 2 }}>
+            <Button variant="contained" startIcon={<AddCircleOutlineIcon />} onClick={onNewCalculation}>New Calculation</Button>
+            <Button variant="outlined" onClick={onOpenPreviousCalculation}>Open Previous Calculation</Button>
+          </Stack>
         </Paper>
-      </Box>
+        <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, border: '1px solid', borderColor: 'divider' }}>
+          <Typography variant="h2">Recent Calculations</Typography>
+          {historyLoading ? <Typography color="text.secondary" sx={{ mt: 1 }}>Loading saved calculations…</Typography> : availableJobs.length ? (
+            <Box sx={{ overflowX: 'auto', mt: 1.5 }}>
+              <Table size="small" aria-label="Recent calculations">
+                <TableHead><TableRow><TableCell>Job</TableCell><TableCell>Compounds</TableCell><TableCell>Status</TableCell><TableCell align="right">Action</TableCell></TableRow></TableHead>
+                <TableBody>{availableJobs.map((job) => <TableRow key={job.job_id}>
+                  <TableCell title={`Full job ID: ${job.job_id}`} sx={{ fontFamily: 'ui-monospace, Consolas, monospace' }}>{compactJobId(job.job_id)}</TableCell>
+                  <TableCell>{formatDetailValue(job.row_count)}</TableCell>
+                  <TableCell>{formatScientificPresentationValue(job.status)}</TableCell>
+                  <TableCell align="right"><Button variant="outlined" onClick={() => onLoadHistoricalRun(job.job_id)}>Open</Button></TableCell>
+                </TableRow>)}</TableBody>
+              </Table>
+            </Box>
+          ) : <Typography color="text.secondary" sx={{ mt: 1 }}>No saved completed calculations are available.</Typography>}
+        </Paper>
+      </Stack>
     );
   }
   return (
@@ -1292,7 +1479,7 @@ export function WorkspacePage({ workflowStatuses, currentJob, hasResults, molecu
       </Typography>
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
         <Box sx={{ px: { xs: 2, md: 2.5 }, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
-          <Typography variant="h1">Current calculation</Typography>
+          <Typography variant="h1">{currentJob ? 'Current calculation' : 'Calculation setup'}</Typography>
         </Box>
         <Box
           component="dl"
@@ -3376,10 +3563,19 @@ export function PrioritizationPage({
         title={single ? 'Compound Assessment' : 'Prioritization'}
         description={single
           ? 'Run molecular properties, ADMET, optional docking, and profile interpretation without fabricating library-relative scores or rank.'
-          : 'Choose the scoring method and profile, inspect scoring readiness, and run the existing auditable library prioritization pipeline.'}
+          : 'Review compound priority, evidence coverage, target-profile alignment, and supporting scientific evidence.'}
       />
 
       {single ? <Alert severity="info">Available: Molecular Properties, ADMET, Docking, and Profile Interpretation. Not applicable: Library Prioritization, Pareto Analysis, and Rank Sensitivity.</Alert> : null}
+
+      {prioritizationState.result && !single ? (
+        <PrioritizationWorkspace
+          rows={resultRows}
+          result={prioritizationState.result}
+          job={prioritizationState.job}
+          onOpenResults={() => onNavigate('Results')}
+        />
+      ) : null}
 
       <PrioritizationSettings
         apiBaseUrl={apiBaseUrl}
@@ -3513,14 +3709,14 @@ export function PrioritizationPage({
         </Stack>
       </Paper>
 
-      {prioritizationState.result && (
-        <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} justifyContent="space-between">
-            <Box><Typography variant="h2">{summary.completionTitle(single)}</Typography><Typography color="text.secondary">{summary.completionMessage}</Typography></Box>
-            <Button variant="contained" onClick={() => onNavigate('Results')}>Open Results</Button>
-          </Stack>
-        </Paper>
-      )}
+      {prioritizationState.result && single ? (
+          <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} justifyContent="space-between">
+              <Box><Typography variant="h2">{summary.completionTitle(single)}</Typography><Typography color="text.secondary">{summary.completionMessage}</Typography></Box>
+              <Button variant="contained" onClick={() => onNavigate('Results')}>Open Results</Button>
+            </Stack>
+          </Paper>
+      ) : null}
     </Stack>
   );
 }

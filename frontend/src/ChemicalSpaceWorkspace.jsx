@@ -243,7 +243,26 @@ export default function ChemicalSpaceWorkspace({ upload, admetRows = [], baseUrl
   const scaffoldByMolecule = useMemo(() => scaffoldMembership(scaffoldData?.scaffolds || []), [scaffoldData]);
   const scaffoldPlan = useMemo(() => scaffoldColorPlan(scaffoldData?.scaffolds || []), [scaffoldData]);
 
-  if (!upload?.upload_id) return <Alert severity="info">Import a molecule collection first. Chemical Space uses that current collection directly; no second upload is required.</Alert>;
+  if (!upload?.upload_id) return (
+    <Stack spacing={2} data-testid="chemical-space-empty-state">
+      <Box>
+        <Typography variant="h1">Chemical Space</Typography>
+        <Typography color="text.secondary" sx={{ mt: 0.5 }}>Configure the supported structural analysis method before a molecule collection is active.</Typography>
+      </Box>
+      <Alert severity="info">No active molecule collection. Start a new calculation or open a previous calculation; Chemical Space will use that collection directly.</Alert>
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h2" sx={{ mb: 1.5 }}>Analysis configuration</Typography>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' }, gap: 1.5 }}>
+          <TextField label="Molecular representation" value="Morgan fingerprint" InputProps={{ readOnly: true }} />
+          <TextField label="Projection" value="PCA" InputProps={{ readOnly: true }} />
+          <TextField label="Similarity basis" value="Tanimoto" InputProps={{ readOnly: true }} />
+          <TextField label="Default grouping" value="Source / scaffold" InputProps={{ readOnly: true }} />
+        </Box>
+        <Button variant="contained" disabled sx={{ mt: 2 }}>Generate Chemical Space</Button>
+      </Paper>
+      <Alert severity="warning" variant="outlined">The projection visualizes Morgan fingerprint variation. Distance in the PCA projection is not itself molecular similarity; query-relative similarity uses locally recalculated Tanimoto values.</Alert>
+    </Stack>
+  );
   return (
     <Stack spacing={1.5} data-testid="chemical-space-workstation">
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'baseline' }} gap={0.5}>

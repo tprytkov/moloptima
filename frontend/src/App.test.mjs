@@ -193,14 +193,39 @@ test('application shell exposes one header calculation action and subtle accurat
   assert.doesNotMatch(statusHtml, />Online</);
 });
 
-test('Workspace empty state leaves creation to the single header action', () => {
+test('Workspace empty state separates active state from recent completed calculations', () => {
   const html = renderToStaticMarkup(React.createElement(module.WorkspacePage, {
     workflowStatuses: {}, currentJob: null, moleculeCount: 0, analysisMode: 'library', onNavigate: () => {},
+    onNewCalculation: () => {}, onOpenPreviousCalculation: () => {}, onLoadHistoricalRun: () => {},
+    recentJobs: [{ job_id: 'completed-job-123', status: 'completed', row_count: 10 }],
   }));
-  assert.match(html, /Create a calculation/);
-  assert.match(html, /Import molecules and configure the molecular workflow/);
-  assert.doesNotMatch(html, /<button/);
-  assert.doesNotMatch(html, /New Calculation/);
+  assert.match(html, /No active calculation/);
+  assert.match(html, /New Calculation/);
+  assert.match(html, /Open Previous Calculation/);
+  assert.match(html, /Recent Calculations/);
+  assert.match(html, /complete…/);
+  assert.match(html, />10</);
+  assert.doesNotMatch(html, /Current calculation/);
+});
+
+test('no-active state exposes explicit actions without historical scientific results', () => {
+  const html = renderToStaticMarkup(React.createElement(module.NoActiveCalculation, {
+    title: 'Results', description: 'Results are available after running a calculation.',
+    onNewCalculation: () => {}, onOpenPreviousCalculation: () => {},
+  }));
+  assert.match(html, /No active calculation/);
+  assert.match(html, /New Calculation/);
+  assert.match(html, /Open Previous Calculation/);
+  assert.doesNotMatch(html, /aspirin|priority_score|endpoint profile/i);
+});
+
+test('status bar omits historical molecule counts when there is no active calculation', () => {
+  const html = renderToStaticMarkup(React.createElement(module.AppStatusBar, {
+    health: { status: 'online' }, currentJob: null, moleculeCount: 10,
+  }));
+  assert.match(html, /Backend connected/);
+  assert.match(html, /No active calculation/);
+  assert.doesNotMatch(html, /10 molecules|Current job/);
 });
 
 test('primary-page scroll reset targets the provided scrolling element', () => {

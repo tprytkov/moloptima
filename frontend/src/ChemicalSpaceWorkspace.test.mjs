@@ -14,10 +14,15 @@ before(async () => {
 
 after(async () => vite?.close());
 
-test('workspace has an explicit no-import state without requesting another upload', () => {
+test('workspace exposes supported scientific configuration before a collection is active', () => {
   const html = renderToStaticMarkup(React.createElement(ChemicalSpaceWorkspace, { upload: null }));
-  assert.match(html, /Import a molecule collection first/);
-  assert.match(html, /no second upload is required/);
+  assert.match(html, /No active molecule collection/);
+  assert.match(html, /Morgan fingerprint/);
+  assert.match(html, /PCA/);
+  assert.match(html, /Tanimoto/);
+  assert.match(html, /Source \/ scaffold/);
+  assert.match(html, /Distance in the PCA projection/);
+  assert.match(html.match(/<button[^>]*disabled[^>]*>/)?.[0] || '', /disabled/);
 });
 
 test('workspace establishes descriptive Map, Neighbors, Scaffolds, and Experimental Neighborhood controls', async () => {
