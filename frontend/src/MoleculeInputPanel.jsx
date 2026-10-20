@@ -19,8 +19,14 @@ import {
 
 const PDB_WARNING = 'SDF is preferred for small-molecule structure files because it preserves bond orders and formal charges more reliably than PDB.';
 
+export function moleculeImportWarnings(row) {
+  return (Array.isArray(row.warnings) ? row.warnings : [])
+    .map((warning) => String(warning).trim())
+    .filter(Boolean);
+}
+
 export function moleculeImportWarning(row) {
-  return [...(row.warnings ?? []), row.failure_reason].filter(Boolean).join(' · ');
+  return moleculeImportWarnings(row).join(' · ');
 }
 
 export function analysisModeLabel(mode) {
@@ -99,7 +105,7 @@ function DetailField({ label, value, mono = false }) {
 }
 
 function FocusedCompoundInspector({ row, uploadId }) {
-  const warning = moleculeImportWarning(row);
+  const warnings = moleculeImportWarnings(row);
   return (
     <Box sx={{ borderTop: '1px solid', borderColor: 'divider', bgcolor: '#fbfcfd' }}>
       <Box sx={{ px: 1.5, py: 0.9, borderBottom: '1px solid', borderColor: 'divider' }}>
@@ -123,7 +129,12 @@ function FocusedCompoundInspector({ row, uploadId }) {
             <DetailField label="Coordinates" value={row.coordinate_status} />
             <DetailField label="Duplicate structure" value={row.duplicate_structure ? 'Yes' : 'No'} />
             <DetailField label="Upload ID" value={uploadId} mono />
-            <DetailField label="Warning" value={warning || 'No warning recorded'} />
+            <DetailField label="Validation error" value={row.failure_reason || 'No validation error recorded'} />
+            <Box sx={{ gridColumn: '1 / -1', minWidth: 0 }}>
+              <Typography variant="caption" color="text.secondary">Import warnings ({warnings.length})</Typography>
+              {warnings.length ? <Box component="ul" sx={{ my: 0.35, pl: 2.25 }}>{warnings.map((warning) => <Typography component="li" key={warning} sx={{ fontSize: 12.5 }}>{warning}</Typography>)}</Box>
+                : <Typography sx={{ mt: 0.15, fontSize: 12.5 }}>No import warnings recorded</Typography>}
+            </Box>
           </Box>
         </Box>
       </Box>
@@ -255,13 +266,14 @@ export default function MoleculeInputPanel({ uploadState, backendHealth, baseUrl
             </Box>
             <Box sx={{ maxWidth: '100%', maxHeight: 300, overflow: 'auto' }}>
             <Table stickyHeader size="small" aria-label="Molecule input preview" sx={{ minWidth: 900, tableLayout: 'fixed', '& .MuiTableCell-root': { px: 0.75 }, '& .MuiTableCell-head': { fontSize: '0.72rem', bgcolor: '#f4f7f9' } }}><TableHead><TableRow>
-              <TableCell scope="col" sx={{ width: 136 }}>Structure</TableCell><TableCell scope="col" sx={{ width: 128 }}>Molecule ID</TableCell><TableCell scope="col" sx={{ width: 240 }}>Canonical SMILES</TableCell><TableCell scope="col" sx={{ width: 92 }}>Validity</TableCell><TableCell scope="col" sx={{ width: 180 }}>Source</TableCell><TableCell scope="col" sx={{ width: 110 }}>Coordinates</TableCell>
+              <TableCell scope="col" sx={{ width: 136 }}>Structure</TableCell><TableCell scope="col" sx={{ width: 164 }}>Molecule ID</TableCell><TableCell scope="col" sx={{ width: 216 }}>Canonical SMILES</TableCell><TableCell scope="col" sx={{ width: 92 }}>Validity</TableCell><TableCell scope="col" sx={{ width: 170 }}>Source</TableCell><TableCell scope="col" sx={{ width: 110 }}>Coordinates</TableCell>
             </TableRow></TableHead><TableBody>{preview.map((row, index) => {
-              const warning = moleculeImportWarning(row);
+              const warnings = moleculeImportWarnings(row);
+              const warning = warnings.join(' · ');
               const focused = focusedRow === row;
               return <TableRow key={`${row.molecule_id}-${index}`} selected={focused} sx={{ '&.Mui-selected': { bgcolor: 'rgba(20, 95, 116, 0.075)' }, '&.Mui-selected:hover': { bgcolor: 'rgba(20, 95, 116, 0.09)' } }}>
                 <TableCell><ButtonBase aria-label={`Inspect ${row.molecule_id}`} aria-pressed={focused} onClick={() => setFocusedMoleculeId(row.molecule_id)} sx={{ borderRadius: 1, '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 2 } }}><MoleculeStructureThumbnail baseUrl={baseUrl} moleculeId={row.molecule_id} smiles={row.canonical_smiles} /></ButtonBase></TableCell>
-                <TableCell sx={{ overflowWrap: 'anywhere' }}><Stack direction="row" spacing={0.25} alignItems="center"><Box component="span">{row.molecule_id}</Box>{warning ? <Tooltip title={warning} arrow enterTouchDelay={0}><IconButton size="small" color="warning" aria-label={`Import warning for ${row.molecule_id}: ${warning}`}><WarningAmberRoundedIcon fontSize="small" /></IconButton></Tooltip> : null}</Stack></TableCell>
+                <TableCell sx={{ overflowWrap: 'anywhere' }}><Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center"><Box component="span">{row.molecule_id}</Box>{warnings.length ? <Tooltip title={<Box><Typography variant="caption" fontWeight={700}>{warnings.length === 1 ? 'Import warning' : `${warnings.length} import warnings`}</Typography><Box component="ul" sx={{ my: 0.25, pl: 2 }}>{warnings.map((message) => <li key={message}>{message}</li>)}</Box></Box>} arrow enterTouchDelay={0}><Button size="small" color="warning" variant="text" startIcon={<WarningAmberRoundedIcon fontSize="small" />} aria-label={`${warnings.length} import warning${warnings.length === 1 ? '' : 's'} for ${row.molecule_id}: ${warning}`} sx={{ minWidth: 0, px: 0.5, py: 0.1, fontSize: '0.68rem', lineHeight: 1.25 }}>{warnings.length === 1 ? 'Warning' : `${warnings.length} warnings`}</Button></Tooltip> : null}</Stack></TableCell>
                 <TableCell sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.canonical_smiles || row.input_smiles || '—'}</TableCell>
                 <TableCell><ValidationState row={row} /></TableCell>
                 <TableCell sx={{ overflowWrap: 'anywhere' }}><Typography variant="caption" sx={{ display: 'block', fontWeight: 700 }}>{row.source_type || 'Not available'}</Typography><Typography variant="caption" color="text.secondary">{row.source_filename || '—'}</Typography></TableCell>

@@ -72,7 +72,7 @@ test('single-compound summary reports counts, preview provenance, and mode', () 
   assert.doesNotMatch(html, /[A-Za-z]:\\Users\\/);
 });
 
-test('preview replaces warning text with a keyboard-reachable warning tooltip control', () => {
+test('valid molecule with one warning keeps Valid and exposes an explicit keyboard-reachable warning control', () => {
   const warning = 'Original coordinates are preserved as provenance.';
   const html = render({
     filename: 'ethanol.sdf', submitted_count: 1, valid_count: 1, invalid_count: 0,
@@ -85,8 +85,10 @@ test('preview replaces warning text with a keyboard-reachable warning tooltip co
     }],
   });
 
-  assert.match(html, new RegExp(`aria-label="Import warning for ethanol: ${warning}`));
-  assert.match(html, /<button[^>]*aria-label="Import warning for ethanol:/);
+  assert.match(html, new RegExp(`aria-label="1 import warning for ethanol: ${warning}`));
+  assert.match(html, /<button[^>]*aria-label="1 import warning for ethanol:/);
+  assert.match(html, />Warning<\/button>/);
+  assert.match(html, />Valid</);
   assert.doesNotMatch(html, /<th[^>]*>warnings<\/th>/i);
   assert.equal((html.match(new RegExp(warning, 'g')) ?? []).length, 2);
   assert.match(html, /VALIDATION \/ PROVENANCE/);
@@ -100,7 +102,27 @@ test('preview omits the warning control when no warning or failure exists', () =
       structure_status: 'validated', coordinate_status: 'none', validation_status: 'valid', warnings: [], failure_reason: '',
     }],
   });
-  assert.doesNotMatch(html, /Import warning for ethanol/);
+  assert.doesNotMatch(html, /import warning for ethanol/i);
+  assert.match(html, />Valid</);
+  assert.match(html, /Import warnings \(0\)/);
+});
+
+test('multiple authoritative warnings retain an accurate count and every reason', () => {
+  const first = 'Original coordinates are retained for provenance.';
+  const second = 'SDF is preferred over ligand PDB.';
+  const html = render({
+    filename: 'mixed.sdf', submitted_count: 1, valid_count: 1, invalid_count: 0,
+    analysis_mode: 'single_compound', preview: [{
+      molecule_id: 'mixed', source_type: 'sdf', canonical_smiles: 'CCO',
+      structure_status: 'validated', coordinate_status: '3d', validation_status: 'valid',
+      warnings: [first, second], failure_reason: '',
+    }],
+  });
+  assert.match(html, new RegExp(`aria-label="2 import warnings for mixed: ${first} · ${second}`));
+  assert.match(html, />2 warnings<\/button>/);
+  assert.match(html, /Import warnings \(2\)/);
+  assert.match(html, new RegExp(first));
+  assert.match(html, new RegExp(second));
 });
 
 test('preview distinguishes focused inspection from pending-file batch selection', () => {
@@ -115,7 +137,25 @@ test('preview distinguishes focused inspection from pending-file batch selection
   assert.match(html, /aria-label="Inspect invalid-1"/);
   assert.match(html, /Selected compound: valid-1/);
   assert.match(html, />Invalid</);
+  assert.doesNotMatch(html, /import warning for invalid-1/i);
   assert.doesNotMatch(html, /type="checkbox"/);
+});
+
+test('same-table mix distinguishes valid, valid-with-warning, and invalid without color alone', () => {
+  const warning = 'Docking coordinates are regenerated from canonical SMILES.';
+  const html = render({
+    upload_id: 'mixed-states', filename: 'mixed collection', submitted_count: 3,
+    valid_count: 2, invalid_count: 1, analysis_mode: 'library', preview: [
+      { molecule_id: 'clean', source_type: 'smiles', canonical_smiles: 'CCO', validation_status: 'valid', warnings: [], failure_reason: '' },
+      { molecule_id: 'attention', source_type: 'sdf', canonical_smiles: 'CCN', validation_status: 'valid', warnings: [warning], failure_reason: '' },
+      { molecule_id: 'rejected', source_type: 'smiles', input_smiles: 'bad', validation_status: 'invalid', warnings: [], failure_reason: 'Invalid SMILES' },
+    ],
+  });
+  assert.match(html, /clean/);
+  assert.match(html, new RegExp(`1 import warning for attention: ${warning}`));
+  assert.match(html, /rejected/);
+  assert.match(html, />Invalid</);
+  assert.doesNotMatch(html, /import warning for rejected/i);
 });
 
 test('library and multi-record rejection states are explicit', () => {
