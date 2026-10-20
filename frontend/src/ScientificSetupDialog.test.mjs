@@ -69,6 +69,15 @@ test('validation failures remain in the draft state and are cleared by the next 
   assert.deepEqual(edited.validationErrors, []);
 });
 
+test('replace-applied resets a module configuration after authoritative context changes', () => {
+  const edited = scientificSetupReducer(
+    scientificSetupReducer(createScientificSetupState({ receptor: 'A' }), { type: 'open' }),
+    { type: 'change', patch: { receptor: 'draft-A' } },
+  );
+  const replaced = scientificSetupReducer(edited, { type: 'replace-applied', configuration: { receptor: 'B' } });
+  assert.deepEqual(replaced, createScientificSetupState({ receptor: 'B' }));
+});
+
 test('dialog exposes accessible sections, validation, and disabled run behavior', async () => {
   const source = await (await import('node:fs/promises')).readFile(new URL('./ScientificSetupDialog.jsx', import.meta.url), 'utf8');
   assert.match(source, /aria-labelledby="scientific-setup-title"/);

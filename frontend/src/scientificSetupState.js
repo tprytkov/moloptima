@@ -50,6 +50,8 @@ export function scientificSetupReducer(state, action) {
       };
     case 'run-finished':
       return { ...state, open: false };
+    case 'replace-applied':
+      return createScientificSetupState(action.configuration);
     case 'cancel':
       return {
         ...state,

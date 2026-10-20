@@ -14,30 +14,96 @@ before(async () => {
 
 after(async () => vite?.close());
 
-test('renders the professional receptor upload and explicit box workflow', () => {
+test('renders the compact modular receptor workspace with the viewer kept in main content', () => {
   const html = renderToStaticMarkup(React.createElement(module.default, {
     apiBaseUrl: 'http://localhost:8000', onConfirmed: () => {},
   }));
-  assert.match(html, /Select PDB for visualization/);
-  assert.match(html, /Select prepared PDBQT/);
-  assert.match(html, /Receptor Preparation/);
-  assert.match(html, /Advanced \/ reproducibility/);
-  assert.match(html, /Hydrogen optimization and pH-dependent protonation are not performed/);
-  assert.match(html, /final PDBQT retains the explicit polar\/donor hydrogens/i);
-  assert.match(html, /nonpolar hydrogens are not retained as independent docking atoms/);
-  assert.match(html, /Upload a PDB to inspect chains, waters, hetero groups, and alternate locations/);
-  assert.match(html, /How do you want to define the docking pocket\?/);
-  assert.match(html, /Bound reference ligand/);
-  assert.match(html, /Manual box coordinates/);
-  assert.match(html, /Center X/);
-  assert.match(html, /Size X/);
-  assert.match(html, /updates immediately/);
+  assert.match(html, /Receptor and docking configuration/);
+  assert.match(html, /Select Receptor/);
+  assert.match(html, /Prepare Receptor/);
+  assert.match(html, /Configure Binding Site/);
+  assert.match(html, /Configure Docking/);
+  assert.match(html, /The viewer shows only applied receptor and binding-site configuration/);
   assert.match(html, /Hide search box/);
   assert.match(html, /Reset view/);
   assert.match(html, /Focus search box/);
-  assert.match(html, /Incomplete search space/);
-  assert.match(html, /Confirm Docking Setup/);
   assert.match(html, /data-testid="receptor-viewer"/);
+  assert.doesNotMatch(html, /Preparation choices and provenance/);
+});
+
+test('source uses shared setup dialogs for receptor, preparation, binding site, and docking settings', async () => {
+  const source = await (await import('node:fs/promises')).readFile(new URL('./DockingSetup.jsx', import.meta.url), 'utf8');
+  assert.match(source, /<ScientificSetupDialog open={activeDialog === 'receptor'}/);
+  assert.match(source, /<ScientificSetupDialog open={activeDialog === 'preparation'}/);
+  assert.match(source, /<ScientificSetupDialog open={activeDialog === 'binding'}/);
+  assert.match(source, /<ScientificSetupDialog open={activeDialog === 'docking'}/);
+  assert.match(source, /<ModuleConfigurationSummary/);
+  assert.match(source, /Draft values are not rendered in the main viewer until Apply/);
+  assert.match(source, /Apply saves a backend configuration without running docking/);
+});
+
+test('authoritative heterogroup identities remain unique for repeated ion types', () => {
+  const groups = [
+    { group_id: 'ZN:A:401:_', residue_name: 'ZN', chain: 'A', residue_number: '401', insertion_code: '', type: 'ion', atom_count: 1 },
+    { group_id: 'ZN:B:205:_', residue_name: 'ZN', chain: 'B', residue_number: '205', insertion_code: '', type: 'ion', atom_count: 1 },
+    { group_id: 'NA:_:12:A', residue_name: 'NA', chain: '', residue_number: '12', insertion_code: 'A', type: 'ion', atom_count: 1 },
+  ];
+  assert.deepEqual(groups.map(module.heterogroupPresentation).map((item) => item.identity), [
+    'A:ZN401', 'B:ZN205', '(blank):NA12A',
+  ]);
+  const html = renderToStaticMarkup(React.createElement(module.HeterogroupTable, {
+    groups,
+    choices: { 'ZN:A:401:_': 'keep', 'ZN:B:205:_': 'exclude', 'NA:_:12:A': 'exclude' },
+    pocketGroupId: 'ZN:B:205:_', onActionChange: () => {}, onPocketChange: () => {},
+  }));
+  for (const identity of ['A:ZN401', 'B:ZN205', '(blank):NA12A']) assert.match(html, new RegExp(identity.replace(/[()]/g, '\\$&')));
+  assert.match(html, /Receptor action for heterogroup A:ZN401 \[ZN:A:401:_\]/);
+  assert.match(html, /Use heterogroup B:ZN205 \[ZN:B:205:_\] for pocket definition/);
+  assert.match(html, />Include</);
+  assert.match(html, />Exclude</);
+});
+
+test('heterogroup presentation reports unavailable authoritative fields without fabrication', () => {
+  assert.deepEqual(module.heterogroupPresentation({ group_id: 'unknown', chain: '', insertion_code: 'B' }), {
+    identity: '(blank):UnavailableUnavailableB',
+    accessibleIdentity: '(blank):UnavailableUnavailableB [unknown]',
+    groupName: 'Unavailable', chain: '(blank)', residue: 'UnavailableB',
+    type: 'Unavailable', atomCount: 'Unavailable',
+  });
+});
+
+test('binding validation accepts negative and zero centers but rejects blank centers and nonpositive sizes', () => {
+  const valid = { method: 'manual', padding: '4', box: {
+    centerX: '-2', centerY: '0', centerZ: '3', sizeX: '20', sizeY: '21', sizeZ: '22',
+  } };
+  assert.deepEqual(module.validateBindingConfiguration(valid), []);
+  assert.match(module.validateBindingConfiguration({ ...valid, box: { ...valid.box, centerX: '' } }).join(' '), /Incomplete search space/);
+  assert.match(module.validateBindingConfiguration({ ...valid, box: { ...valid.box, sizeX: '0' } }).join(' '), /greater than 0/);
+  assert.match(module.validateBindingConfiguration({ ...valid, box: { ...valid.box, sizeY: '-1' } }).join(' '), /greater than 0/);
+});
+
+test('docking settings validation mirrors supported positive Vina execution parameters', () => {
+  assert.deepEqual(module.validateDockingSettings(module.DEFAULT_VINA_SETTINGS), []);
+  assert.match(module.validateDockingSettings({ ...module.DEFAULT_VINA_SETTINGS, exhaustiveness: '0' }).join(' '), /Exhaustiveness/);
+  assert.match(module.validateDockingSettings({ ...module.DEFAULT_VINA_SETTINGS, numModes: '-1' }).join(' '), /Number of modes/);
+  assert.match(module.validateDockingSettings({ ...module.DEFAULT_VINA_SETTINGS, workerCount: '0' }).join(' '), /Workers/);
+  assert.match(module.validateDockingSettings({ ...module.DEFAULT_VINA_SETTINGS, energyRange: '-2' }).join(' '), /Energy range/);
+});
+
+test('preparation choices can be applied independently of binding-site coordinates', () => {
+  const inventory = {
+    protein: { chains: [{ chain: 'A' }] },
+    hetero_groups: [{ group_id: 'LIG:A:101:_' }],
+    alternate_locations: [],
+  };
+  const state = {
+    selectedChains: ['A'],
+    heteroChoices: { 'LIG:A:101:_': 'exclude' },
+    altlocChoices: {},
+    box: { centerX: '', centerY: '', centerZ: '', sizeX: '', sizeY: '', sizeZ: '' },
+  };
+  assert.deepEqual(module.validatePreparationChoices(inventory, state), []);
+  assert.equal(module.validateBindingConfiguration(state).length > 0, true);
 });
 
 test('valid search-space values produce a rounded accessible summary without mutating values', () => {

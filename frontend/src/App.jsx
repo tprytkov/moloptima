@@ -636,9 +636,8 @@ function App() {
     setActiveItem('Molecules');
   }
 
-  function handleDockingSetupConfirmed({ receptor, configuration }) {
-    setTargetContext((current) => ({
-      ...current,
+  function dockingSetupContext({ receptor, configuration }) {
+    return {
       receptor_id: receptor.receptor_id,
       docking_configuration_id: configuration.configuration_id,
       docking_center_x: configuration.center_x,
@@ -652,10 +651,14 @@ function App() {
       docking_energy_range: configuration.energy_range ?? '',
       docking_seed: configuration.seed,
       docking_worker_count: configuration.worker_count,
-    }));
+    };
   }
 
-  async function handleStartPrioritization() {
+  function handleDockingSetupConfirmed(setup) {
+    setTargetContext((current) => ({ ...current, ...dockingSetupContext(setup) }));
+  }
+
+  async function handleStartPrioritization(dockingSetupOverride = null) {
     const uploadId = uploadState.upload?.upload_id;
     if (!uploadId || validatedMoleculeCount(uploadState.upload) === 0) {
       setPrioritizationState((current) => ({
@@ -672,6 +675,9 @@ function App() {
       return;
     }
 
+    const requestTargetContext = dockingSetupOverride?.configuration
+      ? { ...targetContext, ...dockingSetupContext(dockingSetupOverride) }
+      : targetContext;
     const requestId = activeRequestVersionRef.current + 1;
     activeRequestVersionRef.current = requestId;
     const requestIsCurrent = () => isCurrentActiveRequest(requestId, activeRequestVersionRef.current);
@@ -691,8 +697,8 @@ function App() {
           enable_chembl_lookup: chemblLookupEnabled,
           enable_patent_lookup: patentLookupEnabled,
           enable_target_reference_discovery: targetReferenceEnabled,
-          ...targetContext,
-          ...normalizedDockingRequest(targetContext),
+          ...requestTargetContext,
+          ...normalizedDockingRequest(requestTargetContext),
         }),
       });
       if (!requestIsCurrent()) return;
@@ -1546,7 +1552,13 @@ export function DockingWorkflowPage({
   const single = uploadState.upload?.analysis_mode === 'single_compound';
   return (
     <Stack spacing={1.5}>
-      <DockingSetup apiBaseUrl={apiBaseUrl} onConfirmed={onDockingSetupConfirmed} />
+      <DockingSetup
+        apiBaseUrl={apiBaseUrl}
+        onConfirmed={onDockingSetupConfirmed}
+        onRunDocking={onRunDocking}
+        runDisabled={!hasValidMolecules}
+        runLoading={prioritizationState.loading}
+      />
       <Paper elevation={0} sx={{ px: 1.5, py: 1, border: '1px solid', borderColor: 'divider', display: 'flex', gap: 1.5, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
           <Typography variant="h2">Docking run</Typography>

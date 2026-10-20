@@ -22,6 +22,9 @@ export default function ScientificSetupDialog({
   loading = false,
   applyDisabled = false,
   runDisabled = false,
+  showApply = true,
+  applyLabel = 'Apply',
+  applyAndRunLabel = 'Apply & Run',
   onCancel,
   onApply,
   onApplyAndRun,
@@ -115,11 +118,11 @@ export default function ScientificSetupDialog({
         </DialogContent>
         <DialogActions sx={{ position: 'sticky', bottom: 0, bgcolor: 'background.paper', px: 3, py: 1.5, gap: 0.5 }}>
           <Button onClick={onCancel} disabled={loading}>Cancel</Button>
-          <Button variant="outlined" onClick={onApply} disabled={loading || applyDisabled}>Apply</Button>
+          {showApply ? <Button variant="outlined" onClick={onApply} disabled={loading || applyDisabled}>{applyLabel}</Button> : null}
           {onApplyAndRun ? (
             <Button variant="contained" onClick={onApplyAndRun} disabled={loading || runDisabled}>
               {loading ? <CircularProgress size={16} color="inherit" sx={{ mr: 1 }} /> : null}
-              Apply &amp; Run
+              {applyAndRunLabel}
             </Button>
           ) : null}
         </DialogActions>
