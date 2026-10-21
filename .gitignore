@@ -25,6 +25,8 @@ backend/job_metadata/*
 !backend/job_metadata/.gitkeep
 backend/job_annotations/*
 !backend/job_annotations/.gitkeep
+backend/admet_run_outputs/
+backend/admet_run_metadata/
 backend/import_jobs/*
 !backend/import_jobs/.gitkeep
 backend/experimental_previews/*

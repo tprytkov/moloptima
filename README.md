@@ -210,12 +210,22 @@ Core local endpoints:
 - `GET /health`
 - `POST /api/molecules/upload`
 - `POST /api/jobs/prioritization`
+- `POST /api/admet/runs`
+- `GET /api/admet/runs/{run_id}`
+- `GET /api/admet/runs/{run_id}/result`
 - `GET /api/jobs/latest`
 - `GET /api/results/{job_id}`
 - `GET /api/model-sources/status`
 - `POST /api/model-sources/refresh`
 
 Uploaded CSVs, ranked result files, JSON job metadata, and local review annotations are stored locally under `backend/` runtime folders.
+
+Independent ADMET v1 always runs the complete qualified frozen panel: ChemBERTa
+classification (9 endpoints), GMC-MPNN BBB (1 endpoint), and Chemprop regression
+(5 endpoints). The request accepts a normalized molecule-collection `upload_id` and
+does not accept model-family selection, endpoint selection, custom thresholds, or
+custom calibration. Runs use the same `ADMETRegistry` as prioritization while keeping
+their metadata and scientific results separate from prioritization history.
 
 ## Model Cache Explanation
 

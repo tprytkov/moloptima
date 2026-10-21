@@ -27,6 +27,13 @@ from molecular_prioritization.admet_multitask_predictor import (
 )
 from molecular_prioritization.admet_registry import CLASSIFICATION_ENDPOINTS
 from molecular_prioritization.admet_runtime import portable_runtime_identities
+from molecular_prioritization.admet_service import (
+    CONTRACT_VERSION as ADMET_CONTRACT_VERSION,
+    FULL_PANEL_ENDPOINT_COUNT,
+    MODEL_FAMILIES as ADMET_MODEL_FAMILIES,
+    PANEL_ID as ADMET_PANEL_ID,
+    run_full_admet_panel,
+)
 from molecular_prioritization.builtin_profiles import builtin_profile_catalog
 from molecular_prioritization.desirability import (
     TRANSFORM_PARAMETER_SCHEMAS,
@@ -83,6 +90,8 @@ RECEPTOR_DIR = BACKEND_DIR / "receptors"
 JOB_OUTPUT_DIR = BACKEND_DIR / "job_outputs"
 JOB_METADATA_DIR = BACKEND_DIR / "job_metadata"
 JOB_ANNOTATION_DIR = BACKEND_DIR / "job_annotations"
+ADMET_RUN_OUTPUT_DIR = BACKEND_DIR / "admet_run_outputs"
+ADMET_RUN_METADATA_DIR = BACKEND_DIR / "admet_run_metadata"
 IMPORT_JOB_DIR = BACKEND_DIR / "import_jobs"
 EXPERIMENTAL_PREVIEW_DIR = BACKEND_DIR / "experimental_previews"
 EXPERIMENTAL_DATASET_DIR = BACKEND_DIR / "experimental_datasets"
@@ -1435,6 +1444,190 @@ def run_prioritization_job(
     return metadata
 
 
+def run_admet_job(upload_id: str, *, panel: str = ADMET_PANEL_ID) -> dict[str, object]:
+    """Create an independent asynchronous full-panel ADMET run."""
+
+    if panel != ADMET_PANEL_ID:
+        raise HTTPException(status_code=422, detail="Independent ADMET v1 supports only the full frozen panel.")
+    manifest_path = _molecule_collection_manifest_path(upload_id)
+    records = _load_molecule_collection_records(upload_id)
+    if not records:
+        raise HTTPException(status_code=422, detail="The molecule collection is empty.")
+    valid_count = sum(
+        str(record.get("validation_status") or "").casefold() == "valid"
+        and bool(str(record.get("canonical_smiles") or "").strip())
+        for record in records
+    )
+    if valid_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="At least one chemically valid compound is required to run ADMET.",
+        )
+
+    run_id = uuid4().hex
+    output_path = ADMET_RUN_OUTPUT_DIR / run_id / "admet_results.json"
+    metadata = {
+        "run_id": run_id,
+        "run_type": "admet",
+        "contract_version": ADMET_CONTRACT_VERSION,
+        "panel": ADMET_PANEL_ID,
+        "upload_id": upload_id,
+        "molecule_collection_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "status": "queued",
+        "stage": "queued",
+        "created_at": utc_timestamp(),
+        "started_at": None,
+        "completed_at": None,
+        "error_message": "",
+        "output_file": relative_path(output_path),
+        "submitted_count": len(records),
+        "valid_count": valid_count,
+        "invalid_count": len(records) - valid_count,
+        "processed_count": 0,
+        "admet_success_count": 0,
+        "admet_failure_count": 0,
+        "warning_count": 0,
+        "endpoint_count": FULL_PANEL_ENDPOINT_COUNT,
+        "model_families": list(ADMET_MODEL_FAMILIES),
+        "admet_runtime_identities": [],
+        "cancellation_requested": False,
+    }
+    write_admet_run_metadata(metadata)
+    job_runner.submit(run_id, _execute_admet_job, run_id)
+    return metadata
+
+
+def _execute_admet_job(run_id: str) -> None:
+    """Execute one independent ADMET run without docking or prioritization."""
+
+    current = read_admet_run_metadata(run_id)
+    if current is None or current.get("status") == "cancelled":
+        return
+    started_at = utc_timestamp()
+    update_admet_run_metadata(run_id, status="running", stage="admet", started_at=started_at)
+    try:
+        upload_id = str(current["upload_id"])
+        manifest_path = _molecule_collection_manifest_path(upload_id)
+        current_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        if current_digest != current.get("molecule_collection_sha256"):
+            raise RuntimeError("Molecule collection identity changed after ADMET submission.")
+        records = _load_molecule_collection_records(upload_id)
+        scientific = run_full_admet_panel(records)
+        runtime_identities = portable_runtime_identities(scientific.get("runtime_identities"))
+        results = list(scientific["results"])
+        success_count = sum(row.get("admet_model_status") == "model_available" for row in results)
+        failure_count = sum(
+            row.get("valid_molecule") is True and row.get("admet_model_status") != "model_available"
+            for row in results
+        )
+        warning_count = sum(
+            row.get("valid_molecule") is True
+            and any(
+                str(value) not in {"success", "available"}
+                for value in dict(row.get("admet_family_status") or {}).values()
+            )
+            for row in results
+        )
+        completed_at = utc_timestamp()
+        output_path = PROJECT_ROOT / str(current["output_file"])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_json_atomic(output_path, {
+            **scientific,
+            "runtime_identities": runtime_identities,
+            "run_id": run_id,
+            "upload_id": upload_id,
+            "molecule_collection_sha256": current_digest,
+            "status": "completed_with_warnings" if warning_count else "completed",
+            "created_at": current["created_at"],
+            "started_at": started_at,
+            "completed_at": completed_at,
+        })
+        update_admet_run_metadata(
+            run_id,
+            status="completed_with_warnings" if warning_count else "completed",
+            stage="completed",
+            completed_at=completed_at,
+            processed_count=len(results),
+            admet_success_count=success_count,
+            admet_failure_count=failure_count,
+            warning_count=warning_count,
+            admet_runtime_identities=runtime_identities,
+        )
+    except Exception as exc:
+        update_admet_run_metadata(
+            run_id,
+            status="failed",
+            stage="completed",
+            completed_at=utc_timestamp(),
+            error_message=str(exc),
+        )
+
+
+def get_admet_run_status(run_id: str) -> dict[str, object]:
+    """Return persisted status for one independent ADMET run."""
+
+    validate_existing_admet_run_id(run_id)
+    metadata = read_admet_run_metadata(run_id)
+    if metadata is None:  # pragma: no cover - guarded by validation
+        raise HTTPException(status_code=404, detail="ADMET run not found.")
+    return metadata
+
+
+def get_admet_run_result(run_id: str) -> dict[str, object]:
+    """Return the persisted scientific result for a terminal ADMET run."""
+
+    metadata = get_admet_run_status(run_id)
+    if metadata["status"] in {"failed", "cancelled"}:
+        return {**metadata, "results": []}
+    if metadata["status"] not in {"completed", "completed_with_warnings"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"ADMET results are not ready; run status is {metadata['status']}.",
+        )
+    output_path = PROJECT_ROOT / str(metadata["output_file"])
+    if not output_path.is_file():
+        raise HTTPException(status_code=404, detail="ADMET result file not found.")
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=409, detail="ADMET result file is unreadable.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=409, detail="ADMET result file is unreadable.")
+    if (
+        payload.get("run_id") != run_id
+        or payload.get("upload_id") != metadata.get("upload_id")
+        or payload.get("molecule_collection_sha256") != metadata.get("molecule_collection_sha256")
+    ):
+        raise HTTPException(status_code=409, detail="ADMET result identity does not match its run metadata.")
+    return {
+        **metadata,
+        **payload,
+        "admet_runtime_identities": payload.get(
+            "runtime_identities", metadata.get("admet_runtime_identities", [])
+        ),
+    }
+
+
+def request_admet_run_cancellation(run_id: str) -> dict[str, object]:
+    """Cancel a queued ADMET run; running model inference is not interrupted."""
+
+    metadata = get_admet_run_status(run_id)
+    if metadata.get("status") in TERMINAL_JOB_STATUSES:
+        return metadata
+    if not job_runner.request_cancel(run_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Running ADMET inference cannot be cancelled safely.",
+        )
+    return update_admet_run_metadata(
+        run_id,
+        status="cancelled",
+        stage="completed",
+        completed_at=utc_timestamp(),
+        cancellation_requested=True,
+    )
+
+
 def _execute_prioritization_job(
     job_id: str,
     input_path: Path,
@@ -2059,6 +2252,53 @@ def write_job_metadata(metadata: dict[str, object]) -> None:
             os.replace(temporary_path, metadata_path)
         finally:
             temporary_path.unlink(missing_ok=True)
+
+
+def write_admet_run_metadata(metadata: dict[str, object]) -> None:
+    """Atomically persist metadata for an independent ADMET run."""
+
+    with _metadata_lock:
+        ADMET_RUN_METADATA_DIR.mkdir(parents=True, exist_ok=True)
+        metadata_path = ADMET_RUN_METADATA_DIR / f"{metadata['run_id']}.json"
+        temporary_path = ADMET_RUN_METADATA_DIR / f".{metadata['run_id']}.{uuid4().hex}.tmp"
+        try:
+            with temporary_path.open("w", encoding="utf-8") as handle:
+                json.dump(metadata, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, metadata_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+
+
+def update_admet_run_metadata(run_id: str, **updates: object) -> dict[str, object]:
+    """Update one independent ADMET run without touching prioritization history."""
+
+    with _metadata_lock:
+        metadata = read_admet_run_metadata(run_id)
+        if metadata is None:
+            raise HTTPException(status_code=404, detail="ADMET run not found.")
+        metadata.update(updates)
+        write_admet_run_metadata(metadata)
+        return metadata
+
+
+def read_admet_run_metadata(run_id: str) -> dict[str, object] | None:
+    with _metadata_lock:
+        metadata_path = ADMET_RUN_METADATA_DIR / f"{run_id}.json"
+        if not metadata_path.is_file():
+            return None
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+
+def validate_existing_admet_run_id(run_id: str) -> None:
+    if not _valid_hex_id(run_id) or read_admet_run_metadata(run_id) is None:
+        raise HTTPException(status_code=404, detail="ADMET run not found.")
 
 
 def update_job_metadata(job_id: str, **updates: object) -> dict[str, object]:

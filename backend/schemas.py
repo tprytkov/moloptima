@@ -457,6 +457,83 @@ class PrioritizationRequest(BaseModel):
     docking_worker_count: int | None = None
 
 
+class ADMETRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    upload_id: str = Field(..., min_length=32, max_length=32)
+    panel: Literal["full_frozen_panel"] = "full_frozen_panel"
+
+
+class IndependentADMETMoleculeResult(BaseModel):
+    molecule_id: str
+    original_molecule_id: str = ""
+    canonical_smiles: str = ""
+    validation_status: str
+    failure_reason: str = ""
+    valid_molecule: bool
+    admet_model_status: str
+    admet_warning: str = ""
+    admet_predictions: dict[str, ADMETEndpointPrediction]
+    bbb_result: GMCBBBResult
+    admet_regression: ADMETRegressionResult
+    admet_family_status: dict[str, str]
+
+    @field_validator("admet_predictions")
+    @classmethod
+    def validate_full_classification_panel(
+        cls, value: dict[str, ADMETEndpointPrediction]
+    ) -> dict[str, ADMETEndpointPrediction]:
+        if set(value) != ADMET_ENDPOINT_NAMES:
+            raise ValueError("Independent ADMET must contain the frozen 9-endpoint classification set")
+        return value
+
+    @field_validator("admet_family_status")
+    @classmethod
+    def validate_full_family_status(cls, value: dict[str, str]) -> dict[str, str]:
+        if set(value) != {"chemberta", "gmc_bbb", "chemprop_regression"}:
+            raise ValueError("Independent ADMET must report all three model-family statuses")
+        return value
+
+
+class ADMETRunResponse(BaseModel):
+    run_id: str
+    run_type: Literal["admet"] = "admet"
+    contract_version: Literal["moloptima-independent-admet-v1"]
+    panel: Literal["full_frozen_panel"]
+    upload_id: str
+    molecule_collection_sha256: str
+    status: JobStatus
+    stage: Literal["queued", "admet", "completed"]
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    error_message: str = ""
+    output_file: str
+    submitted_count: int
+    valid_count: int
+    invalid_count: int
+    processed_count: int = 0
+    admet_success_count: int = 0
+    admet_failure_count: int = 0
+    warning_count: int = 0
+    endpoint_count: Literal[15] = 15
+    model_families: list[Literal["chemberta", "gmc_mpnn_bbb", "chemprop_regression"]]
+    admet_runtime_identities: list[dict[str, Any]] = Field(default_factory=list)
+    cancellation_requested: bool = False
+
+    @field_validator("model_families")
+    @classmethod
+    def validate_full_model_family_inventory(cls, value: list[str]) -> list[str]:
+        expected = ["chemberta", "gmc_mpnn_bbb", "chemprop_regression"]
+        if value != expected:
+            raise ValueError("Independent ADMET must use the complete ordered model-family inventory")
+        return value
+
+
+class ADMETRunResultResponse(ADMETRunResponse):
+    results: list[IndependentADMETMoleculeResult]
+
+
 class JobResponse(BaseModel):
     job_id: str
     upload_id: str

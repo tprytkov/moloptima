@@ -11,6 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend import design_logic_service, services
 from backend.schemas import (
+    ADMETRunRequest,
+    ADMETRunResponse,
+    ADMETRunResultResponse,
     CandidateSdfExportRequest,
     ChemicalSpaceNeighborRequest,
     ChemicalSpaceNeighborResponse,
@@ -510,6 +513,26 @@ def create_prioritization_job(request: PrioritizationRequest) -> JobResponse:
             },
         )
     )
+
+
+@app.post("/api/admet/runs", response_model=ADMETRunResponse)
+def create_admet_run(request: ADMETRunRequest) -> ADMETRunResponse:
+    return ADMETRunResponse(**services.run_admet_job(request.upload_id, panel=request.panel))
+
+
+@app.get("/api/admet/runs/{run_id}", response_model=ADMETRunResponse)
+def get_admet_run(run_id: str) -> ADMETRunResponse:
+    return ADMETRunResponse(**services.get_admet_run_status(run_id))
+
+
+@app.get("/api/admet/runs/{run_id}/result", response_model=ADMETRunResultResponse)
+def get_admet_run_result(run_id: str) -> ADMETRunResultResponse:
+    return ADMETRunResultResponse(**services.get_admet_run_result(run_id))
+
+
+@app.post("/api/admet/runs/{run_id}/cancel", response_model=ADMETRunResponse)
+def cancel_admet_run(run_id: str) -> ADMETRunResponse:
+    return ADMETRunResponse(**services.request_admet_run_cancellation(run_id))
 
 
 @app.get("/api/jobs/latest", response_model=LatestJobResponse)
