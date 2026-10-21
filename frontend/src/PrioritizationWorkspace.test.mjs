@@ -60,6 +60,11 @@ test('authoritative score and rank are read from the persisted contract without 
   assert.deepEqual(module.authoritativePriority({ scientific_rank: 3, scientific_ranking_score: 0.55, priority_score: 0.9 }), { rank: 3, score: 0.55 });
 });
 
+test('empty docking values stay unavailable while a real zero remains visible', () => {
+  assert.deepEqual(module.dockingEvidence({ docking_score: '' }), { status: 'not_available', affinity: null });
+  assert.deepEqual(module.dockingEvidence({ docking_score: 0 }), { status: 'not_available', affinity: 0 });
+});
+
 test('comparison membership is explicit, removable, and bounded to five candidates', () => {
   assert.deepEqual(module.updateComparisonSelection([], 'a'), ['a']);
   assert.deepEqual(module.updateComparisonSelection(['a'], 'a'), []);
@@ -73,11 +78,13 @@ test('dataset synchronization clears stale selection and comparison membership',
 });
 
 test('candidate table uses keyboard rows, labeled comparison controls, lazy thumbnails, and local overflow', () => {
-  const html = renderToStaticMarkup(React.createElement(module.default, { rows, result: {}, job: { job_id: 'job-a' } }));
+  const html = renderToStaticMarkup(React.createElement(module.default, { rows, result: {}, job: { job_id: 'job-a' }, baseUrl: 'http://127.0.0.1:8123/' }));
   assert.match(html, /aria-label="Prioritization candidates"/);
   assert.match(html, /tabindex="0"/);
   assert.match(html, /aria-label="Add cmpd-b to comparison set"/);
   assert.match(html, /loading="lazy"/);
+  assert.match(html, /http:\/\/127\.0\.0\.1:8123\/api\/molecules\/structure/);
+  assert.match(html, /width=160&amp;height=120/);
   assert.match(html, /overflow-x:auto/);
 });
 

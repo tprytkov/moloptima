@@ -661,6 +661,56 @@ test('prioritization page adapts to compound assessment for one valid compound',
   assert.match(html, /Not applicable: Library Prioritization, Pareto Analysis, and Rank Sensitivity/);
 });
 
+test('prioritization page uses compact setup summary while exploration controls remain in the workspace', () => {
+  const noop = () => {};
+  const result = {
+    prioritization_method: 'v2',
+    prioritization_profile: { profile_id: 'profile-a', name: 'Profile A', target_mode: 'CNS' },
+    results: [{
+      molecule_id: 'candidate-a', canonical_smiles: 'CCO', valid_molecule: true,
+      v2_rank: 1, v2_score: 0.72, prioritization_status: 'fully_scored',
+      admet_model_status: 'model_available', docking_status: 'not_run',
+      chembl_lookup_status: 'exact_match', chembl_similarity_status: 'similarity_match',
+    }],
+  };
+  const html = renderToStaticMarkup(React.createElement(module.PrioritizationPage, {
+    uploadState: { upload: { upload_id: 'u1', analysis_mode: 'library', valid_count: 1 } },
+    prioritizationState: { job: { job_id: 'job-a', status: 'completed', prioritization_method: 'v2' }, result, loading: false, error: '' },
+    onStartPrioritization: noop, onCancelPrioritization: noop,
+    pubchemLookupEnabled: false, chemblLookupEnabled: true,
+    patentLookupEnabled: false, targetReferenceEnabled: false,
+    targetContext: { enable_docking: false },
+    prioritizationSettings: { method: 'v2', profile: result.prioritization_profile, validation: { scoreable: true } },
+    onApplyPrioritizationSetup: noop, onNavigate: noop,
+  }));
+  assert.match(html, /Prioritization Setup/);
+  assert.match(html, /Calculation context/);
+  assert.match(html, /Search candidates/);
+  assert.match(html, /Evidence readiness/);
+  assert.match(html, /Sort by/);
+  assert.match(html, /Comparison set/);
+  assert.doesNotMatch(html, /Apply &amp; Run/);
+  assert.doesNotMatch(html, /Top-level component weights/);
+});
+
+test('applied setup changes mark persisted prioritization results as requiring update', () => {
+  assert.equal(module.prioritizationModuleStatus({
+    prioritizationState: { job: { status: 'completed' }, result: { results: [] } },
+    configurationStale: true,
+    hasCollection: true,
+  }), 'Requires update');
+  assert.equal(module.prioritizationModuleStatus({
+    prioritizationState: { job: null, result: null, loading: false },
+    configurationStale: false,
+    hasCollection: true,
+  }), 'Ready');
+  assert.equal(module.prioritizationModuleStatus({
+    prioritizationState: { job: null, result: null, loading: false },
+    configurationStale: false,
+    hasCollection: false,
+  }), 'Not run');
+});
+
 function renderDockingWorkflow(upload) {
   const noop = () => {};
   return renderToStaticMarkup(React.createElement(module.DockingWorkflowPage, {

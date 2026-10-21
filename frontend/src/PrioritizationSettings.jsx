@@ -113,6 +113,7 @@ export default function PrioritizationSettings({
   value,
   onChange,
   metadata: suppliedMetadata = null,
+  embedded = false,
 }) {
   const method = value?.method ?? 'legacy_v1';
   const profile = value?.profile ?? null;
@@ -230,7 +231,7 @@ export default function PrioritizationSettings({
   }
 
   return (
-    <Box component="section" aria-label="Prioritization Settings" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+    <Box component="section" aria-label="Prioritization Settings" sx={embedded ? undefined : { border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
       <Stack spacing={2}>
         <Box>
           <Typography variant="h2">Prioritization Settings</Typography>

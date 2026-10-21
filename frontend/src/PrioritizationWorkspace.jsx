@@ -47,10 +47,11 @@ export function authoritativePriority(row) {
 
 export function dockingEvidence(row) {
   const result = row?.docking_result ?? {};
+  const affinity = result.best_vina_affinity_kcal_mol ?? row?.best_vina_affinity_kcal_mol
+    ?? row?.docking_score ?? null;
   return {
     status: result.status ?? row?.docking_status ?? 'not_available',
-    affinity: result.best_vina_affinity_kcal_mol ?? row?.best_vina_affinity_kcal_mol
-      ?? row?.docking_score ?? null,
+    affinity: affinity === '' ? null : affinity,
   };
 }
 
@@ -112,11 +113,11 @@ function optionValues(rows, getter) {
   return Array.from(new Set(rows.map(getter).filter(Boolean))).sort();
 }
 
-function structureUrl(row) {
+function structureUrl(row, baseUrl = 'http://localhost:8000') {
   const smiles = row?.canonical_smiles || row?.input_smiles;
   if (!smiles) return '';
-  const params = new URLSearchParams({ smiles, width: '128', height: '86' });
-  return `http://localhost:8000/api/molecules/structure?${params.toString()}`;
+  const params = new URLSearchParams({ smiles, width: '160', height: '120' });
+  return `${baseUrl.replace(/\/$/, '')}/api/molecules/structure?${params.toString()}`;
 }
 
 function StatusLabel({ value }) {
@@ -134,7 +135,7 @@ function Metric({ label, value, mono = false }) {
   );
 }
 
-function CandidateTable({ rows, selectedId, comparisonIds, onSelect, onToggleComparison }) {
+function CandidateTable({ rows, selectedId, comparisonIds, onSelect, onToggleComparison, baseUrl }) {
   return (
     <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, overflowX: 'auto' }}>
       <Table size="small" aria-label="Prioritization candidates" sx={{ minWidth: 980 }}>
@@ -157,7 +158,7 @@ function CandidateTable({ rows, selectedId, comparisonIds, onSelect, onToggleCom
             const priority = authoritativePriority(row);
             const docking = dockingEvidence(row);
             const experimental = experimentalEvidence(row);
-            const image = structureUrl(row);
+            const image = structureUrl(row, baseUrl);
             return (
               <TableRow
                 hover
@@ -308,7 +309,7 @@ function SelectedInspector({ row, profile, profileSha256, job }) {
   );
 }
 
-export default function PrioritizationWorkspace({ rows, result, job, onOpenResults }) {
+export default function PrioritizationWorkspace({ rows, result, job, baseUrl }) {
   const datasetKey = String(job?.job_id || result?.upload_id || rows.map((row, index) => candidateKey(row, index)).join('|'));
   const firstId = rows.length ? candidateKey(rows[0]) : '';
   const [selection, dispatch] = useReducer(workspaceSelectionReducer, { datasetKey, selectedId: firstId, comparisonIds: [] });
@@ -329,18 +330,6 @@ export default function PrioritizationWorkspace({ rows, result, job, onOpenResul
   const setControl = (key) => (event) => setControls((current) => ({ ...current, [key]: event.target.value }));
   return (
     <Stack spacing={2} component="section" aria-label="Prioritization scientific workspace">
-      <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', p: 2 }}>
-        <Stack direction={{ xs: 'column', lg: 'row' }} justifyContent="space-between" gap={1.5}>
-          <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
-            <Metric label="Candidates" value={rows.length} />
-            <Metric label="Method" value={present(result?.prioritization_method ?? job?.prioritization_method)} />
-            <Metric label="Profile" value={profile?.name ?? profile?.profile_id} />
-            <Metric label="Target mode" value={present(profile?.target_mode)} />
-          </Stack>
-          {onOpenResults ? <Button variant="outlined" onClick={onOpenResults}>Open results and exports</Button> : null}
-        </Stack>
-      </Paper>
-
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', xl: 'minmax(0, 1.65fr) minmax(340px, 0.85fr)' }, gap: 2, alignItems: 'start', minWidth: 0 }}>
         <Stack spacing={2} sx={{ minWidth: 0 }}>
           <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
@@ -355,7 +344,7 @@ export default function PrioritizationWorkspace({ rows, result, job, onOpenResul
                 <TextField select slotProps={{ select: { native: true } }} size="small" label="Sort by" value={controls.sort} onChange={setControl('sort')}><option value="contract">Contract order</option><option value="rank">Stored rank</option><option value="score">Stored score</option><option value="molecule">Compound ID</option></TextField>
               </Box>
             </Box>
-            <CandidateTable rows={pageRows} selectedId={selection.selectedId} comparisonIds={selection.comparisonIds} onSelect={(moleculeId) => dispatch({ type: 'select', moleculeId })} onToggleComparison={(moleculeId) => dispatch({ type: 'toggle-comparison', moleculeId })} />
+            <CandidateTable rows={pageRows} selectedId={selection.selectedId} comparisonIds={selection.comparisonIds} onSelect={(moleculeId) => dispatch({ type: 'select', moleculeId })} onToggleComparison={(moleculeId) => dispatch({ type: 'toggle-comparison', moleculeId })} baseUrl={baseUrl} />
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} gap={1} sx={{ p: 1.5 }}>
               <Typography variant="caption" color="text.secondary">{visibleRows.length === 0 ? 'No candidates match the current filters.' : `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, visibleRows.length)} of ${visibleRows.length} candidates`}</Typography>
               <Stack direction="row" spacing={1} alignItems="center"><Button size="small" disabled={page === 0} onClick={() => setPage((value) => value - 1)}>Previous</Button><Chip size="small" variant="outlined" label={`Page ${page + 1} of ${pages}`} /><Button size="small" disabled={page + 1 >= pages} onClick={() => setPage((value) => value + 1)}>Next</Button></Stack>

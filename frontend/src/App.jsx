@@ -6,13 +6,11 @@ import {
   Button,
   Card,
   CardContent,
-  Checkbox,
   Chip,
   CircularProgress,
   CssBaseline,
   Divider,
   Drawer,
-  FormControlLabel,
   IconButton,
   List,
   ListItemButton,
@@ -70,8 +68,10 @@ import DockingResultsSection, { dockingStatusLabel } from './DockingResultsSecti
 import DockingSetup from './DockingSetup.jsx';
 import PrioritizationExplanationSection from './PrioritizationExplanationSection.jsx';
 import PrioritizationAnalysisPanel from './PrioritizationAnalysisPanel.jsx';
-import PrioritizationSettings from './PrioritizationSettings.jsx';
 import PrioritizationWorkspace from './PrioritizationWorkspace.jsx';
+import PrioritizationSetupDialog, {
+  createPrioritizationSetupConfiguration,
+} from './PrioritizationSetupDialog.jsx';
 import MoleculeInputPanel from './MoleculeInputPanel.jsx';
 import {
   applyMoleculeSelectionUpdate,
@@ -366,6 +366,7 @@ function App() {
   const [uploadState, setUploadState] = useState({ ...EMPTY_UPLOAD_STATE });
   const activeImportRef = useRef(null);
   const [prioritizationState, setPrioritizationState] = useState({ ...EMPTY_PRIORITIZATION_STATE });
+  const [prioritizationConfigurationStale, setPrioritizationConfigurationStale] = useState(false);
   const activeRequestVersionRef = useRef(0);
   const [independentAdmetState, setIndependentAdmetState] = useState({ ...EMPTY_INDEPENDENT_ADMET_STATE });
   const admetRequestVersionRef = useRef(0);
@@ -600,6 +601,7 @@ function App() {
       admetRequestVersionRef.current += 1;
       setIndependentAdmetState({ ...EMPTY_INDEPENDENT_ADMET_STATE });
       setPrioritizationState({ job: null, result: null, loading: false, error: '' });
+      setPrioritizationConfigurationStale(false);
       setUploadState((current) => ({
         ...current,
         upload: payload,
@@ -642,6 +644,7 @@ function App() {
     const reset = newCalculationState(runHistoryState.jobs);
     setUploadState({ ...EMPTY_UPLOAD_STATE, upload: reset.upload });
     setPrioritizationState(reset.activeRun);
+    setPrioritizationConfigurationStale(false);
     setIndependentAdmetState({ ...EMPTY_INDEPENDENT_ADMET_STATE });
     setAnnotationsState(reset.annotations);
     setRunHistoryState((current) => ({ ...current, selectedJobId: reset.selectedHistoryJobId }));
@@ -700,6 +703,7 @@ function App() {
     activeRequestVersionRef.current = requestId;
     const requestIsCurrent = () => isCurrentActiveRequest(requestId, activeRequestVersionRef.current);
     setPrioritizationState({ job: null, result: null, loading: true, error: '' });
+    setPrioritizationConfigurationStale(false);
 
     try {
       const job = await apiRequest('/api/jobs/prioritization', {
@@ -804,6 +808,7 @@ function App() {
     const requestIsCurrent = () => isCurrentActiveRequest(requestId, activeRequestVersionRef.current);
     setRunHistoryState((current) => ({ ...current, loading: true, error: '' }));
     setPrioritizationState({ job: null, result: null, loading: true, error: '' });
+    setPrioritizationConfigurationStale(false);
     try {
       const [result, jobPayload] = await Promise.all([
         apiRequest(`/api/results/${jobId}`),
@@ -848,6 +853,16 @@ function App() {
         error: readableError(error),
       }));
     }
+  }
+
+  function handleApplyPrioritizationSetup(configuration) {
+    setPrioritizationSettings(configuration.prioritizationSettings);
+    setPubchemLookupEnabled(configuration.pubchemLookupEnabled);
+    setChemblLookupEnabled(configuration.chemblLookupEnabled);
+    setPatentLookupEnabled(configuration.patentLookupEnabled);
+    setTargetReferenceEnabled(configuration.targetReferenceEnabled);
+    setTargetContext(configuration.targetContext);
+    setPrioritizationConfigurationStale(Boolean(prioritizationState.result));
   }
 
   async function handleStartIndependentAdmet() {
@@ -1101,17 +1116,13 @@ function App() {
               onRefreshRunHistory={handleRefreshRunHistory}
               onNewCalculation={handleNewCalculation}
               pubchemLookupEnabled={pubchemLookupEnabled}
-              setPubchemLookupEnabled={setPubchemLookupEnabled}
               chemblLookupEnabled={chemblLookupEnabled}
-              setChemblLookupEnabled={setChemblLookupEnabled}
               patentLookupEnabled={patentLookupEnabled}
-              setPatentLookupEnabled={setPatentLookupEnabled}
               targetReferenceEnabled={targetReferenceEnabled}
-              setTargetReferenceEnabled={setTargetReferenceEnabled}
               targetContext={targetContext}
-              setTargetContext={setTargetContext}
               prioritizationSettings={prioritizationSettings}
-              setPrioritizationSettings={setPrioritizationSettings}
+              prioritizationConfigurationStale={prioritizationConfigurationStale}
+              onApplyPrioritizationSetup={handleApplyPrioritizationSetup}
               onCheckLocalModelCache={handleCheckLocalModelCache}
               onRefreshSourceStatus={handleRefreshSourceStatus}
               onSaveReviewAnnotation={handleSaveReviewAnnotation}
@@ -1285,17 +1296,13 @@ function ActivePage({
   onNewCalculation,
   onSaveReviewAnnotation,
   pubchemLookupEnabled,
-  setPubchemLookupEnabled,
   chemblLookupEnabled,
-  setChemblLookupEnabled,
   patentLookupEnabled,
-  setPatentLookupEnabled,
   targetReferenceEnabled,
-  setTargetReferenceEnabled,
   targetContext,
-  setTargetContext,
   prioritizationSettings,
-  setPrioritizationSettings,
+  prioritizationConfigurationStale,
+  onApplyPrioritizationSetup,
   onCheckLocalModelCache,
   onRefreshSourceStatus,
   onNavigate,
@@ -1386,17 +1393,13 @@ function ActivePage({
         onCancelPrioritization={onCancelPrioritization}
         onDockingSetupConfirmed={onDockingSetupConfirmed}
         pubchemLookupEnabled={pubchemLookupEnabled}
-        setPubchemLookupEnabled={setPubchemLookupEnabled}
         chemblLookupEnabled={chemblLookupEnabled}
-        setChemblLookupEnabled={setChemblLookupEnabled}
         patentLookupEnabled={patentLookupEnabled}
-        setPatentLookupEnabled={setPatentLookupEnabled}
         targetReferenceEnabled={targetReferenceEnabled}
-        setTargetReferenceEnabled={setTargetReferenceEnabled}
         targetContext={targetContext}
-        setTargetContext={setTargetContext}
         prioritizationSettings={prioritizationSettings}
-        setPrioritizationSettings={setPrioritizationSettings}
+        prioritizationConfigurationStale={prioritizationConfigurationStale}
+        onApplyPrioritizationSetup={onApplyPrioritizationSetup}
         annotationsState={annotationsState}
         onSaveReviewAnnotation={onSaveReviewAnnotation}
         onNavigate={onNavigate}
@@ -3682,23 +3685,40 @@ export function CandidateExportPanel({ rows }) {
   );
 }
 
+export function prioritizationModuleStatus({ prioritizationState, configurationStale, hasCollection }) {
+  if (configurationStale && prioritizationState.result) return 'Requires update';
+  const status = prioritizationState.job?.status;
+  if (status === 'completed_with_warnings') return 'Completed with warnings';
+  if (status === 'completed') return 'Completed';
+  if (status === 'failed') return 'Failed';
+  if (status === 'cancelled') return 'Cancelled';
+  if (status === 'queued') return 'Queued';
+  if (status === 'running' || prioritizationState.loading) return 'Running';
+  return hasCollection ? 'Ready' : 'Not run';
+}
+
+function enabledEvidenceSources(configuration) {
+  const sources = [];
+  if (configuration.pubchemLookupEnabled) sources.push('PubChem');
+  if (configuration.chemblLookupEnabled) sources.push('ChEMBL');
+  if (configuration.patentLookupEnabled) sources.push('SureChEMBL');
+  if (configuration.targetReferenceEnabled) sources.push('Target references');
+  return sources.length ? sources.join(', ') : 'Off';
+}
+
 export function PrioritizationPage({
   uploadState,
   prioritizationState,
   onStartPrioritization,
   onCancelPrioritization,
   pubchemLookupEnabled,
-  setPubchemLookupEnabled,
   chemblLookupEnabled,
-  setChemblLookupEnabled,
   patentLookupEnabled,
-  setPatentLookupEnabled,
   targetReferenceEnabled,
-  setTargetReferenceEnabled,
   targetContext,
-  setTargetContext,
   prioritizationSettings,
-  setPrioritizationSettings,
+  prioritizationConfigurationStale = false,
+  onApplyPrioritizationSetup = () => {},
   annotationsState,
   onSaveReviewAnnotation,
   onNavigate,
@@ -3707,6 +3727,35 @@ export function PrioritizationPage({
   const summary = normalizePrioritizationSummary(prioritizationState);
   const single = uploadState.upload?.analysis_mode === 'single_compound'
     || prioritizationState.job?.analysis_mode === 'single_compound';
+  const appliedConfiguration = useMemo(() => createPrioritizationSetupConfiguration({
+    prioritizationSettings,
+    pubchemLookupEnabled,
+    chemblLookupEnabled,
+    patentLookupEnabled,
+    targetReferenceEnabled,
+    targetContext,
+  }), [
+    prioritizationSettings,
+    pubchemLookupEnabled,
+    chemblLookupEnabled,
+    patentLookupEnabled,
+    targetReferenceEnabled,
+    targetContext,
+  ]);
+  const activeProfile = prioritizationSettings.profile
+    ?? prioritizationState.result?.prioritization_profile
+    ?? prioritizationState.job?.prioritization_profile;
+  const validCount = validatedMoleculeCount(uploadState.upload);
+  const status = prioritizationModuleStatus({
+    prioritizationState,
+    configurationStale: prioritizationConfigurationStale,
+    hasCollection: validCount > 0,
+  });
+  const runDisabled = validCount === 0
+    || prioritizationState.loading
+    || (prioritizationSettings.method === 'v2' && !prioritizationSettings.validation?.scoreable);
+  const jobIsActive = prioritizationState.job
+    && !TERMINAL_JOB_STATUSES.has(prioritizationState.job.status);
 
   return (
     <Stack spacing={3}>
@@ -3719,117 +3768,56 @@ export function PrioritizationPage({
 
       {single ? <Alert severity="info">Available: Molecular Properties, ADMET, Docking, and Profile Interpretation. Not applicable: Library Prioritization, Pareto Analysis, and Rank Sensitivity.</Alert> : null}
 
+      <ModuleConfigurationSummary
+        title={single ? 'Compound Assessment' : 'Prioritization'}
+        status={status}
+        items={[
+          { label: 'Calculation context', value: resultRows.length ? `${resultRows.length.toLocaleString()} persisted candidate${resultRows.length === 1 ? '' : 's'}` : validCount ? `${validCount.toLocaleString()} valid molecule${validCount === 1 ? '' : 's'}` : 'No active molecule collection' },
+          { label: 'Method', value: prioritizationSettings.method === 'v2' ? 'Prioritization v2' : 'Legacy v1' },
+          { label: 'Profile', value: activeProfile?.name ?? activeProfile?.profile_id ?? 'Not applicable' },
+          { label: 'Target mode', value: activeProfile?.target_mode ? String(activeProfile.target_mode).replaceAll('_', ' ') : 'Not configured' },
+          { label: 'Public evidence', value: enabledEvidenceSources(appliedConfiguration) },
+          { label: 'Docking', value: targetContext.enable_docking ? `Enabled · ${targetContext.docking_configuration_id || 'configuration required'}` : 'Off' },
+        ]}
+        actions={<>
+          <PrioritizationSetupDialog
+            apiBaseUrl={apiBaseUrl}
+            appliedConfiguration={appliedConfiguration}
+            onApply={onApplyPrioritizationSetup}
+            disabled={prioritizationState.loading}
+          />
+          {prioritizationState.result && !single ? <Button variant="outlined" onClick={() => onNavigate('Results')}>Open results and exports</Button> : null}
+          <Button
+            variant="contained"
+            onClick={onStartPrioritization}
+            disabled={runDisabled}
+            startIcon={prioritizationState.loading ? <CircularProgress size={18} color="inherit" /> : null}
+          >
+            {prioritizationState.loading ? 'Running' : single ? 'Start compound assessment' : 'Start prioritization'}
+          </Button>
+          {jobIsActive ? <Button variant="outlined" color="warning" onClick={onCancelPrioritization}>Request cancellation</Button> : null}
+        </>}
+      />
+
+      {prioritizationConfigurationStale && prioritizationState.result ? (
+        <Alert severity="warning">Applied setup differs from this persisted calculation. Current ranks and evidence remain unchanged until the combined calculation is run again.</Alert>
+      ) : null}
+      {prioritizationState.error ? <Alert severity="error">{prioritizationState.error}</Alert> : null}
+
       {prioritizationState.result && !single ? (
         <PrioritizationWorkspace
           rows={resultRows}
           result={prioritizationState.result}
           job={prioritizationState.job}
-          onOpenResults={() => onNavigate('Results')}
+          baseUrl={apiBaseUrl}
         />
       ) : null}
 
-      <PrioritizationSettings
-        apiBaseUrl={apiBaseUrl}
-        value={prioritizationSettings}
-        onChange={setPrioritizationSettings}
-      />
-
-      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
-        <Stack spacing={2.5}>
-          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
-            <Stack spacing={0.75}>
-              <Typography variant="h2">{single ? 'Single Compound Analysis' : 'Prioritization Job'}</Typography>
-              <Typography color="text.secondary">
-                {uploadState.upload
-                  ? `Ready to run upload_id ${uploadState.upload.upload_id}`
-                  : 'Load one or more valid compounds before starting a calculation.'}
-              </Typography>
-            </Stack>
-            <Stack spacing={1.25} alignItems={{ xs: 'stretch', md: 'flex-end' }}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={pubchemLookupEnabled}
-                    onChange={(event) => setPubchemLookupEnabled(event.target.checked)}
-                  />
-                }
-                label="Enable PubChem exact identity check"
-              />
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={chemblLookupEnabled}
-                    onChange={(event) => setChemblLookupEnabled(event.target.checked)}
-                  />
-                }
-                label="Enable ChEMBL public bioactivity context"
-              />
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={patentLookupEnabled}
-                    onChange={(event) => setPatentLookupEnabled(event.target.checked)}
-                  />
-                }
-                label="Enable SureChEMBL patent-context signal"
-              />
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={targetReferenceEnabled}
-                    onChange={(event) => setTargetReferenceEnabled(event.target.checked)}
-                  />
-                }
-                label="Enable target reference discovery"
-              />
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={Boolean(targetContext.enable_docking)}
-                    onChange={(event) => setTargetContext({ ...targetContext, enable_docking: event.target.checked })}
-                  />
-                }
-                label="Enable local Vina docking"
-              />
-              {targetContext.enable_docking && (
-                <Typography variant="caption" color="text.secondary">
-                  Docking configuration: {targetContext.docking_configuration_id || 'not configured on Receptor & Docking page'}
-                </Typography>
-              )}
-              {targetReferenceEnabled && (
-                <TargetContextFields targetContext={targetContext} setTargetContext={setTargetContext} />
-              )}
-              <Button
-                variant="contained"
-                onClick={onStartPrioritization}
-                disabled={
-                  validatedMoleculeCount(uploadState.upload) === 0
-                  || prioritizationState.loading
-                  || (prioritizationSettings.method === 'v2'
-                    && !prioritizationSettings.validation?.scoreable)
-                }
-                startIcon={prioritizationState.loading ? <CircularProgress size={18} color="inherit" /> : null}
-              >
-                {prioritizationState.loading ? 'Running' : single ? 'Start compound assessment' : 'Start prioritization'}
-              </Button>
-              {prioritizationState.job
-                && !TERMINAL_JOB_STATUSES.has(prioritizationState.job.status) ? (
-                  <Button variant="outlined" color="warning" onClick={onCancelPrioritization}>
-                    Request cancellation
-                  </Button>
-                ) : null}
-            </Stack>
-          </Stack>
-
-          <Alert severity={pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled || targetReferenceEnabled ? 'warning' : 'info'}>
-            {pubchemLookupEnabled || chemblLookupEnabled || patentLookupEnabled || targetReferenceEnabled
-              ? 'Selected public lookups may use the network. PubChem, ChEMBL, SureChEMBL, and target-reference results are cached locally and reported as research signals only.'
-              : 'Public compound lookup is off. Output rows will mark PubChem, ChEMBL, and patent-context lookup as Not requested.'}
-          </Alert>
-
-          {prioritizationState.error && <Alert severity="error">{prioritizationState.error}</Alert>}
-
-          {prioritizationState.job && (
+      {prioritizationState.job ? (
+        <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider' }}>
+          <Box component="details">
+            <Typography component="summary" sx={{ cursor: 'pointer', fontWeight: 750 }}>Calculation execution details</Typography>
+            <Box sx={{ mt: 2 }}>
             <MetadataPanel
               rows={[
                 ['Status', prioritizationState.job.status],
@@ -3856,9 +3844,10 @@ export function PrioritizationPage({
                 ['Target reference set', formatTargetReferenceSet(prioritizationState.result?.target_references)],
               ]}
             />
-          )}
-        </Stack>
-      </Paper>
+            </Box>
+          </Box>
+        </Paper>
+      ) : null}
 
       {prioritizationState.result && single ? (
           <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
@@ -3950,57 +3939,6 @@ function PageIntro({ title, description }) {
         <Typography color="text.secondary">{description}</Typography>
       </Stack>
     </Paper>
-  );
-}
-
-function TargetContextFields({ targetContext, setTargetContext }) {
-  const updateTargetContext = (key, value) => {
-    setTargetContext({ ...targetContext, [key]: value });
-  };
-  const fields = [
-    ['target_name', 'Target name'],
-    ['target_gene_symbol', 'Gene symbol'],
-    ['target_chembl_id', 'ChEMBL target ID'],
-    ['target_uniprot_id', 'UniProt ID'],
-    ['pdb_id', 'PDB ID'],
-    ['organism', 'Organism'],
-    ['disease_context', 'Disease context'],
-    ['mechanism_context', 'Mechanism context'],
-  ];
-
-  return (
-    <Box
-      sx={{
-        display: 'grid',
-        gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
-        gap: 1,
-        minWidth: { md: 460 },
-      }}
-    >
-      {fields.map(([key, label]) => (
-        <TextField
-          key={key}
-          label={label}
-          size="small"
-          value={targetContext[key] ?? ''}
-          onChange={(event) => updateTargetContext(key, event.target.value)}
-        />
-      ))}
-      <TextField
-        label="Docking protocol notes"
-        size="small"
-        value={targetContext.docking_protocol_notes ?? ''}
-        onChange={(event) => updateTargetContext('docking_protocol_notes', event.target.value)}
-        sx={{ gridColumn: { md: '1 / -1' } }}
-      />
-      <TextField
-        label="Binding site notes"
-        size="small"
-        value={targetContext.binding_site_notes ?? ''}
-        onChange={(event) => updateTargetContext('binding_site_notes', event.target.value)}
-        sx={{ gridColumn: { md: '1 / -1' } }}
-      />
-    </Box>
   );
 }
 
