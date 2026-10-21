@@ -3,7 +3,11 @@ import { Box, Chip, Paper, Stack, Typography } from '@mui/material';
 
 const STATUS_COLORS = {
   Completed: 'success',
+  'Completed with warnings': 'warning',
+  Queued: 'info',
   Running: 'info',
+  Cancelled: 'default',
+  'Not run': 'default',
   Failed: 'error',
   'Requires update': 'warning',
   Ready: 'primary',
@@ -16,7 +20,7 @@ export default function ModuleConfigurationSummary({ title = 'Configuration', st
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} gap={1.5}>
         <Stack direction="row" alignItems="center" spacing={1} useFlexGap flexWrap="wrap">
           <Typography variant="h2">{title}</Typography>
-          <Chip size="small" label={status} color={STATUS_COLORS[status] || 'default'} variant={status === 'Not generated' ? 'outlined' : 'filled'} />
+          <Chip size="small" label={status} color={STATUS_COLORS[status] || 'default'} variant={['Not generated', 'Not run', 'Cancelled'].includes(status) ? 'outlined' : 'filled'} />
         </Stack>
         {actions ? <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">{actions}</Stack> : null}
       </Stack>

@@ -9,6 +9,31 @@ let vite;
 let module;
 let createEmptyAdmetFilters;
 let setNumericAdmetFilter;
+const TEST_UPLOAD_ID = 'b'.repeat(32);
+
+function historicalAdmetState(rows, job = {}) {
+  return {
+    result: { upload_id: TEST_UPLOAD_ID, results: rows },
+    job: { job_id: 'historical-job', upload_id: TEST_UPLOAD_ID, status: 'completed', ...job },
+    loading: false,
+  };
+}
+
+function activeUpload(validCount = 1) {
+  return { upload: { upload_id: TEST_UPLOAD_ID, valid_count: validCount } };
+}
+
+function independentAdmetState(rows, status = 'completed', extra = {}) {
+  const run = {
+    run_id: 'a'.repeat(32), upload_id: TEST_UPLOAD_ID,
+    molecule_collection_sha256: 'collection-sha', status, ...extra,
+  };
+  return {
+    uploadId: TEST_UPLOAD_ID, run,
+    result: ['completed', 'completed_with_warnings'].includes(status) ? { ...run, results: rows } : null,
+    loading: ['queued', 'running'].includes(status), error: '', errorPhase: '',
+  };
+}
 
 before(async () => {
   vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
@@ -32,46 +57,95 @@ test('primary navigation follows the scientific workflow and hides history tools
 
 test('ADMET workspace keeps Overview, Property Table, and Plots and adds Compare', () => {
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
-    prioritizationState: { result: { results: [] }, job: null, loading: false },
-    sourceStatusState: { error: '' },
+    uploadState: activeUpload(),
+    prioritizationState: { result: null, job: null, loading: false },
     onNavigate: () => {},
   }));
   assert.match(html, />Overview</);
   assert.match(html, />Property Table</);
   assert.match(html, />Plots</);
   assert.match(html, />Compare</);
-  assert.match(html, /No ADMET predictions are available for the current calculation/);
+  assert.match(html, /ADMET has not been run for the active molecule collection/);
   assert.match(html, /aria-label="ADMET workspace views"/);
+});
+
+test('ADMET fixed-panel summary is actionable only for a valid active collection', () => {
+  const emptyHtml = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    prioritizationState: { job: null, result: null, loading: false }, onNavigate: () => {},
+  }));
+  assert.match(emptyHtml, /No active molecule collection/);
+  assert.match(emptyHtml, /Full frozen ADMET panel/);
+  assert.match(emptyHtml.match(/<button[^>]*disabled=""[^>]*>Run ADMET<\/button>/)?.[0] || '', /disabled/);
+
+  const readyHtml = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    uploadState: activeUpload(2), prioritizationState: { job: null, result: null, loading: false }, onNavigate: () => {},
+  }));
+  assert.match(readyHtml, /2 valid/);
+  assert.match(readyHtml, />Panel &amp; Runtime</);
+  assert.match(readyHtml, />Run ADMET</);
+  assert.doesNotMatch(readyHtml, /Configure ADMET|Apply &amp; Run|endpoint selection|family selection/i);
+});
+
+test('queued and running independent ADMET states expose honest cancellation behavior', () => {
+  const queued = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    uploadState: activeUpload(), prioritizationState: { job: null, result: null, loading: false },
+    independentAdmetState: independentAdmetState([], 'queued'), onNavigate: () => {},
+  }));
+  assert.match(queued, />Queued</);
+  assert.match(queued, />Cancel Run</);
+  const running = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    uploadState: activeUpload(), prioritizationState: { job: null, result: null, loading: false },
+    independentAdmetState: independentAdmetState([], 'running'), onNavigate: () => {},
+  }));
+  assert.match(running, /cannot be interrupted safely/);
+  assert.doesNotMatch(running, />Cancel Run</);
+});
+
+test('independent results take precedence and completed warnings preserve successful science', () => {
+  const independentRows = [admetRow(7)];
+  const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
+    uploadState: activeUpload(),
+    prioritizationState: historicalAdmetState([admetRow(1)]),
+    independentAdmetState: independentAdmetState(independentRows, 'completed_with_warnings', { warning_count: 1 }),
+    onNavigate: () => {},
+  }));
+  assert.match(html, /Independent ADMET run/);
+  assert.match(html, /Completed with warnings/);
+  assert.match(html, /compound-7/);
+  assert.doesNotMatch(html, /compound-1/);
+  assert.match(html, /Successful scientific results remain available below/);
+});
+
+test('Panel & Runtime implementation is read-only and uses the authoritative endpoint registry', async () => {
+  const source = await readFile(new URL('./AdmetPanelRuntimeDialog.jsx', import.meta.url), 'utf8');
+  assert.match(source, /title="ADMET Panel & Runtime"/);
+  assert.match(source, /showApply={false}/);
+  assert.match(source, /cancelLabel="Close"/);
+  assert.match(source, /ADMET_ENDPOINT_REGISTRY\.filter/);
+  assert.doesNotMatch(source, /Checkbox|Select|Apply & Run|onApply/);
 });
 
 test('ADMET Overview summarizes model families and portable runtime identities', () => {
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
-    prioritizationState: {
-      result: { results: [admetRow(1)] }, loading: false,
-      job: { admet_runtime_identities: [
+    uploadState: activeUpload(),
+    prioritizationState: historicalAdmetState([admetRow(1)], { admet_runtime_identities: [
         { family: 'chemberta', runtime_source: 'application_process', release_archive_sha256: 'release-sha' },
         { family: 'chemprop_regression', runtime_source: 'packaged', runner_identity: 'scripts/chemprop.py@abc' },
         { family: 'gmc_mpnn_bbb', runtime_source: 'packaged', runner_identity: 'scripts/bbb.py@def' },
-      ] },
-    },
-    sourceStatusState: { error: '' }, onNavigate: () => {},
+      ] }), onNavigate: () => {},
   }));
-  assert.match(html, /Models used/);
+  assert.match(html, /Prioritization job ADMET result/);
   assert.match(html, /1 compound/);
   assert.match(html, /15 endpoints/);
   assert.match(html, /3 model families/);
   assert.match(html, /ChemBERTa classification/);
-  assert.match(html, /9 public classification endpoints/);
-  assert.match(html, /Runtime details for hia_hou/);
-  assert.match(html, /chemprop\.py@abc/);
-  assert.match(html, /bbb\.py@def/);
+  assert.match(html, /Results available/);
 });
 
 test('ADMET Compare resolves workspace-owned selections from the normalized source set', () => {
   const rows = [admetRow(1), admetRow(2), admetRow(3)];
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
-    prioritizationState: { result: { results: rows }, job: null, loading: false },
-    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 3,
+    uploadState: activeUpload(rows.length), prioritizationState: historicalAdmetState(rows), onNavigate: () => {}, initialWorkspaceTab: 3,
     initialComparisonIds: ['compound-1', 'compound-2'],
   }));
   assert.match(html, /ADMET compound comparison/);
@@ -83,8 +157,7 @@ test('ADMET Compare resolves workspace-owned selections from the normalized sour
 test('ADMET Compare retains a selected compound hidden by shared search and filters', () => {
   const filters = setNumericAdmetFilter(createEmptyAdmetFilters(), 'lipophilicity_astrazeneca', 'max', '1.5');
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
-    prioritizationState: { result: { results: [admetRow(1, 1), admetRow(2, 4)] }, job: null, loading: false },
-    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 3,
+    uploadState: activeUpload(2), prioritizationState: historicalAdmetState([admetRow(1, 1), admetRow(2, 4)]), onNavigate: () => {}, initialWorkspaceTab: 3,
     initialComparisonIds: ['compound-1', 'compound-2'],
     initialAdmetViewState: { query: 'compound', filters, sortKey: 'compound', sortDirection: 'asc', page: 0, pageSize: 50 },
   }));
@@ -95,8 +168,7 @@ test('ADMET Compare retains a selected compound hidden by shared search and filt
 
 test('ADMET Property Table renders compact filtered export and report controls', () => {
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
-    prioritizationState: { result: { results: [admetRow(1), admetRow(2)] }, job: null, loading: false },
-    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 1,
+    uploadState: activeUpload(2), prioritizationState: historicalAdmetState([admetRow(1), admetRow(2)]), onNavigate: () => {}, initialWorkspaceTab: 1,
   }));
   assert.match(html, />Export filtered CSV</);
   assert.match(html, />Generate report</);
@@ -107,8 +179,7 @@ test('ADMET Property Table renders compact filtered export and report controls',
 
 test('ADMET comparison exports are disabled until two compounds are selected', () => {
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
-    prioritizationState: { result: { results: [admetRow(1)] }, job: null, loading: false },
-    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 3,
+    uploadState: activeUpload(), prioritizationState: historicalAdmetState([admetRow(1)]), onNavigate: () => {}, initialWorkspaceTab: 3,
     initialComparisonIds: ['compound-1'],
   }));
   assert.match(html.match(/<button[^>]*aria-label="Export current ADMET comparison as CSV"[^>]*>/)?.[0] || '', /disabled/);
@@ -117,8 +188,7 @@ test('ADMET comparison exports are disabled until two compounds are selected', (
 
 test('ADMET comparison export controls enable for 2–5 selected compounds', () => {
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
-    prioritizationState: { result: { results: [admetRow(1), admetRow(2)] }, job: null, loading: false },
-    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 3,
+    uploadState: activeUpload(2), prioritizationState: historicalAdmetState([admetRow(1), admetRow(2)]), onNavigate: () => {}, initialWorkspaceTab: 3,
     initialComparisonIds: ['compound-1', 'compound-2'],
   }));
   assert.doesNotMatch(html.match(/<button[^>]*aria-label="Export current ADMET comparison as CSV"[^>]*>/)?.[0] || '', /disabled/);
@@ -144,8 +214,7 @@ test('ADMET Plots consumes the shared search and filter result before plotting',
   let filters = createEmptyAdmetFilters();
   filters = setNumericAdmetFilter(filters, 'lipophilicity_astrazeneca', 'max', '3');
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
-    prioritizationState: { result: { results: [admetRow(1), admetRow(2), admetRow(4), admetRow(12)] }, job: null, loading: false },
-    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 2,
+    uploadState: activeUpload(4), prioritizationState: historicalAdmetState([admetRow(1), admetRow(2), admetRow(4), admetRow(12)]), onNavigate: () => {}, initialWorkspaceTab: 2,
     initialAdmetViewState: { query: 'compound-1', filters, sortKey: 'compound', sortDirection: 'desc', page: 3, pageSize: 25 },
   }));
   assert.match(html, /1 of 4 compounds/);
@@ -157,8 +226,7 @@ test('ADMET Plots consumes the shared search and filter result before plotting',
 test('shared ADMET search, filters, sort, and page state can render the table after a plot view', () => {
   const filters = setNumericAdmetFilter(createEmptyAdmetFilters(), 'lipophilicity_astrazeneca', 'max', '3');
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
-    prioritizationState: { result: { results: [admetRow(1), admetRow(2), admetRow(4)] }, job: null, loading: false },
-    sourceStatusState: { error: '' }, onNavigate: () => {}, initialWorkspaceTab: 1,
+    uploadState: activeUpload(3), prioritizationState: historicalAdmetState([admetRow(1), admetRow(2), admetRow(4)]), onNavigate: () => {}, initialWorkspaceTab: 1,
     initialAdmetViewState: { query: 'compound', filters, sortKey: 'lipophilicity_astrazeneca', sortDirection: 'desc', page: 0, pageSize: 25 },
   }));
   assert.match(html, /2 of 3 compounds/);

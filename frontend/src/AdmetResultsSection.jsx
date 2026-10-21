@@ -119,7 +119,10 @@ function RegressionEndpointCard({ endpointName, endpoint, status }) {
 
 function BBBEndpointCard({ endpoint, status }) {
   const rawClassification = endpoint?.raw_classification || endpoint?.prediction;
-  const threshold = Number(endpoint?.threshold ?? 0.5).toFixed(2);
+  const thresholdValue = endpoint?.threshold;
+  const threshold = thresholdValue === null || thresholdValue === undefined || thresholdValue === ''
+    ? 'Not available'
+    : Number.isFinite(Number(thresholdValue)) ? Number(thresholdValue).toFixed(2) : 'Not available';
   const thresholdStatus = endpoint?.threshold_status === 'provisional_raw' ? 'Provisional raw' : 'Not specified';
   const calibrationStatus = endpoint?.calibration_status === 'not_frozen' ? 'Not frozen' : 'Not specified';
   return (
@@ -127,7 +130,7 @@ function BBBEndpointCard({ endpoint, status }) {
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ sm: 'center' }}>
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="body2" sx={{ fontWeight: 750 }}>BBB permeability · GMC-MPNN</Typography>
-          <Typography variant="caption" color="text.secondary" display="block">Raw classification at {threshold}: {rawClassification || 'Not available'}</Typography>
+          <Typography variant="caption" color="text.secondary" display="block">Backend-authoritative classification at threshold {threshold}: {rawClassification || 'Not available'}</Typography>
           <Typography variant="caption" color="text.secondary" display="block">Model disagreement / seed SD: {formatRegressionNumber(endpoint?.ensemble_standard_deviation)}</Typography>
           <Typography variant="caption" color="text.secondary" display="block">Threshold status: {thresholdStatus} · Calibration status: {calibrationStatus}</Typography>
         </Box>
@@ -170,7 +173,7 @@ function ADMETEndpointCard({ endpointName, endpoint, status }) {
           />
         </Stack>
         <Stack direction="row" justifyContent="space-between" alignItems="baseline" spacing={1}>
-          <Typography variant="caption" color="text.secondary">Calibrated probability</Typography>
+          <Typography variant="caption" color="text.secondary">Classification probability</Typography>
           <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.2 }}>{formatCalibratedProbability(endpoint?.calibrated_probability)}</Typography>
         </Stack>
         <Typography variant="caption" color="text.secondary">High probability represents: {endpoint?.positive_class_meaning || 'Positive-class meaning unavailable'}</Typography>
@@ -193,6 +196,7 @@ export default function AdmetResultsSection({ compound }) {
         <Typography variant="h2" sx={{ mb: 1.25 }}>ADMET Results</Typography>
         <Alert severity="info">
           ADMET prediction was not run because the molecule is invalid.
+          {compound?.failure_reason ? ` ${compound.failure_reason}` : ''}
         </Alert>
       </Box>
     );

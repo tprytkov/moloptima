@@ -110,3 +110,10 @@ test('generic setup dialog remains free of Chemical Space method hard-coding', a
   const source = await (await import('node:fs/promises')).readFile(new URL('./ScientificSetupDialog.jsx', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /Chemical Space|Morgan|PCA|Tanimoto/);
 });
+
+test('read-only consumers can expose a single primary Close action without Apply controls', async () => {
+  const source = await (await import('node:fs/promises')).readFile(new URL('./ScientificSetupDialog.jsx', import.meta.url), 'utf8');
+  assert.match(source, /cancelLabel = 'Cancel'/);
+  assert.match(source, /!showApply && !onApplyAndRun \? 'contained'/);
+  assert.match(source, /{cancelLabel}/);
+});

@@ -98,11 +98,12 @@ test('renders the final ADMET groups and all 15 production endpoints', () => {
   assert.doesNotMatch(html, /bbb_martins/);
 });
 
-test('renders calibrated probability as the primary percentage and omits raw probability', () => {
+test('renders classification probability as the primary percentage and omits confidence language', () => {
   const html = render(completeCompound());
 
   assert.match(html, />93\.9%</);
-  assert.match(html, /Calibrated probability/);
+  assert.match(html, /Classification probability/);
+  assert.doesNotMatch(html, /confidence/i);
   assert.doesNotMatch(html, /Raw probability/i);
   assert.doesNotMatch(html, /SAFE|UNSAFE/);
 });
@@ -112,7 +113,7 @@ test('makes GMC BBB ensemble details and HIA limited support visible', () => {
 
   assert.match(html, /GMC-MPNN/);
   assert.match(html, /Raw ensemble probability/);
-  assert.match(html, /Raw classification at 0\.50: BBB\+/);
+  assert.match(html, /Backend-authoritative classification at threshold 0\.50: BBB\+/);
   assert.match(html, /Model disagreement \/ seed SD: 0\.04/);
   assert.match(html, /Threshold status: Provisional raw/);
   assert.match(html, /Calibration status: Not frozen/);

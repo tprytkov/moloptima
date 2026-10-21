@@ -61,9 +61,9 @@ import ChemicalSpaceWorkspace from './ChemicalSpaceWorkspace.jsx';
 import DesignLogicWorkspace from './DesignLogicWorkspace.jsx';
 import ExperimentalDataWorkspace from './ExperimentalDataWorkspace.jsx';
 import CompoundProfileIntegration from './CompoundProfileIntegration.jsx';
-import AdmetModelInfo from './AdmetModelInfo.jsx';
+import AdmetPanelRuntimeDialog from './AdmetPanelRuntimeDialog.jsx';
+import ModuleConfigurationSummary from './ModuleConfigurationSummary.jsx';
 import { ADMET_ENDPOINT_REGISTRY, normalizeAdmetAnalysis, searchAdmetMolecules } from './admetAnalysisData.js';
-import { endpointMetadataFromMolecules } from './admetModelMetadata.js';
 import { admetTableStateReducer, createEmptyAdmetFilters, filterAdmetMolecules } from './admetFilters.js';
 import { addAdmetComparisonId, clearAdmetComparison, removeAdmetComparisonId } from './admetComparison.js';
 import DockingResultsSection, { dockingStatusLabel } from './DockingResultsSection.jsx';
@@ -99,9 +99,17 @@ import {
   openedActiveRun,
   startupActiveRun,
 } from './activeCalculationLifecycle.js';
+import {
+  EMPTY_INDEPENDENT_ADMET_STATE,
+  admetRunStatusLabel,
+  cancelQueuedAdmetRun,
+  canRunIndependentAdmet,
+  executeIndependentAdmetRun,
+  selectAdmetResultSource,
+} from './admetRunWorkflow.js';
 
 const drawerWidth = 216;
-const apiBaseUrl = 'http://localhost:8000';
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 export const READABLE_CONTENT_MAX_WIDTH = 1440;
 export const SUMMARY_CONTENT_MAX_WIDTH = 1200;
 
@@ -359,6 +367,8 @@ function App() {
   const activeImportRef = useRef(null);
   const [prioritizationState, setPrioritizationState] = useState({ ...EMPTY_PRIORITIZATION_STATE });
   const activeRequestVersionRef = useRef(0);
+  const [independentAdmetState, setIndependentAdmetState] = useState({ ...EMPTY_INDEPENDENT_ADMET_STATE });
+  const admetRequestVersionRef = useRef(0);
   const [latestRunState, setLatestRunState] = useState({
     job: null,
     result: null,
@@ -399,6 +409,10 @@ function App() {
     () => annotateAnalysisState(prioritizationState, annotationsState),
     [prioritizationState, annotationsState],
   );
+
+  useEffect(() => () => {
+    admetRequestVersionRef.current += 1;
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -583,6 +597,8 @@ function App() {
       });
       if (activeImportRef.current !== activeImport) return;
       activeRequestVersionRef.current += 1;
+      admetRequestVersionRef.current += 1;
+      setIndependentAdmetState({ ...EMPTY_INDEPENDENT_ADMET_STATE });
       setPrioritizationState({ job: null, result: null, loading: false, error: '' });
       setUploadState((current) => ({
         ...current,
@@ -617,6 +633,7 @@ function App() {
 
   function handleNewCalculation() {
     activeRequestVersionRef.current += 1;
+    admetRequestVersionRef.current += 1;
     if (activeImportRef.current) {
       activeImportRef.current.cancelled = true;
       activeImportRef.current.controller.abort();
@@ -625,6 +642,7 @@ function App() {
     const reset = newCalculationState(runHistoryState.jobs);
     setUploadState({ ...EMPTY_UPLOAD_STATE, upload: reset.upload });
     setPrioritizationState(reset.activeRun);
+    setIndependentAdmetState({ ...EMPTY_INDEPENDENT_ADMET_STATE });
     setAnnotationsState(reset.annotations);
     setRunHistoryState((current) => ({ ...current, selectedJobId: reset.selectedHistoryJobId }));
     setTargetContext({ ...EMPTY_TARGET_CONTEXT });
@@ -781,6 +799,8 @@ function App() {
     }
     const requestId = activeRequestVersionRef.current + 1;
     activeRequestVersionRef.current = requestId;
+    admetRequestVersionRef.current += 1;
+    setIndependentAdmetState({ ...EMPTY_INDEPENDENT_ADMET_STATE });
     const requestIsCurrent = () => isCurrentActiveRequest(requestId, activeRequestVersionRef.current);
     setRunHistoryState((current) => ({ ...current, loading: true, error: '' }));
     setPrioritizationState({ job: null, result: null, loading: true, error: '' });
@@ -826,6 +846,77 @@ function App() {
         ...current,
         loading: false,
         error: readableError(error),
+      }));
+    }
+  }
+
+  async function handleStartIndependentAdmet() {
+    const uploadId = uploadState.upload?.upload_id || '';
+    if (!canRunIndependentAdmet(uploadState.upload)) {
+      setIndependentAdmetState({
+        ...EMPTY_INDEPENDENT_ADMET_STATE,
+        uploadId,
+        error: 'Load at least one valid molecule before running ADMET.',
+        errorPhase: 'prerequisite',
+      });
+      return;
+    }
+    const requestId = admetRequestVersionRef.current + 1;
+    admetRequestVersionRef.current = requestId;
+    const requestIsCurrent = () => requestId === admetRequestVersionRef.current
+      && uploadState.upload?.upload_id === uploadId;
+    setIndependentAdmetState({
+      ...EMPTY_INDEPENDENT_ADMET_STATE,
+      uploadId,
+      loading: true,
+    });
+    try {
+      const outcome = await executeIndependentAdmetRun({
+        uploadId,
+        request: apiRequest,
+        isCurrent: requestIsCurrent,
+        onStatus: (run) => {
+          if (!requestIsCurrent()) return;
+          setIndependentAdmetState((current) => ({
+            ...current, uploadId, run, result: null, loading: !TERMINAL_JOB_STATUSES.has(run.status), error: '', errorPhase: '',
+          }));
+        },
+      });
+      if (outcome.stale || !requestIsCurrent()) return;
+      setIndependentAdmetState({
+        uploadId,
+        run: outcome.run,
+        result: outcome.result,
+        loading: false,
+        error: outcome.run?.status === 'failed' ? outcome.run.error_message || 'ADMET run failed.' : '',
+        errorPhase: outcome.run?.status === 'failed' ? 'runtime_or_prediction' : '',
+      });
+    } catch (error) {
+      if (!requestIsCurrent()) return;
+      setIndependentAdmetState((current) => ({
+        ...current,
+        loading: false,
+        error: readableError(error),
+        errorPhase: error?.phase || 'request',
+      }));
+    }
+  }
+
+  async function handleCancelIndependentAdmet() {
+    const run = independentAdmetState.run;
+    if (run?.status !== 'queued') return;
+    const requestId = admetRequestVersionRef.current;
+    try {
+      const outcome = await cancelQueuedAdmetRun({ run, request: apiRequest });
+      if (requestId !== admetRequestVersionRef.current) return;
+      admetRequestVersionRef.current += 1;
+      setIndependentAdmetState((current) => ({
+        ...current, run: outcome.run, result: null, loading: false, error: '', errorPhase: '',
+      }));
+    } catch (error) {
+      if (requestId !== admetRequestVersionRef.current) return;
+      setIndependentAdmetState((current) => ({
+        ...current, error: readableError(error), errorPhase: 'cancellation',
       }));
     }
   }
@@ -993,6 +1084,7 @@ function App() {
               uploadState={uploadState}
               setUploadState={setUploadState}
               prioritizationState={annotatedPrioritizationState}
+              independentAdmetState={independentAdmetState}
               latestRunState={latestRunState}
               runHistoryState={runHistoryState}
               annotationsState={annotationsState}
@@ -1003,6 +1095,8 @@ function App() {
               onDockingSetupConfirmed={handleDockingSetupConfirmed}
               onStartPrioritization={handleStartPrioritization}
               onCancelPrioritization={handleCancelPrioritization}
+              onStartIndependentAdmet={handleStartIndependentAdmet}
+              onCancelIndependentAdmet={handleCancelIndependentAdmet}
               onLoadHistoricalRun={handleLoadHistoricalRun}
               onRefreshRunHistory={handleRefreshRunHistory}
               onNewCalculation={handleNewCalculation}
@@ -1173,6 +1267,7 @@ function ActivePage({
   uploadState,
   setUploadState,
   prioritizationState,
+  independentAdmetState,
   latestRunState,
   runHistoryState,
   annotationsState,
@@ -1183,6 +1278,8 @@ function ActivePage({
   onDockingSetupConfirmed,
   onStartPrioritization,
   onCancelPrioritization,
+  onStartIndependentAdmet,
+  onCancelIndependentAdmet,
   onLoadHistoricalRun,
   onRefreshRunHistory,
   onNewCalculation,
@@ -1260,8 +1357,11 @@ function ActivePage({
     return (
       <AdmetWorkflowPage
         key={jobScopeKey}
+        uploadState={uploadState}
         prioritizationState={prioritizationState}
-        sourceStatusState={sourceStatusState}
+        independentAdmetState={independentAdmetState}
+        onRunAdmet={onStartIndependentAdmet}
+        onCancelAdmet={onCancelIndependentAdmet}
         onNavigate={onNavigate}
       />
     );
@@ -1614,19 +1714,18 @@ export function DockingWorkflowPage({
 }
 
 const ADMET_MODEL_GROUPS = [
-  ['chemberta', 'ChemBERTa classification', '9 public classification endpoints'],
-  ['gmc_mpnn_bbb', 'GMC-MPNN BBB', 'Raw five-seed ensemble; threshold policy provisional'],
-  ['chemprop_regression', 'Chemprop regression', '5 regression endpoints'],
+  ['chemberta', 'ChemBERTa classification'],
+  ['gmc_mpnn_bbb', 'GMC-MPNN BBB'],
+  ['chemprop_regression', 'Chemprop regression'],
 ];
-const EMPTY_ADMET_RUNTIME_IDENTITIES = Object.freeze([]);
 
-function AdmetWorkspaceHeader({ compoundCount, familyStatuses, normalizedAdmet, workspaceTab, onTabChange }) {
+function AdmetWorkspaceHeader({ compoundCount, resultSourceLabel, workspaceTab, onTabChange }) {
   return (
     <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={1} sx={{ px: 2, py: 1.5 }}>
         <Box>
           <Typography variant="h1">ADMET</Typography>
-          <Typography variant="body2" color="text.secondary">Scientific workspace for current calculation outputs</Typography>
+          <Typography variant="body2" color="text.secondary">{resultSourceLabel}</Typography>
         </Box>
         <Stack direction="row" useFlexGap flexWrap="wrap" spacing={0.75} aria-label="ADMET workspace counts">
           <Chip size="small" variant="outlined" label={`${compoundCount.toLocaleString()} compound${compoundCount === 1 ? '' : 's'}`} />
@@ -1634,22 +1733,6 @@ function AdmetWorkspaceHeader({ compoundCount, familyStatuses, normalizedAdmet, 
           <Chip size="small" variant="outlined" label="3 model families" />
         </Stack>
       </Stack>
-      <Box aria-label="Models used" sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, borderTop: '1px solid', borderColor: 'divider' }}>
-        {ADMET_MODEL_GROUPS.map(([key, name, detail], index) => (
-          <Box key={key} sx={{ px: 1.5, py: 1, minWidth: 0, borderRight: { md: index < 2 ? '1px solid' : 0 }, borderRightColor: { md: 'divider' }, borderBottom: { xs: index < 2 ? '1px solid' : 0, md: 0 }, borderBottomColor: 'divider' }}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-              <Typography variant="body2" sx={{ fontWeight: 800 }}>{name}</Typography>
-              <Chip size="small" label={familyStatuses[key].label} color={familyStatuses[key].color} variant="outlined" />
-            </Stack>
-            <Typography variant="caption" color="text.secondary" display="block" noWrap title={detail}>{detail}</Typography>
-            <AdmetModelInfo
-              label="Runtime details"
-              metadata={endpointMetadataFromMolecules(normalizedAdmet.molecules, normalizedAdmet.endpoints.find((endpoint) => endpoint.modelFamily === key))}
-              compact
-            />
-          </Box>
-        ))}
-      </Box>
       <Tabs value={workspaceTab} onChange={(_, value) => onTabChange(value)} aria-label="ADMET workspace views" sx={{ minHeight: 42, borderTop: '1px solid', borderColor: 'divider', '& .MuiTab-root': { minHeight: 42, py: 0.75 } }}>
         <Tab label="Overview" id="admet-tab-overview" aria-controls="admet-panel-overview" />
         <Tab label="Property Table" id="admet-tab-property-table" aria-controls="admet-panel-property-table" />
@@ -1661,20 +1744,25 @@ function AdmetWorkspaceHeader({ compoundCount, familyStatuses, normalizedAdmet, 
 }
 
 export function AdmetWorkflowPage({
+  uploadState = {},
   prioritizationState,
-  sourceStatusState,
+  independentAdmetState = EMPTY_INDEPENDENT_ADMET_STATE,
+  onRunAdmet = () => {},
+  onCancelAdmet = () => {},
   onNavigate,
   initialWorkspaceTab = 0,
   initialAdmetViewState = null,
   initialComparisonIds = [],
 }) {
-  const rows = prioritizationState.result?.results ?? [];
+  const upload = uploadState.upload ?? null;
+  const resultSource = selectAdmetResultSource({ independentState: independentAdmetState, upload, prioritizationState });
+  const rows = resultSource.rows;
   const overviewRows = rows.slice(0, 50);
+  const [panelDialogOpen, setPanelDialogOpen] = useState(false);
+  const panelButtonRef = useRef(null);
   const [workspaceTab, setWorkspaceTab] = useState(initialWorkspaceTab);
   const [comparisonIds, setComparisonIds] = useState(initialComparisonIds);
-  const runtimeIdentities = prioritizationState.job?.admet_runtime_identities
-    ?? prioritizationState.result?.admet_runtime_identities
-    ?? EMPTY_ADMET_RUNTIME_IDENTITIES;
+  const runtimeIdentities = resultSource.runtimeIdentities;
   const normalizedAdmet = useMemo(
     () => normalizeAdmetAnalysis(rows, runtimeIdentities),
     [rows, runtimeIdentities],
@@ -1693,6 +1781,7 @@ export function AdmetWorkflowPage({
   );
   const [selectedIndex, setSelectedIndex] = useState(0);
   const selected = rows[selectedIndex] ?? null;
+  useEffect(() => { setSelectedIndex(0); }, [resultSource.run?.run_id, resultSource.kind]);
   const rowStatuses = rows.map(deriveAdmetFamilyStatuses);
   const familyResults = rowStatuses.flatMap((statuses) => Object.values(statuses));
   const completed = familyResults.filter((family) => family.code === 'available').length;
@@ -1700,20 +1789,67 @@ export function AdmetWorkflowPage({
   const warnings = rows.filter((row) => row.admet_warning || row.bbb_result?.warning || row.admet_regression?.warning).length;
   const familyStatuses = Object.fromEntries(ADMET_MODEL_GROUPS.map(([key]) => [
     key,
-    aggregateAdmetFamilyStatus(rows, key, prioritizationState.loading),
+    aggregateAdmetFamilyStatus(rows, key, independentAdmetState.loading),
   ]));
   const single = prioritizationState.job?.analysis_mode === 'single_compound'
     || prioritizationState.result?.analysis_mode === 'single_compound';
+  const independentRun = resultSource.kind.startsWith('independent') ? independentAdmetState.run : null;
+  const runStatus = independentRun?.status
+    || (resultSource.kind === 'prioritization' ? prioritizationState.job?.status || 'completed' : '');
+  const runStatusLabel = admetRunStatusLabel(runStatus);
+  const canRun = canRunIndependentAdmet(upload) && !independentAdmetState.loading;
+  const hasCompletedIndependentResult = resultSource.kind === 'independent';
+  const errorPhaseLabels = {
+    prerequisite: 'Run prerequisite',
+    submission: 'Run submission failed',
+    polling: 'Run status polling failed',
+    result_retrieval: 'Result retrieval failed',
+    cancellation: 'Cancellation request failed',
+    runtime_or_prediction: 'Runtime or prediction failure',
+    request: 'ADMET request failed',
+  };
   return (
     <Stack spacing={2}>
+      <ModuleConfigurationSummary
+        title="ADMET"
+        status={runStatusLabel}
+        items={[
+          { label: 'Molecules', value: upload ? `${Number(upload.valid_count || 0).toLocaleString()} valid` : 'No active molecule collection' },
+          { label: 'Panel', value: 'Full frozen ADMET panel' },
+          { label: 'Model families', value: '3' },
+          { label: 'Endpoints', value: '15' },
+          { label: 'Result source', value: resultSource.label },
+        ]}
+        actions={<>
+          <Button ref={panelButtonRef} variant="outlined" onClick={() => setPanelDialogOpen(true)}>Panel &amp; Runtime</Button>
+          {independentRun?.status === 'queued' ? <Button color="inherit" variant="outlined" onClick={onCancelAdmet}>Cancel Run</Button> : null}
+          <Button variant="contained" disabled={!canRun} onClick={onRunAdmet}>
+            {independentAdmetState.loading && !independentRun ? <CircularProgress size={16} color="inherit" sx={{ mr: 1 }} /> : null}
+            {hasCompletedIndependentResult ? 'Run ADMET Again' : 'Run ADMET'}
+          </Button>
+        </>}
+      />
+      <AdmetPanelRuntimeDialog
+        open={panelDialogOpen}
+        onClose={() => setPanelDialogOpen(false)}
+        restoreFocusRef={panelButtonRef}
+        upload={upload}
+        run={independentRun}
+        runtimeIdentities={runtimeIdentities}
+      />
+      {!upload ? <Alert severity="info">No active molecule collection. Load and validate molecules before running ADMET.</Alert> : null}
+      {independentAdmetState.loading && !independentRun ? <Alert severity="info">Submitting the independent full-panel ADMET run…</Alert> : null}
+      {independentRun?.status === 'queued' ? <Alert severity="info">ADMET run queued. Model execution will begin when the scientific runtime is available.</Alert> : null}
+      {independentRun?.status === 'running' ? <Alert severity="info">Running — current model execution cannot be interrupted safely.</Alert> : null}
+      {independentRun?.status === 'completed_with_warnings' ? <Alert severity="warning">ADMET completed with {Number(independentRun.warning_count || 0).toLocaleString()} warning{Number(independentRun.warning_count || 0) === 1 ? '' : 's'}. Successful scientific results remain available below.</Alert> : null}
+      {independentRun?.status === 'cancelled' ? <Alert severity="info">The queued ADMET run was cancelled. No scientific result was generated.</Alert> : null}
+      {independentAdmetState.error ? <Alert severity="error"><strong>{errorPhaseLabels[independentAdmetState.errorPhase] || 'ADMET error'}:</strong> {independentAdmetState.error}</Alert> : null}
       <AdmetWorkspaceHeader
         compoundCount={rows.length}
-        familyStatuses={familyStatuses}
-        normalizedAdmet={normalizedAdmet}
+        resultSourceLabel={resultSource.label}
         workspaceTab={workspaceTab}
         onTabChange={setWorkspaceTab}
       />
-      {sourceStatusState.error ? <Alert severity="warning">{sourceStatusState.error}</Alert> : null}
       {workspaceTab === 0 ? (
         <Box id="admet-panel-overview" role="tabpanel" aria-labelledby="admet-tab-overview">
           {rows.length ? (
@@ -1725,6 +1861,9 @@ export function AdmetWorkflowPage({
                       {overviewRows.map((row, index) => <MenuItem key={compoundRowKey(row, index)} value={index}>{row.molecule_id || row.canonical_smiles || `Molecule ${index + 1}`}</MenuItem>)}
                     </TextField></Box>
                     <MetadataPanel rows={[["Molecules", rows.length], ["Available family results", completed], ["Unavailable / failed", failures], ["Warnings", warnings]]} />
+                    <Stack spacing={0.5} aria-label="ADMET family statuses">
+                      {ADMET_MODEL_GROUPS.map(([key, label]) => <Stack key={key} direction="row" justifyContent="space-between" spacing={1}><Typography variant="caption">{label}</Typography><Chip size="small" label={familyStatuses[key].label} color={familyStatuses[key].color} variant="outlined" /></Stack>)}
+                    </Stack>
                     {rows.length > overviewRows.length ? <Alert severity="info">Overview selection shows the first 50 molecules. Use Property Table for the complete library.</Alert> : null}
                   </Stack>
                 </Paper>
@@ -1740,7 +1879,7 @@ export function AdmetWorkflowPage({
               </Stack>
               <Paper elevation={0} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', minWidth: 0 }}><AdmetResultsSection compound={selected} /></Paper>
             </Box>
-          ) : <Alert severity="info">No ADMET predictions are available for the current calculation.</Alert>}
+          ) : independentAdmetState.loading || independentRun ? null : <Alert severity="info">ADMET has not been run for the active molecule collection.</Alert>}
         </Box>
       ) : null}
       {workspaceTab > 0 ? (
@@ -1770,7 +1909,7 @@ export function AdmetWorkflowPage({
           </Box>
         </Box>
       ) : null}
-      <Box><Button variant="contained" onClick={() => onNavigate('Prioritization')}>Continue to {single ? 'Compound Assessment' : 'Prioritization'}</Button></Box>
+      <Box><Button variant="contained" onClick={() => onNavigate?.('Prioritization')}>Continue to {single ? 'Compound Assessment' : 'Prioritization'}</Button></Box>
     </Stack>
   );
 }
