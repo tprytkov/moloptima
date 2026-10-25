@@ -37,12 +37,13 @@ test('renders stored prioritization rows, inspector evidence, and explicit null 
     result: { prioritization_method: 'profile_v2', prioritization_profile_sha256: 'profile-sha', prioritization_profile: { profile_id: 'profile-a', name: 'Profile A', profile_version: '1.0.0', status: 'frozen', target_mode: 'cns' } },
     job: { job_id: 'job-a', completed_at: '2026-10-16T00:00:00Z' },
   }));
-  for (const phrase of ['Candidate overview', 'cmpd-b', 'Stored rank', 'Stored score', 'Evidence readiness', 'Evidence by domain', 'Active profile and target mode', 'Exact experimental-compound context', 'Analog / neighbor context', 'Comparison set']) assert.match(html, new RegExp(phrase, 'i'));
+  for (const phrase of ['Candidate overview', 'Candidate rankings and evidence status from this calculation. Filtering and sorting only change the view.', 'cmpd-b', 'Priority Rank', 'Prioritization Score', 'Evidence Status', 'Evidence by domain', 'Prioritization Profile', 'Target Context', 'Exact experimental-compound context', 'Analog / neighbor context', 'Comparison set']) assert.match(html, new RegExp(phrase, 'i'));
   assert.match(html, /0\.61/);
   assert.match(html, /Not available/);
   assert.match(html, /Profile A/);
   assert.match(html, /Cns/);
   assert.doesNotMatch(html, />0<\/td>/);
+  assert.doesNotMatch(html, /Legacy v[12]|Prioritization v2|v2 profile/i);
 });
 
 test('filtering and sorting preserve stored values and keep unavailable rank last', () => {
@@ -86,6 +87,16 @@ test('candidate table uses keyboard rows, labeled comparison controls, lazy thum
   assert.match(html, /http:\/\/127\.0\.0\.1:8123\/api\/molecules\/structure/);
   assert.match(html, /width=160&amp;height=120/);
   assert.match(html, /overflow-x:auto/);
+});
+
+test('candidate toolbar keeps visible labels separate from accessible native control values', () => {
+  const html = renderToStaticMarkup(React.createElement(module.default, { rows, result: {}, job: { job_id: 'job-a' } }));
+  assert.match(html, /Search candidates[\s\S]*aria-label="Search candidates"/);
+  for (const label of ['Evidence Status', 'ADMET status', 'Docking status', 'Sort by']) {
+    assert.match(html, new RegExp(`${label}[\\s\\S]*?<select[^>]+aria-label="${label}"`));
+  }
+  assert.match(html, /<option value="" selected="">All<\/option>/);
+  assert.match(html, /<option value="contract" selected="">Contract order<\/option>/);
 });
 
 test('workspace introduces no fabricated composite score or unsupported decision language', () => {

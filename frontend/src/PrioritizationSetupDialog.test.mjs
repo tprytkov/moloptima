@@ -36,12 +36,12 @@ test('setup configuration preserves the exact backend-backed settings and contex
   assert.equal(result.targetContext.enable_docking, false);
 });
 
-test('v2 Apply is blocked until the authoritative profile validation is scoreable', () => {
+test('Multi-Parameter Prioritization Apply is blocked until profile validation is scoreable', () => {
   const invalid = configuration({
     prioritizationSettings: { method: 'v2', profile: { profile_id: 'draft' }, validation: null },
   });
   assert.deepEqual(module.validatePrioritizationSetup(invalid), [
-    'Prioritization v2 requires a complete profile that passes backend scoring validation.',
+    'Multi-Parameter Prioritization requires a complete profile that passes backend scoring validation.',
   ]);
   const valid = configuration({
     prioritizationSettings: { method: 'v2', profile: { profile_id: 'frozen' }, validation: { scoreable: true } },
@@ -66,5 +66,6 @@ test('dialog source reuses shared draft state and keeps exploration controls out
   assert.match(source, /scientificSetupReducer/);
   assert.match(source, /PrioritizationSettings/);
   assert.match(source, /Evidence & Target/);
+  assert.match(source, /Ranking Method/);
   assert.doesNotMatch(source, /ApplyAndRun|Search candidates|Sort by|comparisonIds/);
 });

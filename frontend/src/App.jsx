@@ -72,6 +72,7 @@ import PrioritizationWorkspace from './PrioritizationWorkspace.jsx';
 import PrioritizationSetupDialog, {
   createPrioritizationSetupConfiguration,
 } from './PrioritizationSetupDialog.jsx';
+import { prioritizationMethodLabel } from './prioritizationTerminology.js';
 import MoleculeInputPanel from './MoleculeInputPanel.jsx';
 import {
   applyMoleculeSelectionUpdate,
@@ -114,7 +115,6 @@ export const READABLE_CONTENT_MAX_WIDTH = 1440;
 export const SUMMARY_CONTENT_MAX_WIDTH = 1200;
 
 const SCIENTIFIC_VALUE_LABELS = {
-  legacy_v1: 'Legacy v1 compatibility scoring',
   not_requested: 'Not requested',
   not_used: 'Not used',
   not_run: 'Not run',
@@ -691,7 +691,7 @@ function App() {
     if (prioritizationSettings.method === 'v2' && !prioritizationSettings.validation?.scoreable) {
       setPrioritizationState((current) => ({
         ...current,
-        error: 'Prioritization v2 requires a complete profile that passes backend scoring validation.',
+        error: 'Multi-Parameter Prioritization requires a complete profile that passes backend scoring validation.',
       }));
       return;
     }
@@ -1956,7 +1956,7 @@ export function ResultsWorkflowPage({ prioritizationState, upload, annotationsSt
         ['Chemically valid', validCount],
         ['ADMET completed', admetCompleted], ['Docking completed', dockingCompleted],
         [single ? 'Library prioritization' : 'Prioritized', single ? 'Not applicable' : prioritizationState.job.ranked_count ?? 0], ['Warnings / invalid source records', `${prioritizationState.job.warning_count ?? 0} / ${rows.length - validCount}`],
-        ['Method', formatScientificPresentationValue(prioritizationState.result?.prioritization_method)],
+        ['Ranking Method', prioritizationMethodLabel(prioritizationState.result?.prioritization_method)],
       ]} /> : null}
       {prioritizationState.job ? (
         <Box component="details" sx={{ '& > summary': { cursor: 'pointer' } }}>
@@ -2024,7 +2024,7 @@ export function SingleCompoundAssessment({ compound, profile, profileSha256, job
               ['Profile version', provenance.profile_version || profile?.profile_version],
               ['Profile status', provenance.profile_status || profile?.status],
               ['Profile SHA256', provenance.profile_sha256 || profileSha256],
-              ['Target mode', profile?.target_mode],
+              ['Target Context', profile?.target_mode],
               ['Endpoint desirabilities', formatStructuredDetail(interpretation.endpoint_scoring)],
               ['Liability summary', formatStructuredDetail(interpretation.liabilities)], ['Interpretation warnings', interpretation.warnings],
             ]} />
@@ -2060,7 +2060,7 @@ export function AnalysisWorkflowPage({ currentRunState, annotationsState, onSave
       {tab === 1 ? (
         currentRunState.result?.prioritization_method === 'v2'
           ? <PrioritizationAnalysisPanel apiBaseUrl={apiBaseUrl} jobId={currentRunState.job?.job_id || ''} results={rows} profile={profileMatches ? prioritizationSettings.profile : null} profileScoreable={profileMatches} />
-          : <Alert severity="info">Pareto and sensitivity analysis require current Prioritization v2 results. Analysis has not been run.</Alert>
+          : <Alert severity="info">Pareto and sensitivity analysis require current Multi-Parameter Prioritization results. Analysis has not been run.</Alert>
       ) : null}
       {tab === 2 ? <BiopharmaIntelligencePage latestRunState={currentRunState} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} /> : null}
     </Stack>
@@ -3686,7 +3686,7 @@ export function CandidateExportPanel({ rows }) {
 }
 
 export function prioritizationModuleStatus({ prioritizationState, configurationStale, hasCollection }) {
-  if (configurationStale && prioritizationState.result) return 'Requires update';
+  if (configurationStale && prioritizationState.result) return 'Results Need Recalculation';
   const status = prioritizationState.job?.status;
   if (status === 'completed_with_warnings') return 'Completed with warnings';
   if (status === 'completed') return 'Completed';
@@ -3703,7 +3703,7 @@ function enabledEvidenceSources(configuration) {
   if (configuration.chemblLookupEnabled) sources.push('ChEMBL');
   if (configuration.patentLookupEnabled) sources.push('SureChEMBL');
   if (configuration.targetReferenceEnabled) sources.push('Target references');
-  return sources.length ? sources.join(', ') : 'Off';
+  return sources.length ? sources.join(', ') : 'Disabled';
 }
 
 export function PrioritizationPage({
@@ -3746,6 +3746,7 @@ export function PrioritizationPage({
     ?? prioritizationState.result?.prioritization_profile
     ?? prioritizationState.job?.prioritization_profile;
   const validCount = validatedMoleculeCount(uploadState.upload);
+  const calculationCandidateCount = resultRows.length || validCount;
   const status = prioritizationModuleStatus({
     prioritizationState,
     configurationStale: prioritizationConfigurationStale,
@@ -3772,12 +3773,12 @@ export function PrioritizationPage({
         title={single ? 'Compound Assessment' : 'Prioritization'}
         status={status}
         items={[
-          { label: 'Calculation context', value: resultRows.length ? `${resultRows.length.toLocaleString()} persisted candidate${resultRows.length === 1 ? '' : 's'}` : validCount ? `${validCount.toLocaleString()} valid molecule${validCount === 1 ? '' : 's'}` : 'No active molecule collection' },
-          { label: 'Method', value: prioritizationSettings.method === 'v2' ? 'Prioritization v2' : 'Legacy v1' },
-          { label: 'Profile', value: activeProfile?.name ?? activeProfile?.profile_id ?? 'Not applicable' },
-          { label: 'Target mode', value: activeProfile?.target_mode ? String(activeProfile.target_mode).replaceAll('_', ' ') : 'Not configured' },
-          { label: 'Public evidence', value: enabledEvidenceSources(appliedConfiguration) },
-          { label: 'Docking', value: targetContext.enable_docking ? `Enabled · ${targetContext.docking_configuration_id || 'configuration required'}` : 'Off' },
+          { label: 'Calculation context', value: calculationCandidateCount ? `${calculationCandidateCount.toLocaleString()} candidate${calculationCandidateCount === 1 ? '' : 's'} in this calculation` : 'No active molecule collection' },
+          { label: 'Ranking Method', value: prioritizationMethodLabel(prioritizationSettings.method) },
+          { label: 'Prioritization Profile', value: activeProfile?.name ?? activeProfile?.profile_id ?? (prioritizationSettings.method === 'legacy_v1' ? 'Not used' : 'Not configured') },
+          { label: 'Target Context', value: activeProfile?.target_mode ? String(activeProfile.target_mode).replaceAll('_', ' ') : 'Not configured' },
+          { label: 'Public Evidence', value: enabledEvidenceSources(appliedConfiguration) },
+          { label: 'Docking', value: targetContext.enable_docking ? `Enabled · ${targetContext.docking_configuration_id || 'Configuration Required'}` : 'Disabled' },
         ]}
         actions={<>
           <PrioritizationSetupDialog
@@ -4444,8 +4445,8 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
           <TableRow>
             <TableCell>Molecule</TableCell>
             <TableCell>Valid</TableCell>
-            <TableCell>Rank</TableCell>
-            <TableCell>Score</TableCell>
+            <TableCell>Priority Rank</TableCell>
+            <TableCell>Prioritization Score</TableCell>
             <TableCell>Review status</TableCell>
             <TableCell>Review note</TableCell>
             {hasEvidenceSynthesis && <TableCell>Evidence summary</TableCell>}

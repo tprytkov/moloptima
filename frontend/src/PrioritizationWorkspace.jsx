@@ -33,6 +33,48 @@ function rawValue(value) {
   return value === null || value === undefined || value === '' ? 'Not available' : String(value);
 }
 
+function CandidateToolbarField({ label, children }) {
+  return (
+    <Box component="label" sx={{ display: 'grid', gap: 0.5, minWidth: 0 }}>
+      <Typography variant="caption" color="text.secondary">{label}</Typography>
+      {children}
+    </Box>
+  );
+}
+
+function CandidateToolbarSelect({ label, value, onChange, children }) {
+  return (
+    <CandidateToolbarField label={label}>
+      <Box
+        component="select"
+        aria-label={label}
+        value={value}
+        onChange={onChange}
+        sx={{
+          width: '100%',
+          minWidth: 0,
+          minHeight: 40,
+          boxSizing: 'border-box',
+          border: '1px solid',
+          borderColor: 'divider',
+          borderRadius: 1,
+          bgcolor: 'background.paper',
+          color: 'text.primary',
+          pl: 1.25,
+          pr: 4,
+          '&:focus-visible': {
+            outline: '2px solid',
+            outlineColor: 'primary.main',
+            outlineOffset: 2,
+          },
+        }}
+      >
+        {children}
+      </Box>
+    </CandidateToolbarField>
+  );
+}
+
 function candidateKey(row, index = 0) {
   return String(row?.molecule_id || row?.canonical_smiles || row?.input_smiles || `candidate-${index}`);
 }
@@ -144,9 +186,9 @@ function CandidateTable({ rows, selectedId, comparisonIds, onSelect, onToggleCom
             <TableCell padding="checkbox">Compare</TableCell>
             <TableCell>Structure</TableCell>
             <TableCell>Compound</TableCell>
-            <TableCell>Stored rank</TableCell>
-            <TableCell>Stored score</TableCell>
-            <TableCell>Evidence readiness</TableCell>
+            <TableCell>Priority Rank</TableCell>
+            <TableCell>Prioritization Score</TableCell>
+            <TableCell>Evidence Status</TableCell>
             <TableCell>ADMET</TableCell>
             <TableCell>Vina affinity</TableCell>
             <TableCell>Experimental context</TableCell>
@@ -215,7 +257,7 @@ function ComparisonSet({ rows, comparisonIds, onSelect, onRemove, onClear }) {
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ px: 2, py: 1.5 }}>
         <Box>
           <Typography variant="h3">Comparison set ({selected.length}/{MAX_COMPARISON})</Typography>
-          <Typography variant="caption" color="text.secondary">Selection is explicit and does not affect stored score or rank.</Typography>
+          <Typography variant="caption" color="text.secondary">Selection is explicit and does not affect the Prioritization Score or Priority Rank.</Typography>
         </Box>
         <Button size="small" onClick={onClear} disabled={selected.length === 0}>Clear</Button>
       </Stack>
@@ -223,7 +265,7 @@ function ComparisonSet({ rows, comparisonIds, onSelect, onRemove, onClear }) {
       {selected.length === 0 ? <Typography color="text.secondary" sx={{ p: 2 }}>Select up to five candidates from the table for a side-by-side evidence summary.</Typography> : (
         <Box sx={{ overflowX: 'auto' }}>
           <Table size="small" aria-label="Selected prioritization comparison" sx={{ minWidth: 720 }}>
-            <TableHead><TableRow><TableCell>Compound</TableCell><TableCell>Stored rank</TableCell><TableCell>Stored score</TableCell><TableCell>Evidence readiness</TableCell><TableCell>ADMET</TableCell><TableCell>Vina affinity</TableCell><TableCell>Remove</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>Compound</TableCell><TableCell>Priority Rank</TableCell><TableCell>Prioritization Score</TableCell><TableCell>Evidence Status</TableCell><TableCell>ADMET</TableCell><TableCell>Vina affinity</TableCell><TableCell>Remove</TableCell></TableRow></TableHead>
             <TableBody>{selected.map((row) => {
               const id = candidateKey(row);
               const priority = authoritativePriority(row);
@@ -255,21 +297,21 @@ function SelectedInspector({ row, profile, profileSha256, job }) {
         <Typography variant="overline">Selected compound</Typography>
         <Typography variant="h2" sx={{ overflowWrap: 'anywhere' }}>{id}</Typography>
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1.5, mt: 1.5 }}>
-          <Metric label="Stored rank" value={priority.rank} />
-          <Metric label="Stored score" value={priority.score} />
-          <Metric label="Evidence readiness" value={present(row.prioritization_status)} />
+          <Metric label="Priority Rank" value={priority.rank} />
+          <Metric label="Prioritization Score" value={priority.score} />
+          <Metric label="Evidence Status" value={present(row.prioritization_status)} />
           <Metric label="Rank eligibility" value={present(row.v2_rank_eligible ?? row.rank_eligible)} />
         </Box>
       </Box>
       <Divider />
       <Stack spacing={2} sx={{ p: 2 }}>
         <Box component="section" aria-label="Active prioritization profile">
-          <Typography variant="h3">Active profile and target mode</Typography>
+          <Typography variant="h3">Prioritization Profile</Typography>
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1.25, mt: 1 }}>
-            <Metric label="Profile" value={profile?.name ?? profile?.profile_id} />
+            <Metric label="Profile Name" value={profile?.name ?? profile?.profile_id} />
             <Metric label="Version" value={profile?.profile_version} />
             <Metric label="Status" value={present(profile?.status)} />
-            <Metric label="Target mode" value={present(profile?.target_mode ?? explanation?.provenance?.target_mode)} />
+            <Metric label="Target Context" value={present(profile?.target_mode ?? explanation?.provenance?.target_mode)} />
           </Box>
         </Box>
         <Divider />
@@ -335,13 +377,15 @@ export default function PrioritizationWorkspace({ rows, result, job, baseUrl }) 
           <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
             <Box sx={{ p: 2 }}>
               <Typography variant="h2">Candidate overview</Typography>
-              <Typography color="text.secondary">Stored prioritization values and evidence availability; filtering and sorting do not recalculate science.</Typography>
-              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'minmax(220px, 1.5fr) repeat(4, minmax(130px, 1fr))' }, gap: 1, mt: 2 }}>
-                <TextField size="small" label="Search candidates" value={controls.query} onChange={setControl('query')} />
-                <TextField select slotProps={{ select: { native: true } }} size="small" label="Evidence readiness" value={controls.readiness} onChange={setControl('readiness')}><option value="">All</option>{optionValues(rows, (row) => row.prioritization_status || 'not_available').map((value) => <option key={value} value={value}>{present(value)}</option>)}</TextField>
-                <TextField select slotProps={{ select: { native: true } }} size="small" label="ADMET status" value={controls.admet} onChange={setControl('admet')}><option value="">All</option>{optionValues(rows, (row) => row.admet_model_status || 'not_available').map((value) => <option key={value} value={value}>{present(value)}</option>)}</TextField>
-                <TextField select slotProps={{ select: { native: true } }} size="small" label="Docking status" value={controls.docking} onChange={setControl('docking')}><option value="">All</option>{optionValues(rows, (row) => dockingEvidence(row).status).map((value) => <option key={value} value={value}>{present(value)}</option>)}</TextField>
-                <TextField select slotProps={{ select: { native: true } }} size="small" label="Sort by" value={controls.sort} onChange={setControl('sort')}><option value="contract">Contract order</option><option value="rank">Stored rank</option><option value="score">Stored score</option><option value="molecule">Compound ID</option></TextField>
+              <Typography color="text.secondary">Candidate rankings and evidence status from this calculation. Filtering and sorting only change the view.</Typography>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))', lg: 'minmax(220px, 1.4fr) repeat(4, minmax(150px, 1fr))' }, gap: 1.25, mt: 2, alignItems: 'end' }}>
+                <CandidateToolbarField label="Search candidates">
+                  <TextField hiddenLabel size="small" placeholder="Search candidates" value={controls.query} onChange={setControl('query')} slotProps={{ htmlInput: { 'aria-label': 'Search candidates' } }} />
+                </CandidateToolbarField>
+                <CandidateToolbarSelect label="Evidence Status" value={controls.readiness} onChange={setControl('readiness')}><option value="">All</option>{optionValues(rows, (row) => row.prioritization_status || 'not_available').map((value) => <option key={value} value={value}>{present(value)}</option>)}</CandidateToolbarSelect>
+                <CandidateToolbarSelect label="ADMET status" value={controls.admet} onChange={setControl('admet')}><option value="">All</option>{optionValues(rows, (row) => row.admet_model_status || 'not_available').map((value) => <option key={value} value={value}>{present(value)}</option>)}</CandidateToolbarSelect>
+                <CandidateToolbarSelect label="Docking status" value={controls.docking} onChange={setControl('docking')}><option value="">All</option>{optionValues(rows, (row) => dockingEvidence(row).status).map((value) => <option key={value} value={value}>{present(value)}</option>)}</CandidateToolbarSelect>
+                <CandidateToolbarSelect label="Sort by" value={controls.sort} onChange={setControl('sort')}><option value="contract">Contract order</option><option value="rank">Priority Rank</option><option value="score">Prioritization Score</option><option value="molecule">Compound ID</option></CandidateToolbarSelect>
               </Box>
             </Box>
             <CandidateTable rows={pageRows} selectedId={selection.selectedId} comparisonIds={selection.comparisonIds} onSelect={(moleculeId) => dispatch({ type: 'select', moleculeId })} onToggleComparison={(moleculeId) => dispatch({ type: 'toggle-comparison', moleculeId })} baseUrl={baseUrl} />

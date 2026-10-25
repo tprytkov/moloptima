@@ -685,20 +685,62 @@ test('prioritization page uses compact setup summary while exploration controls 
   }));
   assert.match(html, /Prioritization Setup/);
   assert.match(html, /Calculation context/);
+  assert.match(html, /Multi-Parameter Prioritization/);
+  assert.match(html, /Prioritization Profile/);
+  assert.match(html, /Target Context/);
   assert.match(html, /Search candidates/);
-  assert.match(html, /Evidence readiness/);
+  assert.match(html, /Evidence Status/);
   assert.match(html, /Sort by/);
   assert.match(html, /Comparison set/);
   assert.doesNotMatch(html, /Apply &amp; Run/);
   assert.doesNotMatch(html, /Top-level component weights/);
+  assert.doesNotMatch(html, /Legacy v[12]|Prioritization v2|v2 profile/i);
 });
 
-test('applied setup changes mark persisted prioritization results as requiring update', () => {
+test('standard prioritization summary uses calculation-specific plain language', () => {
+  const noop = () => {};
+  const results = Array.from({ length: 10 }, (_, index) => ({
+    molecule_id: `candidate-${index + 1}`,
+    canonical_smiles: 'CCO',
+    valid_molecule: true,
+  }));
+  const html = renderToStaticMarkup(React.createElement(module.PrioritizationPage, {
+    uploadState: { upload: { upload_id: 'u1', analysis_mode: 'library', valid_count: 10 } },
+    prioritizationState: { job: { job_id: 'job-a', status: 'completed', prioritization_method: 'legacy_v1' }, result: { results }, loading: false, error: '' },
+    onStartPrioritization: noop, onCancelPrioritization: noop,
+    pubchemLookupEnabled: false, chemblLookupEnabled: false,
+    patentLookupEnabled: false, targetReferenceEnabled: false,
+    targetContext: { enable_docking: true, docking_configuration_id: '' },
+    prioritizationSettings: { method: 'legacy_v1', profile: null, validation: null },
+    onApplyPrioritizationSetup: noop, onNavigate: noop,
+  }));
+  for (const phrase of [
+    '10 candidates in this calculation',
+    'Standard Prioritization',
+    'Prioritization Profile',
+    'Not used',
+    'Target Context',
+    'Not configured',
+    'Public Evidence',
+    'Disabled',
+    'Enabled · Configuration Required',
+  ]) assert.match(html, new RegExp(phrase));
+  assert.doesNotMatch(html, /persisted candidates|Not applicable|Public evidence|Setup Required/);
+});
+
+test('display terminology does not leak into the prioritization request contract', async () => {
+  const source = await readFile(new URL('./App.jsx', import.meta.url), 'utf8');
+  assert.match(source, /prioritization_method:\s*prioritizationSettings\.method/);
+  assert.match(source, /prioritization_profile:\s*prioritizationSettings\.method === 'v2'/);
+  assert.doesNotMatch(source, /prioritization_method:\s*['"](?:Standard|Multi-Parameter) Prioritization/);
+});
+
+test('applied setup changes mark persisted prioritization results as needing recalculation', () => {
   assert.equal(module.prioritizationModuleStatus({
     prioritizationState: { job: { status: 'completed' }, result: { results: [] } },
     configurationStale: true,
     hasCollection: true,
-  }), 'Requires update');
+  }), 'Results Need Recalculation');
   assert.equal(module.prioritizationModuleStatus({
     prioritizationState: { job: null, result: null, loading: false },
     configurationStale: false,

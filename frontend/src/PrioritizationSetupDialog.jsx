@@ -50,7 +50,7 @@ export function createPrioritizationSetupConfiguration({
 export function validatePrioritizationSetup(configuration) {
   if (configuration?.prioritizationSettings?.method === 'v2'
     && !configuration.prioritizationSettings.validation?.scoreable) {
-    return ['Prioritization v2 requires a complete profile that passes backend scoring validation.'];
+    return ['Multi-Parameter Prioritization requires a complete profile that passes backend scoring validation.'];
   }
   return [];
 }
@@ -156,7 +156,7 @@ export default function PrioritizationSetupDialog({
         open={setupState.open}
         title="Prioritization Setup"
         context="Configure the existing combined prioritization calculation. Applying changes does not recompute current results."
-        sections={[{ id: 'ranking', label: 'Ranking Profile' }, { id: 'evidence', label: 'Evidence & Target' }]}
+        sections={[{ id: 'ranking', label: 'Ranking Method' }, { id: 'evidence', label: 'Evidence & Target' }]}
         activeSection={activeSection}
         onSectionChange={setActiveSection}
         dirty={setupState.dirty}

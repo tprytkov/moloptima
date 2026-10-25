@@ -18,6 +18,11 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import {
+  PRIORITIZATION_METHOD_DESCRIPTIONS,
+  PRIORITIZATION_METHOD_LABELS,
+  prioritizationMethodDescription,
+} from './prioritizationTerminology.js';
 
 const COMPONENTS = [
   ['docking', 'Docking'],
@@ -236,36 +241,41 @@ export default function PrioritizationSettings({
         <Box>
           <Typography variant="h2">Prioritization Settings</Typography>
           <Typography variant="body2" color="text.secondary">
-            Legacy v1 is the compatibility scoring method. Prioritization v2 uses an explicit, validated multi-parameter profile.
+            Choose the ranking method used by the combined prioritization calculation.
           </Typography>
         </Box>
 
         <FormControl fullWidth size="small">
-          <InputLabel id="prioritization-method-label">Prioritization method</InputLabel>
+          <InputLabel id="prioritization-method-label">Ranking Method</InputLabel>
           <Select
             labelId="prioritization-method-label"
-            label="Prioritization method"
+            label="Ranking Method"
             value={method}
             onChange={(event) => selectMethod(event.target.value)}
             inputProps={{ 'data-testid': 'prioritization-method' }}
           >
-            <MenuItem value="legacy_v1">Legacy v1 · compatibility scoring</MenuItem>
-            <MenuItem value="v2">Prioritization v2 · configurable multi-parameter</MenuItem>
+            <MenuItem value="legacy_v1">{PRIORITIZATION_METHOD_LABELS.legacy_v1}</MenuItem>
+            <MenuItem value="v2">{PRIORITIZATION_METHOD_LABELS.v2}</MenuItem>
           </Select>
         </FormControl>
 
+        <Typography variant="body2" color="text.secondary">
+          {prioritizationMethodDescription(method)}
+        </Typography>
+
         {method === 'legacy_v1' ? (
           <Alert severity="info">
-            Legacy v1 remains the application default. No v2 profile configuration is required.
+            Standard Prioritization uses the established ranking method and does not require an additional prioritization profile.
           </Alert>
         ) : (
           <Stack spacing={2}>
+            <Alert severity="info">{PRIORITIZATION_METHOD_DESCRIPTIONS.v2}</Alert>
             <ProfileStatus profile={profile} validation={validation} />
             <FormControl fullWidth size="small">
-              <InputLabel id="builtin-profile-label">Profile</InputLabel>
+              <InputLabel id="builtin-profile-label">Prioritization Profile</InputLabel>
               <Select
                 labelId="builtin-profile-label"
-                label="Profile"
+                label="Prioritization Profile"
                 value={selectedBuiltin ? builtinProfileKey(selectedBuiltin) : ''}
                 onChange={(event) => selectBuiltin(event.target.value)}
                 inputProps={{ 'data-testid': 'builtin-profile-selector' }}
@@ -285,7 +295,7 @@ export default function PrioritizationSettings({
                 <Stack spacing={0.75}>
                   <Typography sx={{ fontWeight: 750 }}>{profile.name}</Typography>
                   <Typography variant="body2">
-                    Version {profile.profile_version} · Status {humanize(profile.status)} · Target mode {profile.target_mode}
+                    Version {profile.profile_version} · Status {humanize(profile.status)} · Target Context {profile.target_mode}
                   </Typography>
                   <Typography variant="caption">SHA256: {selectedBuiltin.profile_sha256}</Typography>
                   <Typography variant="caption">
@@ -317,10 +327,10 @@ export default function PrioritizationSettings({
             ) : null}
 
             <FormControl fullWidth size="small" disabled={readOnly}>
-              <InputLabel id="target-mode-label">Target mode</InputLabel>
+              <InputLabel id="target-mode-label">Target Context</InputLabel>
               <Select
                 labelId="target-mode-label"
-                label="Target mode"
+                label="Target Context"
                 value={profile?.target_mode ?? 'custom'}
                 onChange={(event) => updateProfile({ target_mode: event.target.value })}
                 inputProps={{ 'data-testid': 'target-mode' }}
@@ -332,7 +342,7 @@ export default function PrioritizationSettings({
             </FormControl>
 
             <Box>
-              <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>Top-level component weights</Typography>
+              <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>Evidence Weights</Typography>
               <Typography variant="caption" color="text.secondary">
                 These three values determine total docking, ADMET, and molecular-quality importance. Configured weights are scientific policy choices and do not imply biological optimization.
               </Typography>
@@ -360,7 +370,7 @@ export default function PrioritizationSettings({
 
             <Accordion disableGutters>
               <AccordionSummary expandIcon={<span aria-hidden="true">▾</span>}>
-                <Typography sx={{ fontWeight: 750 }}>Advanced profile settings</Typography>
+                <Typography sx={{ fontWeight: 750 }}>Advanced Prioritization Profile Settings</Typography>
               </AccordionSummary>
               <AccordionDetails>
                 <Stack spacing={2}>
@@ -393,7 +403,7 @@ export default function PrioritizationSettings({
                   <Divider />
                   <DockingPolicyEditor profile={profile} updateProfile={updateProfile} disabled={readOnly} />
                   <Divider />
-                  <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>Advanced endpoint rules</Typography>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>Prioritization Rules</Typography>
                   {metadataError ? <Alert severity="warning">{metadataError}</Alert> : null}
                   {(metadata?.endpoints ?? []).map((endpoint) => (
                     <EndpointRuleEditor
@@ -417,7 +427,7 @@ export default function PrioritizationSettings({
 
             {profile?.endpoint_rules?.gmc_mpnn_bbb?.enabled ? (
               <Alert severity="warning">
-                GMC-MPNN BBB uses a raw ensemble output. Its decision threshold is provisional and calibration is not frozen. Target mode changes profile configuration only.
+                GMC-MPNN BBB uses a raw ensemble output. Its decision threshold is provisional and calibration is not frozen. Target Context changes profile configuration only.
               </Alert>
             ) : null}
 
