@@ -75,7 +75,7 @@ export default function PrioritizationExplanationSection({ compound }) {
 
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3}>
           <Box>
-            <Typography variant="caption" color="text.secondary">Base priority score</Typography>
+            <Typography variant="caption" color="text.secondary">Prioritization Score</Typography>
             <Typography variant="h5">{valueOrUnavailable(prioritization.priority_score)}</Typography>
           </Box>
           <Box>
@@ -148,11 +148,11 @@ function V2PrioritizationExplanation({ explanation }) {
   ];
 
   return (
-    <Box component="section" aria-label="Prioritization v2 explanation" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+    <Box component="section" aria-label="Ranking Explanation" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
       <Stack spacing={2}>
         <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1}>
           <Box>
-            <Typography variant="h2">Prioritization v2 Explanation</Typography>
+            <Typography variant="h2">Ranking Explanation</Typography>
             <Typography variant="caption" color="text.secondary">
               Profile: {valueOrUnavailable(provenance.profile_id)} · {valueOrUnavailable(provenance.profile_version)}
             </Typography>
@@ -164,7 +164,7 @@ function V2PrioritizationExplanation({ explanation }) {
         </Stack>
 
         <Box sx={{ overflowX: 'auto' }}>
-          <Table size="small" aria-label="Prioritization v2 top-level contributions">
+          <Table size="small" aria-label="Ranking Explanation top-level contributions">
             <TableHead><TableRow><TableCell>Component</TableCell><TableCell>Score</TableCell><TableCell>Contribution</TableCell></TableRow></TableHead>
             <TableBody>
               {componentRows.map(([label, score, contribution]) => (
@@ -173,7 +173,7 @@ function V2PrioritizationExplanation({ explanation }) {
               <TableRow><TableCell>Base score</TableCell><TableCell>{valueOrUnavailable(summary.base_score)}</TableCell><TableCell>—</TableCell></TableRow>
               <TableRow><TableCell>Liability penalty</TableCell><TableCell>{valueOrUnavailable(summary.combined_liability_penalty_factor)}</TableCell><TableCell>Multiplicative</TableCell></TableRow>
               <TableRow><TableCell>Uncertainty penalty</TableCell><TableCell>{valueOrUnavailable(summary.uncertainty_penalty_factor)}</TableCell><TableCell>Multiplicative</TableCell></TableRow>
-              <TableRow><TableCell><strong>Final priority score</strong></TableCell><TableCell><strong>{valueOrUnavailable(summary.final_score)}</strong></TableCell><TableCell>—</TableCell></TableRow>
+              <TableRow><TableCell><strong>Prioritization Score</strong></TableCell><TableCell><strong>{valueOrUnavailable(summary.final_score)}</strong></TableCell><TableCell>—</TableCell></TableRow>
             </TableBody>
           </Table>
         </Box>
@@ -239,7 +239,7 @@ function V2PrioritizationExplanation({ explanation }) {
             ['Profile version', provenance.profile_version],
             ['Profile status', provenance.profile_status],
             ['Profile SHA256', provenance.profile_sha256],
-            ['Target mode', provenance.target_mode],
+            ['Target Context', provenance.target_mode],
             ['Campaign ID', provenance.campaign_id],
           ]} />
         </Box>

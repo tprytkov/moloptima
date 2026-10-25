@@ -10,6 +10,7 @@ const STATUS_COLORS = {
   'Not run': 'default',
   Failed: 'error',
   'Requires update': 'warning',
+  'Results Need Recalculation': 'warning',
   Ready: 'primary',
   'Not generated': 'default',
 };

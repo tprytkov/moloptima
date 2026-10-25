@@ -119,12 +119,12 @@ export default function PrioritizationAnalysisPanel({
   };
 
   return (
-    <Box component="section" aria-label="Prioritization v2 secondary analyses" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+    <Box component="section" aria-label="Multi-Parameter Prioritization secondary analyses" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
       <Stack spacing={2}>
         <Box>
-          <Typography variant="h2">Secondary v2 Analyses</Typography>
+          <Typography variant="h2">Secondary Prioritization Analyses</Typography>
           <Typography variant="body2" color="text.secondary">
-            Pareto and sensitivity analyses do not alter the Prioritization v2 score, scalar rank, profile, penalties, or gates.
+            Pareto and sensitivity analyses do not alter the Prioritization Score, scalar rank, Prioritization Profile, penalties, or gates.
           </Typography>
         </Box>
 
@@ -157,7 +157,7 @@ export default function PrioritizationAnalysisPanel({
         <Box>
           <Typography variant="h6">Top-level weight sensitivity</Typography>
           <Typography variant="caption" color="text.secondary">
-            Analysis-only bounded relative perturbations change docking, ADMET, and molecular-quality weights, normalize them to one, and rerun the existing v2 engine. Endpoint rules and thresholds are unchanged.
+            Analysis-only bounded relative perturbations change docking, ADMET, and molecular-quality Evidence Weights, normalize them to one, and rerun the existing Multi-Parameter Prioritization method. Prioritization Rules and thresholds are unchanged.
           </Typography>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 1.5, my: 1.5 }}>
             <TextField
@@ -193,7 +193,7 @@ export default function PrioritizationAnalysisPanel({
           </Button>
           {!profileScoreable ? (
             <Alert severity="info" sx={{ mt: 1 }}>
-              Sensitivity analysis requires the valid scoreable v2 profile associated with this analysis session.
+              Sensitivity analysis requires the valid scoreable Prioritization Profile associated with this analysis session.
             </Alert>
           ) : null}
           {sensitivity.error ? <Alert severity="error" sx={{ mt: 1 }}>{sensitivity.error}</Alert> : null}

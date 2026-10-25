@@ -80,9 +80,9 @@ export function buildCompoundProfileMarkdown(compound, structuralContext = {}, e
       ['Best pose/mode', docking.best_mode], ['Pose artifact', docking.pose_file || docking.pose_path],
     ]),
     '', '## Prioritization', markdownTable([
-      ['Priority score', compound?.v2_score ?? compound?.scientific_ranking_score ?? compound?.priority_score],
-      ['Rank', compound?.v2_rank ?? compound?.scientific_rank ?? compound?.prioritization?.ranking_position],
-      ['Method', compound?.prioritization_v2 ? 'Prioritization v2' : compound?.prioritization ? 'Scientific prioritization' : 'Not available'],
+      ['Prioritization Score', compound?.v2_score ?? compound?.scientific_ranking_score ?? compound?.priority_score],
+      ['Priority Rank', compound?.v2_rank ?? compound?.scientific_rank ?? compound?.prioritization?.ranking_position],
+      ['Method', compound?.prioritization_v2 ? 'Multi-Parameter Prioritization' : compound?.prioritization ? 'Standard Prioritization' : 'Not available'],
       ['Explanation status', compound?.prioritization_v2 || compound?.prioritization ? 'Available in persisted result' : 'Not available'],
     ]),
     '', '## Structural context', markdownTable([

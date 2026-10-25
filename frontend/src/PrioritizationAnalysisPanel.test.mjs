@@ -21,15 +21,16 @@ test('renders opt-in Pareto and sensitivity controls with non-scoring wording', 
     profile: null,
     profileScoreable: false,
   }));
-  assert.match(html, /Secondary v2 Analyses/);
-  assert.match(html, /do not alter the Prioritization v2 score, scalar rank, profile, penalties, or gates/);
+  assert.match(html, /Secondary Prioritization Analyses/);
+  assert.match(html, /do not alter the Prioritization Score, scalar rank, Prioritization Profile, penalties, or gates/);
   assert.match(html, /Pareto trade-off analysis/);
   assert.match(html, /Safety uses the existing combined liability-penalty factor/);
   assert.match(html, /Run Pareto analysis/);
   assert.match(html, /Top-level weight sensitivity/);
-  assert.match(html, /Endpoint rules and thresholds are unchanged/);
+  assert.match(html, /Prioritization Rules and thresholds are unchanged/);
   assert.match(html, /Analysis default: 0\.10/);
-  assert.match(html, /valid scoreable v2 profile associated with this analysis session/);
+  assert.match(html, /valid scoreable Prioritization Profile associated with this analysis session/);
+  assert.doesNotMatch(html, /Legacy v[12]|Prioritization v2|v2 profile/i);
 });
 
 test('renders Pareto fronts, dimensions, and dominance counts', () => {

@@ -53,7 +53,7 @@ test('renders base score and docking requirement without a final rank', () => {
 
   assert.match(html, /Scientific Prioritization/);
   assert.doesNotMatch(html, /Rank:/);
-  assert.match(html, /Base priority score/);
+  assert.match(html, /Prioritization Score/);
   assert.match(html, />0\.72</);
   assert.match(html, /Final scientific ranking unavailable until successful docking/);
   assert.match(html, /data-testid="prioritization-component-qed"/);
@@ -96,7 +96,7 @@ test('does not hide or invent an explanation for legacy results', () => {
   assert.equal(html, '');
 });
 
-test('renders the complete Prioritization v2 explanation without changing legacy output', () => {
+test('renders the complete Ranking Explanation without changing stored output', () => {
   const html = renderToStaticMarkup(React.createElement(PrioritizationExplanationSection, {
     compound: {
       prioritization: { status: 'legacy-data-must-not-win' },
@@ -157,10 +157,10 @@ test('renders the complete Prioritization v2 explanation without changing legacy
     },
   }));
 
-  assert.match(html, /Prioritization v2 Explanation/);
+  assert.match(html, /Ranking Explanation/);
   assert.doesNotMatch(html, /legacy-data-must-not-win/);
   assert.match(html, /Rank: 2/);
-  assert.match(html, /Final priority score/);
+  assert.match(html, /Prioritization Score/);
   assert.match(html, /0\.5904/);
   assert.match(html, /Within-library desirability/);
   assert.match(html, /Reference delta \(explanatory only\)/);
@@ -173,4 +173,5 @@ test('renders the complete Prioritization v2 explanation without changing legacy
   assert.match(html, /Missing hia_hou: penalize/);
   assert.match(html, /abc123/);
   assert.match(html, /balanced/);
+  assert.doesNotMatch(html, /Legacy v[12]|Prioritization v2|v2 profile/i);
 });

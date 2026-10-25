@@ -6,6 +6,7 @@ import { createServer } from 'vite';
 
 let vite;
 let module;
+let terminology;
 
 const metadata = {
   endpoints: [
@@ -46,6 +47,7 @@ const metadata = {
 before(async () => {
   vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
   module = await vite.ssrLoadModule('/src/PrioritizationSettings.jsx');
+  terminology = await vite.ssrLoadModule('/src/prioritizationTerminology.js');
 });
 
 after(async () => vite?.close());
@@ -56,20 +58,24 @@ function render(value, suppliedMetadata = metadata) {
   }));
 }
 
-test('legacy v1 is the default and does not require v2 settings', () => {
+test('default method presents Standard Prioritization without version language', () => {
   const html = render(undefined);
   assert.match(html, /Prioritization Settings/);
-  assert.match(html, /Legacy v1 · compatibility scoring/);
-  assert.match(html, /Prioritization v2 uses an explicit, validated multi-parameter profile/);
-  assert.match(html, /Legacy v1 remains the application default/);
-  assert.doesNotMatch(html, /Top-level component weights/);
+  assert.match(html, /Standard Prioritization/);
+  assert.match(html, /Uses the established MolOptima ranking method without an additional multi-parameter prioritization profile/);
+  assert.match(html, /does not require an additional prioritization profile/);
+  assert.doesNotMatch(html, /Evidence Weights/);
+  assert.doesNotMatch(html, /Legacy v[12]|Prioritization v2|v2 profile/i);
 });
 
-test('v2 renders target mode, three explicit top-level weights, and separate ADMET domains', () => {
+test('profile-based method presents Multi-Parameter Prioritization and scientific controls', () => {
   const profile = module.emptyDraftProfile();
   const html = render({ method: 'v2', profile, validation: null });
-  assert.match(html, /Target mode/);
-  assert.match(html, /Top-level component weights/);
+  assert.match(html, /Multi-Parameter Prioritization/);
+  assert.match(html, /Uses a configurable prioritization profile to define how multiple scientific evidence domains contribute to compound ranking/);
+  assert.match(html, /Prioritization Profile/);
+  assert.match(html, /Target Context/);
+  assert.match(html, /Evidence Weights/);
   assert.match(html, /data-testid="component-weight-docking"/);
   assert.match(html, /data-testid="component-weight-admet"/);
   assert.match(html, /data-testid="component-weight-molecular_quality"/);
@@ -92,7 +98,7 @@ test('advanced endpoint editor uses metadata and renders transform-specific fiel
     notes: 'Synthetic test only.',
   };
   const html = render({ method: 'v2', profile, validation: null });
-  assert.match(html, /Advanced endpoint rules/);
+  assert.match(html, /Prioritization Rules/);
   assert.match(html, /Quantitative estimate of drug-likeness/);
   assert.match(html, /Desirability transform/);
   assert.match(html, /Lower Width/);
@@ -137,6 +143,17 @@ test('profile JSON helpers and independent normalization are deterministic', () 
   });
   assert.equal(module.parseProfileJson('{"status":"draft"}').status, 'draft');
   assert.throws(() => module.parseProfileJson('[]'), /one object/);
+});
+
+test('display names map to unchanged backend method identifiers', () => {
+  assert.equal(terminology.prioritizationMethodLabel('legacy_v1'), 'Standard Prioritization');
+  assert.equal(terminology.prioritizationMethodLabel('v2'), 'Multi-Parameter Prioritization');
+  assert.deepEqual(Object.keys(terminology.PRIORITIZATION_METHOD_LABELS).sort(), ['legacy_v1', 'profile_v2', 'v2']);
+  const standardHtml = render({ method: 'legacy_v1', profile: null, validation: null });
+  const multiHtml = render({ method: 'v2', profile: module.emptyDraftProfile(), validation: null });
+  assert.match(standardHtml, /value="legacy_v1"/);
+  assert.match(multiHtml, /value="v2"/);
+  assert.doesNotMatch(`${standardHtml}${multiHtml}`, />Legacy v[12]</i);
 });
 
 test('validation helper calls the authoritative backend route', async () => {
@@ -210,7 +227,7 @@ test('historical CNS draft remains inspectable but is excluded from primary choi
   assert.deepEqual(module.endpointRoleSummary(profile), { objective: 1, penalty: 1, gate: 0, display_only: 1 });
   assert.match(html, /MolOptima CNS Literature Profile/);
   assert.doesNotMatch(html, /CNS Drug Discovery — Draft/);
-  assert.match(html, /Version 0.1.0 · Status Draft · Target mode CNS/);
+  assert.match(html, /Version 0.1.0 · Status Draft · Target Context CNS/);
   assert.match(html, new RegExp(`SHA256: ${sha}`));
   assert.match(html, /1 objectives · 1 penalties · 1 display-only · 0 gates/);
   assert.match(html, /Literature-informed draft profile\. Scientific parameters have not yet been frozen/);
@@ -259,7 +276,7 @@ test('current frozen CNS built-in is visibly read-only and directs changes to cu
   }, { ...metadata, builtin_profiles: [frozenRecord] });
 
   assert.match(html, /Frozen · Version 1\.0\.0 · Current/);
-  assert.match(html, /Version 1\.0\.0 · Status Frozen · Target mode CNS/);
+  assert.match(html, /Version 1\.0\.0 · Status Frozen · Target Context CNS/);
   assert.match(html, /data-testid="frozen-profile-read-only"/);
   assert.match(html, /cannot be edited in place/);
   assert.match(html, /Select Custom or import a custom profile/);
