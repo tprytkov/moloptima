@@ -587,6 +587,9 @@ test('single Results mode uses assessment title, provenance, and no library anal
   assert.match(html, /validated/);
   assert.match(html, /single-profile-sha/);
   assert.match(html, /cns/);
+  assert.match(html, /Export Results/);
+  assert.match(html, /Molecule Results: Available/);
+  assert.match(html, /Prioritization Results: Not used/);
   assert.doesNotMatch(html, /Pareto trade-off analysis|Sensitivity analysis not run|Prioritized compounds/i);
 });
 
@@ -599,18 +602,32 @@ test('library Results mode reports ranks, profile, receptor, and partial failure
         prioritization_profile_sha256: 'profile-sha', prioritization_profile: { profile_id: 'profile-a', profile_version: '1.0.0' },
       },
       result: { analysis_mode: 'library', prioritization_method: 'v2', results: [
-        { molecule_id: 'valid', canonical_smiles: 'CCO', valid_molecule: true, admet_model_status: 'model_available', docking_result: { status: 'success' } },
+        { molecule_id: 'valid', canonical_smiles: 'CCO', valid_molecule: true, admet_model_status: 'model_available', docking_result: { status: 'success' }, v2_rank: 1, v2_score: 0, prioritization_status: 'fully_scored' },
         { molecule_id: 'invalid', valid_molecule: false, validation_status: 'invalid', docking_result: { status: 'not_run_invalid_molecule' } },
       ] },
     },
+    upload: { upload_id: 'saved-upload', restored_from_job: true },
     annotationsState: {}, onSaveReviewAnnotation: () => {},
   }));
   assert.match(html, /Library Prioritization Results/);
-  assert.match(html, /Prioritized/);
+  assert.match(html, /Opened saved calculation/);
+  assert.match(html, /2 candidates in this calculation/);
+  assert.match(html, /Multi-Parameter Prioritization/);
+  assert.match(html, /Result availability/);
+  assert.match(html, /Molecule Results: Available/);
+  assert.match(html, /ADMET Results: Available/);
+  assert.match(html, /Docking Results: Available/);
+  assert.match(html, /Prioritization Results: Available/);
+  assert.match(html, /Priority Rank/);
+  assert.match(html, /Prioritization Score/);
+  assert.match(html, /Evidence Status/);
+  assert.match(html, />0<\/td>/);
+  assert.match(html, /Export Results/);
   assert.match(html, /profile-a \/ 1\.0\.0 \/ status unavailable \/ profile-sha/);
   assert.match(html, /User-supplied PDBQT/);
-  assert.match(html, /Run provenance and identifiers/);
+  assert.match(html, /Scientific provenance and identifiers/);
   assert.match(html, /partial failures or unavailable scientific outputs/);
+  assert.doesNotMatch(html, /Legacy v1|Prioritization v2|v2 rank|v2 score|stored rank|stored score|persisted candidates|evidence readiness/i);
 });
 
 test('Compound Detail curates decision fields and keeps diagnostics available', () => {

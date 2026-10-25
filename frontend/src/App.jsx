@@ -86,6 +86,7 @@ import {
   runMoleculeImport,
 } from './moleculeImportWorkflow.js';
 import ResultsPackageDownloads from './ResultsPackageDownloads.jsx';
+import ResultsWorkspace, { deriveResultDomains } from './ResultsWorkspace.jsx';
 import {
   TERMINAL_JOB_STATUSES,
   mergeJobIntoHistory,
@@ -1929,6 +1930,7 @@ export function ResultsWorkflowPage({ prioritizationState, upload, annotationsSt
   const validCount = rows.filter((row) => isTrueValue(row.valid_molecule)).length;
   const single = prioritizationState.result?.analysis_mode === 'single_compound'
     || prioritizationState.job?.analysis_mode === 'single_compound';
+  const analysisMode = single ? 'single_compound' : 'library';
   const profile = prioritizationState.result?.prioritization_profile
     || prioritizationState.job?.prioritization_profile;
   const profileIdentity = profile
@@ -1940,36 +1942,64 @@ export function ResultsWorkflowPage({ prioritizationState, upload, annotationsSt
     || admetCompleted < validCount
     || (prioritizationState.job?.docking_requested && dockingCompleted < validCount)
   );
+  const openedSavedCalculation = Boolean(upload?.restored_from_job
+    && ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(prioritizationState.job?.status));
+  const domains = deriveResultDomains({ rows, job: prioritizationState.job, analysisMode });
+  const resultCountLabel = single
+    ? `${rows.length.toLocaleString()} compound${rows.length === 1 ? '' : 's'} in this calculation`
+    : `${rows.length.toLocaleString()} candidate${rows.length === 1 ? '' : 's'} in this calculation`;
 
   useEffect(() => {
     if (selectedKey) revealCompoundDetail(detailRef.current);
   }, [selectedKey]);
 
   return (
-    <Stack spacing={2}>
-      <PageIntro
-        title={single ? 'Single Compound Assessment' : 'Library Prioritization Results'}
-        description={single ? 'Review and export the compound-level computational assessment.' : 'Inspect, filter, annotate, and export the current library prioritization outputs.'}
-      />
-      {prioritizationState.job ? <MetadataPanel rows={[
-        ['Calculation', formatScientificPresentationValue(prioritizationState.job.status)], ['Total compounds', rows.length],
-        ['Chemically valid', validCount],
-        ['ADMET completed', admetCompleted], ['Docking completed', dockingCompleted],
-        [single ? 'Library prioritization' : 'Prioritized', single ? 'Not applicable' : prioritizationState.job.ranked_count ?? 0], ['Warnings / invalid source records', `${prioritizationState.job.warning_count ?? 0} / ${rows.length - validCount}`],
-        ['Ranking Method', prioritizationMethodLabel(prioritizationState.result?.prioritization_method)],
-      ]} /> : null}
-      {prioritizationState.job ? (
-        <Box component="details" sx={{ '& > summary': { cursor: 'pointer' } }}>
-          <Box component="summary" sx={{ fontWeight: 700, color: 'text.secondary', mb: 1 }}>
-            Run provenance and identifiers
+    <ResultsWorkspace
+      title={single ? 'Single Compound Assessment' : 'Library Prioritization Results'}
+      description={single ? 'Review and export the compound-level computational assessment.' : 'Inspect, filter, annotate, and export the current library prioritization outputs.'}
+      status={formatScientificPresentationValue(prioritizationState.job?.status || 'not_run')}
+      summaryItems={[
+        { label: 'Calculation', value: openedSavedCalculation ? 'Opened saved calculation' : 'Current calculation' },
+        { label: 'Result scope', value: resultCountLabel },
+        { label: 'Analysis', value: single ? 'Single Compound Assessment' : 'Library Prioritization' },
+        { label: 'Ranking Method', value: prioritizationMethodLabel(prioritizationState.result?.prioritization_method || prioritizationState.job?.prioritization_method) },
+      ]}
+      domains={domains}
+      provenanceRows={[
+        ['Prioritization Profile', profileIdentity],
+        ['Receptor source', formatScientificPresentationValue(prioritizationState.result?.receptor_source || prioritizationState.job?.receptor_source || 'not_used')],
+        ['Chemically valid', `${validCount} of ${rows.length}`],
+        ['ADMET completed', `${admetCompleted} of ${validCount}`],
+        ['Docking completed', `${dockingCompleted} of ${validCount}`],
+        ['Warnings / invalid source records', `${prioritizationState.job?.warning_count ?? 0} / ${rows.length - validCount}`],
+        ['Completed at', formatDetailValue(prioritizationState.job?.completed_at || prioritizationState.result?.completed_at)],
+        ['Job ID', prioritizationState.job?.job_id],
+        ['Upload ID', prioritizationState.result?.upload_id || prioritizationState.job?.upload_id],
+      ]}
+      exportContent={<>
+        {!single ? (
+          <Box component="section" aria-labelledby="current-view-export-heading" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} gap={1.5}>
+              <Box>
+                <Typography id="current-view-export-heading" variant="h2">Current result view</Typography>
+                <Typography variant="body2" color="text.secondary">Export the {filtered.length.toLocaleString()} rows currently shown by the Results filters.</Typography>
+              </Box>
+              <Button
+                variant="outlined"
+                aria-label="Export filtered results as CSV"
+                startIcon={<DownloadOutlinedIcon />}
+                disabled={filtered.length === 0}
+                onClick={() => downloadRowsCsv(filtered, 'moloptima-results.csv')}
+              >
+                Export filtered CSV
+              </Button>
+            </Stack>
           </Box>
-          <MetadataPanel rows={[
-            ['Profile identity', profileIdentity],
-            ['Receptor source', formatScientificPresentationValue(prioritizationState.result?.receptor_source || prioritizationState.job?.receptor_source || 'not_used')],
-            ['Full job ID', prioritizationState.job.job_id],
-          ]} />
-        </Box>
-      ) : null}
+        ) : null}
+        {!single ? <CandidateExportPanel rows={filtered} /> : null}
+        <ResultsPackageDownloads apiBaseUrl={apiBaseUrl} jobId={prioritizationState.job?.job_id} analysisMode={analysisMode} embedded />
+      </>}
+    >
       {hasPartialFailures ? <Alert severity="warning">This calculation contains partial failures or unavailable scientific outputs. Exported all-compound results retain affected source records and their status.</Alert> : null}
       {rows.length && single ? <SingleCompoundAssessment
         compound={rows.find((row) => isTrueValue(row.valid_molecule)) ?? rows[0]}
@@ -1978,14 +2008,12 @@ export function ResultsWorkflowPage({ prioritizationState, upload, annotationsSt
         jobId={prioritizationState.job?.job_id}
       /> : null}
       {rows.length && !single ? <>
-        <EvidenceFilterPanel rows={rows} filteredRows={filtered} filters={filters} onChange={setFilters} onReset={() => setFilters(defaultEvidenceFilters)} exportFilename="moloptima-results.csv" />
+        <EvidenceFilterPanel rows={rows} filteredRows={filtered} filters={filters} onChange={setFilters} onReset={() => setFilters(defaultEvidenceFilters)} exportFilename="moloptima-results.csv" showExport={false} />
         <ResultPreview rows={filtered} selectedCompoundKey={selectedKey} onSelectCompound={setSelectedKey} />
-        <CandidateExportPanel rows={filtered} />
       </> : null}
       {!rows.length ? <Alert severity="info">No result rows are available for the current calculation.</Alert> : null}
       {selected ? <CompoundDetailPanel compound={selected} upload={profileUpload} jobId={prioritizationState.job?.job_id} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} onClose={() => setSelectedKey('')} containerRef={detailRef} /> : null}
-      {prioritizationState.job ? <ResultsPackageDownloads apiBaseUrl={apiBaseUrl} jobId={prioritizationState.job.job_id} analysisMode={single ? 'single_compound' : 'library'} /> : null}
-    </Stack>
+    </ResultsWorkspace>
   );
 }
 
@@ -4032,7 +4060,7 @@ const evidenceFilterFields = [
   ['diversity_representative', 'Cluster representative'],
 ];
 
-export function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onReset, exportFilename }) {
+export function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onReset, exportFilename, showExport = true }) {
   const updateFilter = (key, value) => {
     onChange({ ...filters, [key]: value });
   };
@@ -4060,15 +4088,17 @@ export function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onR
             <Button variant="outlined" onClick={onReset}>
               Clear filters
             </Button>
-            <Button
-              variant="contained"
-              aria-label="Export filtered results as CSV"
-              startIcon={<DownloadOutlinedIcon />}
-              disabled={filteredRows.length === 0}
-              onClick={() => downloadRowsCsv(filteredRows, exportFilename)}
-            >
-              Export filtered CSV
-            </Button>
+            {showExport ? (
+              <Button
+                variant="contained"
+                aria-label="Export filtered results as CSV"
+                startIcon={<DownloadOutlinedIcon />}
+                disabled={filteredRows.length === 0}
+                onClick={() => downloadRowsCsv(filteredRows, exportFilename)}
+              >
+                Export filtered CSV
+              </Button>
+            ) : null}
           </Stack>
         </Stack>
 
@@ -4089,7 +4119,7 @@ export function EvidenceFilterPanel({ rows, filteredRows, filters, onChange, onR
             />
           ))}
           <FilterNumberInput
-            label="Minimum priority score"
+            label="Minimum Prioritization Score"
             value={filters.priority_score_min}
             onChange={(value) => updateFilter('priority_score_min', value)}
           />
@@ -4435,6 +4465,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
   const hasChEMBLStatus = rows.some((row) => row.chembl_lookup_status !== undefined);
   const hasPatentStatus = rows.some((row) => row.patent_lookup_status !== undefined);
   const hasEvidenceSynthesis = rows.some((row) => row.evidence_summary_category !== undefined);
+  const hasEvidenceStatus = rows.some((row) => row.prioritization_status !== undefined);
   const hasDiversity = rows.some((row) => row.diversity_status !== undefined);
   const hasStructuralAlerts = rows.some((row) => row.structural_alert_status !== undefined);
 
@@ -4447,6 +4478,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
             <TableCell>Valid</TableCell>
             <TableCell>Priority Rank</TableCell>
             <TableCell>Prioritization Score</TableCell>
+            {hasEvidenceStatus && <TableCell>Evidence Status</TableCell>}
             <TableCell>Review status</TableCell>
             <TableCell>Review note</TableCell>
             {hasEvidenceSynthesis && <TableCell>Evidence summary</TableCell>}
@@ -4491,6 +4523,7 @@ function ResultPreview({ rows, selectedCompoundKey, onSelectCompound }) {
                 <TableCell>{formatDetailValue(row.valid_molecule)}</TableCell>
                 <TableCell>{formatDetailValue(row.v2_rank ?? row.scientific_rank ?? row.prioritization?.ranking_position)}</TableCell>
                 <TableCell>{formatDetailValue(row.v2_score ?? row.scientific_ranking_score ?? row.priority_score)}</TableCell>
+                {hasEvidenceStatus && <TableCell>{formatScientificPresentationValue(row.prioritization_status)}</TableCell>}
                 <TableCell>{formatReviewStatus(row.review_status)}</TableCell>
                 <TableCell>{formatDetailValue(row.review_note)}</TableCell>
                 {hasEvidenceSynthesis && (
@@ -4565,7 +4598,9 @@ export function compoundDetailSummarySections(compound) {
       title: 'Prioritization and Evidence',
       rows: [
         ['Review status', formatReviewStatus(compound.review_status)],
-        ['Priority score', compound.priority_score],
+        ['Priority Rank', compound.v2_rank ?? compound.scientific_rank ?? compound.prioritization?.ranking_position],
+        ['Prioritization Score', compound.v2_score ?? compound.scientific_ranking_score ?? compound.prioritization?.ranking_score ?? compound.priority_score],
+        ['Evidence Status', formatScientificPresentationValue(compound.prioritization_status)],
         ['Evidence summary', formatEvidenceCategory(compound.evidence_summary_category)],
         ['Biopharma context', formatEvidenceCategory(compound.biopharma_context_level)],
         ['Recommended review focus', formatEvidenceCategory(compound.recommended_review_focus)],
@@ -4746,7 +4781,9 @@ export function CompoundDetailPanel({ compound, upload, jobId, annotationsState,
                 ['Input SMILES', compound.input_smiles],
                 ['Canonical SMILES', compound.canonical_smiles],
                 ['Valid molecule', formatBooleanLabel(compound.valid_molecule)],
-                ['Priority score', compound.priority_score],
+                ['Priority Rank', compound.v2_rank ?? compound.scientific_rank ?? compound.prioritization?.ranking_position],
+                ['Prioritization Score', compound.v2_score ?? compound.scientific_ranking_score ?? compound.prioritization?.ranking_score ?? compound.priority_score],
+                ['Evidence Status', formatScientificPresentationValue(compound.prioritization_status)],
                 ['Known compound match', formatBooleanLabel(compound.known_compound_match)],
                 ['Known compound name', compound.known_compound_name],
                 ['Known compound source', formatScientificPresentationValue(compound.known_compound_source)],
@@ -5653,7 +5690,9 @@ function buildCandidatePackageMarkdown(rows) {
       markdownRows([
         ['Review status', formatReviewStatus(row.review_status)],
         ['Review note', row.review_note],
-        ['Priority score', row.priority_score],
+        ['Prioritization Score', row.v2_score ?? row.scientific_ranking_score ?? row.prioritization?.ranking_score ?? row.priority_score],
+        ['Priority Rank', row.v2_rank ?? row.scientific_rank ?? row.prioritization?.ranking_position],
+        ['Evidence Status', formatScientificPresentationValue(row.prioritization_status)],
         ['Input SMILES', row.input_smiles],
         ['Canonical SMILES', row.canonical_smiles],
         ['BBB prediction', row.bbb_prediction],
@@ -5736,7 +5775,9 @@ function buildCompoundMarkdownReport(compound) {
     '',
     '## Molecular prioritization',
     markdownRows([
-      ['Priority score', compound.priority_score],
+      ['Prioritization Score', compound.v2_score ?? compound.scientific_ranking_score ?? compound.prioritization?.ranking_score ?? compound.priority_score],
+      ['Priority Rank', compound.v2_rank ?? compound.scientific_rank ?? compound.prioritization?.ranking_position],
+      ['Evidence Status', formatScientificPresentationValue(compound.prioritization_status)],
       ['Lipinski pass/fail', formatPassFail(compound.lipinski_pass)],
     ]),
     '',
