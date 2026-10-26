@@ -9,12 +9,14 @@ import { createServer } from 'vite';
 let vite;
 let ExperimentalNeighborhood;
 let filterExperimentalRecords;
+let formatExperimentalValue;
+let highestAnalogSimilarity;
 let KnownAnalogTable;
 let StructuralTransformation;
 
 before(async () => {
   vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
-  ({ default: ExperimentalNeighborhood, filterExperimentalRecords, KnownAnalogTable, StructuralTransformation } = await vite.ssrLoadModule('/src/ExperimentalNeighborhood.jsx'));
+  ({ default: ExperimentalNeighborhood, filterExperimentalRecords, formatExperimentalValue, highestAnalogSimilarity, KnownAnalogTable, StructuralTransformation } = await vite.ssrLoadModule('/src/ExperimentalNeighborhood.jsx'));
 });
 
 after(async () => vite?.close());
@@ -47,6 +49,18 @@ test('record filtering is target and endpoint specific without aggregation', () 
   ];
   const result = filterExperimentalRecords(records, { query: '', target: 'Target A', endpoint: 'IC50', assayType: '', organism: '', source: '' });
   assert.deepEqual(result.map((record) => record.source_record_id), ['1']);
+});
+
+test('experimental values preserve real zero and never display a dangling unit for missing data', () => {
+  assert.equal(formatExperimentalValue({ relation: '=', original_value: 0, original_unit: '%' }), '= 0 %');
+  assert.equal(formatExperimentalValue({ relation: '=', original_value: null, original_unit: 'nM' }), 'Not available');
+  assert.equal(formatExperimentalValue({ original_value: 12.5 }), '12.5');
+});
+
+test('structural-analog similarity excludes the exact compound from the summary', () => {
+  assert.equal(highestAnalogSimilarity([{ moloptima_tanimoto: 0.889 }, { moloptima_tanimoto: 0.731 }]), '0.889');
+  assert.equal(highestAnalogSimilarity([]), 'Not available');
+  assert.equal(highestAnalogSimilarity([{ moloptima_tanimoto: null }]), 'Not available');
 });
 
 test('source contains bounded tables, exact/no-match, network states, provenance, censoring and explicit export', async () => {

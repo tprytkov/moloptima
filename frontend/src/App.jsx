@@ -1359,7 +1359,17 @@ function ActivePage({
   }
 
   if (activeItem === 'Experimental Data') {
-    return <ExperimentalDataWorkspace upload={uploadState.upload} baseUrl={apiBaseUrl} />;
+    return (
+      <ExperimentalDataWorkspace
+        key={jobScopeKey}
+        upload={uploadState.upload}
+        activeJob={prioritizationState.job}
+        calculationResult={prioritizationState.result}
+        targetContext={targetContext}
+        openedHistorical={Boolean(uploadState.upload?.restored_from_job)}
+        baseUrl={apiBaseUrl}
+      />
+    );
   }
 
   if (activeItem === 'ADMET') {
