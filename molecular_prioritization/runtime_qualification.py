@@ -316,8 +316,16 @@ def _receptor_runtime_status() -> dict[str, object]:
         "runtime_source": "application_process_and_isolated_repair_runtime",
         "meeko": {"status": "available" if meeko == MEEKO_VERSION else status, "version": meeko},
         "gemmi": {"status": "available" if gemmi == GEMMI_VERSION else status, "version": gemmi},
-        "pdbfixer": {"status": "available" if repair.get("available") else status, "version": pdbfixer},
-        "openmm": {"status": "available" if repair.get("available") else status, "version": openmm},
+        "pdbfixer": {
+            "status": "available" if repair.get("available") else repair.get("status", status),
+            "version": pdbfixer,
+            "reason": repair.get("error_code") or repair.get("reason"),
+        },
+        "openmm": {
+            "status": "available" if repair.get("available") else repair.get("status", status),
+            "version": openmm,
+            "reason": repair.get("error_code") or repair.get("reason"),
+        },
         "repair_runtime_source": repair.get("resolution_source"),
         "hydrogen_preparation": runtime.get("hydrogen_preparation", {}),
         "reason": runtime.get("reason", ""),

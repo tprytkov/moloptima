@@ -183,6 +183,35 @@ python scripts\build_prolif_runtime_windows.py --source-prefix C:\path\to\molopt
 Use `--resume-existing` only to finish validation of an already extracted
 artifact after an interrupted audit; it does not repeat `conda-pack`.
 
+### Isolated receptor-repair runtime
+
+PDBFixer/OpenMM receptor repair never falls back to the general backend
+interpreter. Its manifest resolves an explicit override first, then the staged
+or installed isolated runtime:
+
+```text
+desktop/runtime/receptor_preparation/python/python.exe
+resources/runtime/receptor_preparation/python/python.exe
+```
+
+Build the ignored runtime from the qualified environment:
+
+```bat
+python scripts\build_receptor_repair_runtime_windows.py --source-prefix C:\path\to\moloptima-receptor-repair
+```
+
+The build requires the exact Python, PDBFixer, and OpenMM versions declared in
+`resources/receptor_preparation/runtime_manifest.json`, executes the real
+side-chain detection/addition and OpenMM PDB-write API smoke, and includes
+upstream license metadata. The packaged equivalence check is:
+
+```bat
+python scripts\qualify_packaged_receptor_repair_runtime.py ^
+  --external-python C:\path\to\moloptima-receptor-repair\python.exe ^
+  --receptor tests\fixtures\receptor_preparation\small_peptide.pdb ^
+  --output C:\path\to\qualification\receptor-repair.json
+```
+
 ### ChemBERTa and native tools
 
 ChemBERTa loads its frozen local model/cache resources without an implicit download. Vina and Open Babel resolve explicit overrides first, then verified packaged executables/resources. Meeko and Gemmi are provided by the general bundled backend runtime and checked against the qualified versions in the runtime validation script.

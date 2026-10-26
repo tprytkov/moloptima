@@ -142,6 +142,17 @@ setx MOLOPTIMA_PYTHON "C:\path\to\conda-env\python.exe"
 
 Close and reopen terminals or the desktop app after `setx`.
 
+The release build stages receptor repair independently of the general backend:
+
+```bat
+python scripts\build_receptor_repair_runtime_windows.py --source-prefix C:\path\to\moloptima-receptor-repair
+```
+
+`desktop/build/afterPack.js` then copies the staged runtime to
+`resources/runtime/receptor_preparation/python/`. The resolver uses the
+manifest-relative installed path and does not substitute the general backend
+Python when that isolated runtime is absent or incompatible.
+
 ## Build Commands
 
 From the repository root:

@@ -1,7 +1,11 @@
 {
   "schema_version": "moloptima-receptor-repair-runtime-v1",
   "environment_override": "MOLOPTIMA_RECEPTOR_REPAIR_PYTHON",
-  "python_candidates": ["runtime/python/python.exe"],
-  "required_packages": {"pdbfixer": "1.12.0", "openmm": "8.6.1"},
+  "python_candidates": [
+    "desktop/runtime/receptor_preparation/python/python.exe",
+    "../runtime/receptor_preparation/python/python.exe"
+  ],
+  "expected_versions": {"python": "3.11.16", "pdbfixer": "1.12.0", "openmm": "8.6.1"},
+  "required_api_smoke": "pdbfixer_side_chain_detection_and_openmm_pdb_write",
   "policy": "side_chain_heavy_atoms_only_no_missing_residues_no_terminals"
 }

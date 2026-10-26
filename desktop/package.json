@@ -92,6 +92,8 @@
           "openbabel/**/*",
           "prioritization_profiles/**/*",
           "receptor_preparation/runtime_manifest.json",
+          "receptor_preparation/environment-win-64.yml",
+          "receptor_preparation/THIRD_PARTY_NOTICES.md",
           "runtime/vina/**/*",
           "runtime/openbabel/**/*",
           "!**/__pycache__/**",
