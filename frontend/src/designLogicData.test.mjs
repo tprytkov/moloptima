@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   availablePoseModes, contactsForSelection, filterMatrixFeatures, interactionClassSummary,
-  interactionStatusLabel, scatterCoordinates,
+  formatMetricWithUnit, interactionStatusLabel, scatterCoordinates,
 } from './designLogicData.js';
 
 test('explicit pose modes are deterministic and never substitute a best pose', () => {
@@ -38,4 +38,10 @@ test('typed unavailable and both-empty states remain explicit', () => {
   assert.equal(interactionStatusLabel('not_analyzed'), 'Not analyzed');
   assert.equal(interactionStatusLabel('incompatible'), 'Incompatible');
   assert.equal(interactionStatusLabel('both_empty'), 'Both fingerprints empty');
+});
+
+test('unit formatting preserves numeric zero without attaching units to missing values', () => {
+  assert.equal(formatMetricWithUnit(0, 'kcal/mol'), '0.000 kcal/mol');
+  assert.equal(formatMetricWithUnit(null, 'kcal/mol'), '—');
+  assert.equal(formatMetricWithUnit(undefined, 'kcal/mol'), '—');
 });

@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import {
   DESIGN_LOGIC_LIMIT, RAW_CONTACT_PAGE_SIZE, availablePoseModes, contactsForSelection,
-  filterMatrixFeatures, firstDockedMoleculeId, formatMetric, interactionChains,
+  filterMatrixFeatures, firstDockedMoleculeId, formatMetric, formatMetricWithUnit, interactionChains,
   interactionClassSummary, interactionStatusLabel, interactionTypes, pointTooltip,
   scatterCoordinates,
 } from './designLogicData.js';
@@ -154,7 +154,7 @@ function Inspector({ point, referenceId, baseUrl, selectedToken, onSelectToken, 
       {point ? <Box component="img" loading="lazy" src={structureUrl(baseUrl, point, 300, 165)} alt={`2D structure for selected molecule ${point.display_name || point.molecule_id}`} sx={{ width: '100%', height: 165, objectFit: 'contain', bgcolor: '#fff', border: '1px solid', borderColor: 'divider', borderRadius: 1 }} /> : null}
       <StatusValue label="Selected Vina pose" value={point ? `Mode ${point.mode}` : '—'} />
       <StatusValue label="Source" value={point?.source || '—'} />
-      <StatusValue label="Vina affinity" value={`${formatMetric(point?.vina_affinity_kcal_mol)} kcal/mol`} />
+      <StatusValue label="Vina affinity" value={formatMetricWithUnit(point?.vina_affinity_kcal_mol, 'kcal/mol')} />
       <StatusValue label="Morgan fingerprint Tanimoto" value={formatMetric(point?.structural_similarity)} />
       <StatusValue label="Interaction fingerprint similarity" value={formatMetric(point?.interaction_similarity)} status={point?.interaction_similarity_status === 'valid' ? '' : 'warning'} />
       <StatusValue label="Fingerprint status" value={interactionStatusLabel(point?.fingerprint_status)} status={point?.fingerprint_status === 'available' ? '' : 'warning'} />

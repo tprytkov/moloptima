@@ -13,6 +13,11 @@ function valueOrUnavailable(value) {
   return value === null || value === undefined || value === '' ? 'Not available' : String(value);
 }
 
+export function valueWithUnit(value, unit) {
+  const formatted = valueOrUnavailable(value);
+  return formatted === 'Not available' ? formatted : `${formatted} ${unit}`;
+}
+
 const DOCKING_STATUS_LABELS = {
   success: 'Completed',
   cancelled: 'Cancelled',
@@ -48,7 +53,7 @@ function Metric({ label, value, detail }) {
       <Typography variant="h5" sx={{ fontWeight: 750, overflowWrap: 'anywhere' }}>
         {valueOrUnavailable(value)}
       </Typography>
-      {detail ? <Typography variant="caption" color="text.secondary">{detail}</Typography> : null}
+      {detail && value !== null && value !== undefined && value !== '' ? <Typography variant="caption" color="text.secondary">{detail}</Typography> : null}
     </Box>
   );
 }
@@ -221,7 +226,7 @@ export default function DockingResultsSection({
               >
                 {modes.map((mode) => (
                   <MenuItem key={mode.mode} value={mode.mode}>
-                    Mode {mode.mode} · {valueOrUnavailable(mode.affinity_kcal_mol)} kcal/mol
+                    Mode {mode.mode} · {valueWithUnit(mode.affinity_kcal_mol, 'kcal/mol')}
                   </MenuItem>
                 ))}
               </TextField>

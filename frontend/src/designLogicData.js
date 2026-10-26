@@ -83,12 +83,18 @@ export function pointTooltip(point) {
     `Mode ${point.mode}`,
     `Morgan Tanimoto ${formatMetric(point.structural_similarity)}`,
     `Interaction similarity ${formatMetric(point.interaction_similarity)}`,
-    `Vina affinity ${formatMetric(point.vina_affinity_kcal_mol)} kcal/mol`,
+    `Vina affinity ${formatMetricWithUnit(point.vina_affinity_kcal_mol, 'kcal/mol')}`,
     `${point.fingerprint?.unique_token_count ?? 0} unique tokens`,
     `Scaffold ${point.scaffold_id || 'unavailable'}`,
   ].join(' · ');
 }
 
 export function formatMetric(value, digits = 3) {
+  if (value === null || value === undefined || value === '') return '—';
   return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : '—';
+}
+
+export function formatMetricWithUnit(value, unit, digits = 3) {
+  const formatted = formatMetric(value, digits);
+  return formatted === '—' ? formatted : `${formatted} ${unit}`;
 }

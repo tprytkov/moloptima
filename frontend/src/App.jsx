@@ -88,6 +88,8 @@ import {
 } from './moleculeImportWorkflow.js';
 import ResultsPackageDownloads from './ResultsPackageDownloads.jsx';
 import ResultsWorkspace, { deriveResultDomains } from './ResultsWorkspace.jsx';
+import SettingsWorkspace from './SettingsWorkspace.jsx';
+import { formatScientificPresentationValue } from './scientificPresentation.js';
 import {
   TERMINAL_JOB_STATUSES,
   mergeJobIntoHistory,
@@ -116,69 +118,11 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 export const READABLE_CONTENT_MAX_WIDTH = 1440;
 export const SUMMARY_CONTENT_MAX_WIDTH = 1200;
 
-const SCIENTIFIC_VALUE_LABELS = {
-  not_requested: 'Not requested',
-  not_used: 'Not used',
-  not_run: 'Not run',
-  not_provided: 'Not provided',
-  not_run_invalid_molecule: 'Not run — invalid molecule',
-  unavailable: 'Unavailable',
-  model_unavailable: 'Model unavailable',
-  model_available: 'Model available',
-  available: 'Available',
-  checking: 'Checking',
-  completed: 'Completed',
-  failed: 'Failed',
-  success: 'Successful',
-  incompatible: 'Incompatible',
-  error: 'Error',
-  valid: 'Valid',
-  invalid: 'Invalid',
-  lookup_failed: 'Lookup failed',
-  exact_match: 'Exact match',
-  no_exact_match: 'No exact match',
-  similarity_match: 'Similarity match',
-  match_found: 'Match found',
-  no_match: 'No match',
-  closest_match_found: 'Closest match found',
-  fresh_lookup: 'Fresh lookup',
-  cache_hit: 'Cache hit',
-  cache_miss: 'Cache miss',
-  local_reference: 'Local reference',
-  local_curated: 'Local curated reference',
-  local: 'Local reference',
-  user_supplied_pdbqt: 'User-supplied PDBQT',
-  moloptima_prepared: 'Prepared by MolOptima',
-  completed_with_warnings: 'Completed with warnings',
-  heuristic_synthetic_accessibility: 'Heuristic synthetic accessibility',
-};
-
-const RUNTIME_SOURCE_LABELS = {
-  application_process: 'Current application process',
-  packaged: 'Packaged scientific runtime',
-  explicit_override: 'Explicit runtime override',
-  pending: 'Qualification pending',
-  unavailable: 'Unavailable',
-  test: 'Test runtime',
-};
-
-function humanizeIdentifier(value) {
-  const text = String(value ?? '').trim();
-  if (!text) return 'Not available';
-  const words = text.replace(/[_-]+/g, ' ');
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-export function formatScientificPresentationValue(value) {
-  if (value === null || value === undefined || value === '') return 'Not available';
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  return SCIENTIFIC_VALUE_LABELS[value] ?? String(value);
-}
-
-export function formatRuntimeSource(value) {
-  if (value === null || value === undefined || value === '') return 'Not available';
-  return RUNTIME_SOURCE_LABELS[value] ?? humanizeIdentifier(value);
-}
+export { formatRuntimeSource, formatScientificPresentationValue } from './scientificPresentation.js';
+export {
+  fetchScientificRuntimeStatus, ModelDataSourcesPage, ScientificRuntimePanel,
+  SCIENTIFIC_RUNTIME_POLL_INTERVAL_MS, scientificRuntimePollDelay,
+} from './SettingsWorkspace.jsx';
 
 export function resetPrimaryPageScroll(scrollContainer = globalThis.document?.scrollingElement) {
   scrollContainer?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
@@ -1491,10 +1435,11 @@ function ActivePage({
 
   if (activeItem === 'Settings') {
     return (
-      <ModelDataSourcesPage
+      <SettingsWorkspace
         sourceStatusState={sourceStatusState}
         onCheckLocalModelCache={onCheckLocalModelCache}
         onRefreshSourceStatus={onRefreshSourceStatus}
+        baseUrl={apiBaseUrl}
       />
     );
   }
@@ -6015,282 +5960,6 @@ function formatDetailValue(value) {
 function formatStructuredDetail(value) {
   if (!value || typeof value !== 'object' || Object.keys(value).length === 0) return null;
   return JSON.stringify(value, null, 2);
-}
-
-export async function fetchScientificRuntimeStatus(baseUrl = apiBaseUrl, { refresh = false } = {}) {
-  const response = await fetch(
-    `${baseUrl}/api/scientific-runtime/${refresh ? 'refresh' : 'status'}`,
-    refresh ? { method: 'POST' } : undefined,
-  );
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || `Scientific runtime status failed (HTTP ${response.status}).`);
-  return payload;
-}
-
-export const SCIENTIFIC_RUNTIME_POLL_INTERVAL_MS = 3000;
-
-export function scientificRuntimePollDelay(payload) {
-  if (!payload) return null;
-  if (payload.qualification_state === 'checking' || payload.refreshing) {
-    return SCIENTIFIC_RUNTIME_POLL_INTERVAL_MS;
-  }
-  return Object.values(payload.components ?? {}).some(
-    (component) => component?.status === 'checking' || component?.refreshing,
-  ) ? SCIENTIFIC_RUNTIME_POLL_INTERVAL_MS : null;
-}
-
-function RuntimeStatusChip({ status }) {
-  const normalized = String(status || 'unavailable').toLowerCase();
-  const color = normalized === 'available' ? 'success' : normalized === 'incompatible' || normalized === 'error' ? 'error' : 'warning';
-  return <Chip label={normalized[0].toUpperCase() + normalized.slice(1)} color={color} variant="outlined" />;
-}
-
-function RuntimeCard({ title, status, refreshing = false, children }) {
-  return (
-    <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider', height: '100%' }}>
-      <Stack spacing={1}>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1}>
-          <Typography variant="h6">{title}</Typography>
-          <Stack direction="row" spacing={1} alignItems="center">
-            {refreshing ? <Typography variant="caption" color="text.secondary">Refreshing</Typography> : null}
-            <RuntimeStatusChip status={status} />
-          </Stack>
-        </Stack>
-        {children}
-      </Stack>
-    </Paper>
-  );
-}
-
-export function ScientificRuntimePanel({ runtimeState, onRefresh }) {
-  const components = runtimeState.payload?.components ?? {};
-  const chemberta = components.chemberta ?? {};
-  const gmc = components.gmc_mpnn_bbb ?? {};
-  const chemprop = components.chemprop_regression ?? {};
-  const receptor = components.receptor_preparation ?? {};
-  const docking = components.docking ?? {};
-  const vina = docking.vina ?? {};
-  const openbabel = docking.openbabel ?? {};
-  const sourceText = (value) => value || 'Not available';
-  const dependencyText = (label, dependency) => dependency?.status === 'checking'
-    ? `${label} · checking`
-    : `${label} ${sourceText(dependency?.version)} · ${formatScientificPresentationValue(dependency?.status)}`;
-  const nativeRuntimeText = (label, runtime) => runtime?.status === 'checking'
-    ? `${label}: Checking...`
-    : `${label}: ${sourceText(runtime?.identity)} · ${formatScientificPresentationValue(runtime?.status)}`;
-  const pollPending = scientificRuntimePollDelay(runtimeState.payload) !== null;
-
-  return (
-    <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
-      <Stack spacing={2.5}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1.5}>
-          <Stack spacing={0.5}>
-            <Typography variant="h2">Scientific Runtime</Typography>
-            <Typography color="text.secondary">
-              Status comes from backend production runtime contract probes. Opening Settings does not run scientific inference.
-            </Typography>
-          </Stack>
-          <Button variant="outlined" onClick={onRefresh} disabled={runtimeState.loading}>Refresh runtime status</Button>
-        </Stack>
-        {runtimeState.loading && !runtimeState.payload ? <Alert severity="info">Loading scientific runtime status...</Alert> : null}
-        {pollPending ? (
-          <Alert severity="info">
-            Production runtime qualification is running in the background. Completed runtimes are shown as they finish.
-          </Alert>
-        ) : null}
-        {runtimeState.error ? <Alert severity="error">{runtimeState.error}</Alert> : null}
-        {!runtimeState.loading && !runtimeState.error && !runtimeState.payload ? (
-          <Alert severity="info">Scientific runtime status has not been checked.</Alert>
-        ) : null}
-        {runtimeState.payload ? (
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-            <RuntimeCard title="ChemBERTa classification" status={chemberta.status} refreshing={chemberta.refreshing}>
-              <Typography variant="body2">{chemberta.public_endpoint_count ?? 9} public classification endpoints</Typography>
-              <Typography variant="body2" color="text.secondary">Runtime source: {formatRuntimeSource(chemberta.runtime_source)}</Typography>
-            </RuntimeCard>
-            <RuntimeCard title="GMC-MPNN BBB" status={gmc.status} refreshing={gmc.refreshing}>
-              <Typography variant="body2">5-seed ensemble · raw unweighted ensemble mean · population SD</Typography>
-              <Typography variant="body2">Threshold 0.5 · provisional raw · calibration not frozen</Typography>
-              <Typography variant="body2" color="text.secondary">Runtime source: {formatRuntimeSource(gmc.runtime_source)}</Typography>
-            </RuntimeCard>
-            <RuntimeCard title="Chemprop regression" status={chemprop.status} refreshing={chemprop.refreshing}>
-              <Typography variant="body2">5 regression endpoints · 5-seed ensemble · sample SD</Typography>
-              <Typography variant="body2" color="text.secondary">Runtime source: {formatRuntimeSource(chemprop.runtime_source)}</Typography>
-            </RuntimeCard>
-            <RuntimeCard title="Receptor Preparation" status={receptor.status} refreshing={receptor.refreshing}>
-              <Typography variant="body2">{dependencyText('PDBFixer', receptor.pdbfixer)}</Typography>
-              <Typography variant="body2">{dependencyText('OpenMM', receptor.openmm)}</Typography>
-              <Typography variant="body2">{dependencyText('Meeko', receptor.meeko)}</Typography>
-              <Typography variant="body2">{dependencyText('Gemmi', receptor.gemmi)}</Typography>
-              <Typography variant="body2" color="text.secondary">Hydrogen completion does not establish pH-correct protonation.</Typography>
-            </RuntimeCard>
-            <RuntimeCard title="Docking" status={docking.status} refreshing={docking.refreshing}>
-              <Typography variant="body2">{nativeRuntimeText('Vina', vina)}</Typography>
-              <Typography variant="body2">{nativeRuntimeText('Open Babel', openbabel)}</Typography>
-              <Typography variant="body2" color="text.secondary">Vina reports protocol-dependent docking scores/affinities, not binding free energy.</Typography>
-            </RuntimeCard>
-          </Box>
-        ) : null}
-      </Stack>
-    </Paper>
-  );
-}
-
-export function ModelDataSourcesPage({ sourceStatusState, onCheckLocalModelCache, onRefreshSourceStatus }) {
-  const [runtimeState, setRuntimeState] = useState({ payload: null, loading: true, error: '' });
-  const payload = sourceStatusState.payload ?? {};
-  const modelManifest = payload.model_manifest ?? {};
-  const publicManifest = payload.public_data_manifest ?? {};
-  const runManifest = payload.run_manifest ?? {};
-  const bbbModel = modelManifest.models?.bbb_chemberta ?? {};
-  const latestRunId = runManifest.latest_run;
-  const latestRun = latestRunId ? runManifest.runs?.[latestRunId] : null;
-  const cached = Boolean(bbbModel.cached);
-  const modelAvailable = latestRun?.actual_bbb_model_status === 'model_available';
-  const placeholderUsed = Boolean(latestRun?.fallback_placeholder_used);
-  const sources = Object.values(publicManifest.sources ?? {});
-
-  async function refreshScientificRuntime() {
-    setRuntimeState((current) => ({ ...current, loading: true, error: '' }));
-    try {
-      const runtimePayload = await fetchScientificRuntimeStatus(apiBaseUrl, { refresh: true });
-      setRuntimeState({ payload: runtimePayload, loading: false, error: '' });
-    } catch (error) {
-      setRuntimeState((current) => ({ ...current, loading: false, error: readableError(error) }));
-    }
-  }
-
-  useEffect(() => {
-    let active = true;
-    fetchScientificRuntimeStatus().then(
-      (runtimePayload) => active && setRuntimeState({ payload: runtimePayload, loading: false, error: '' }),
-      (error) => active && setRuntimeState({ payload: null, loading: false, error: readableError(error) }),
-    );
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    const delay = scientificRuntimePollDelay(runtimeState.payload);
-    if (delay === null) return undefined;
-    let active = true;
-    const timer = window.setTimeout(async () => {
-      try {
-        const runtimePayload = await fetchScientificRuntimeStatus();
-        if (active) setRuntimeState({ payload: runtimePayload, loading: false, error: '' });
-      } catch (error) {
-        if (active) setRuntimeState((current) => ({ ...current, loading: false, error: readableError(error) }));
-      }
-    }, delay);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [runtimeState.payload]);
-
-  return (
-    <Stack spacing={3}>
-      <PageIntro
-        title="Model and Data Sources"
-        description="Inspect production scientific runtime compatibility and optional public data-source state."
-      />
-
-      <ScientificRuntimePanel runtimeState={runtimeState} onRefresh={refreshScientificRuntime} />
-
-      <Box component="details" sx={{ '& > summary': { cursor: 'pointer' } }}>
-        <Box component="summary" sx={{ fontWeight: 700, color: 'text.secondary', mb: 1 }}>
-          Advanced diagnostics · legacy BBB cache and run manifests
-        </Box>
-        <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
-        <Stack spacing={2.5}>
-          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
-            <Stack spacing={0.75}>
-              <Typography variant="h2">Legacy BBB Cache Diagnostics</Typography>
-              <Typography color="text.secondary">
-                Compatibility-only diagnostics for the retired cache-backed BBB classifier. This does not describe current production ChemBERTa classification or GMC-MPNN BBB inference; both production runtimes are shown above.
-              </Typography>
-            </Stack>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
-              <Button variant="outlined" onClick={onCheckLocalModelCache} disabled={sourceStatusState.loading}>
-                Check legacy cache
-              </Button>
-              <Button variant="outlined" onClick={onRefreshSourceStatus} disabled={sourceStatusState.loading}>
-                Refresh source status
-              </Button>
-            </Stack>
-          </Stack>
-
-          {sourceStatusState.loading && <Alert severity="info">Refreshing local status...</Alert>}
-          {sourceStatusState.error && <Alert severity="error">{sourceStatusState.error}</Alert>}
-
-          {cached ? (
-            <Alert severity="success">The legacy BBB compatibility model is configured in the retired local cache.</Alert>
-          ) : (
-            <Alert severity="warning">The legacy BBB compatibility model is not present in the retired local cache or is unavailable.</Alert>
-          )}
-
-          {latestRun && modelAvailable && (
-            <Alert severity="success">This legacy run used the cached BBB compatibility model.</Alert>
-          )}
-          {latestRun && placeholderUsed && (
-            <Alert severity="info">
-              This run used placeholder BBB fields because the model was unavailable.
-            </Alert>
-          )}
-
-          <MetadataPanel
-            rows={[
-              ['BBB model cache path', modelManifest.cache_root ?? bbbModel.cache_path ?? ''],
-              ['Cached status', cached ? 'Cached' : 'Not cached'],
-              ['Model status from latest check', formatScientificPresentationValue(bbbModel.status ?? 'not checked')],
-              ['Actual legacy model status or placeholder mode', formatScientificPresentationValue(latestRun?.actual_bbb_model_status ?? 'not_run')],
-              ['Latest run timestamp', latestRun?.timestamp ?? ''],
-              ['Output file', latestRun?.output_file ?? ''],
-              ['Rows', latestRun?.row_count ?? ''],
-            ]}
-          />
-        </Stack>
-        </Paper>
-      </Box>
-
-      <Paper elevation={0} sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}>
-        <Stack spacing={2}>
-          <Typography variant="h2">Public Lookup Sources</Typography>
-          <Alert severity="info">
-            PubChem exact identity, ChEMBL public bioactivity context, and SureChEMBL patent-context signals are available only when explicitly enabled for a run.
-            SureChEMBL returned records may include broad or indirect public document associations; patent-context output is a public database signal only, not a legal conclusion.
-          </Alert>
-          {sources.length > 0 ? (
-            <Box sx={{ overflowX: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-              <Table size="small" aria-label="Public lookup source status">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Source</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Last checked</TableCell>
-                    <TableCell>Last successful lookup</TableCell>
-                    <TableCell>Cache path</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {sources.map((source) => (
-                    <TableRow key={source.source_name}>
-                      <TableCell>{source.source_name}</TableCell>
-                      <TableCell>{formatScientificPresentationValue(source.status)}</TableCell>
-                      <TableCell>{formatDetailValue(source.last_checked)}</TableCell>
-                      <TableCell>{source.last_successful_lookup ? formatDetailValue(source.last_successful_lookup) : 'Not active'}</TableCell>
-                      <TableCell>{source.cache_path}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
-          ) : (
-            <Alert severity="info">Click Refresh source status to populate planned public source status.</Alert>
-          )}
-        </Stack>
-      </Paper>
-    </Stack>
-  );
 }
 
 function useBackendHealth() {

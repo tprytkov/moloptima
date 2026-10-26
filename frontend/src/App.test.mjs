@@ -371,7 +371,7 @@ test('production UI source contains no Phase 1 terminology', async () => {
   assert.doesNotMatch(source, /Phase[ -]?1/i);
 });
 
-test('scientific runtime Settings panel presents backend-qualified production contracts', () => {
+test('scientific runtime Settings panel presents backend-qualified runtime cards', () => {
   const html = renderToStaticMarkup(React.createElement(module.ScientificRuntimePanel, {
     runtimeState: {
       loading: false, error: '', payload: { components: {
@@ -395,17 +395,17 @@ test('scientific runtime Settings panel presents backend-qualified production co
 
   assert.match(html, /Scientific Runtime/);
   assert.match(html, /9 public classification endpoints/);
-  assert.match(html, /5-seed ensemble · raw unweighted ensemble mean · population SD/);
-  assert.match(html, /Threshold 0\.5 · provisional raw · calibration not frozen/);
-  assert.match(html, /5 regression endpoints · 5-seed ensemble · sample SD/);
-  assert.match(html, /Meeko 0\.7\.1 · Available/);
-  assert.match(html, /Gemmi 0\.7\.5 · Available/);
+  assert.match(html, /5-seed raw ensemble probability · threshold 0\.5 · provisional raw · calibration not frozen/);
+  assert.match(html, /5 regression endpoints · 5-seed ensemble · sample standard deviation/);
+  assert.match(html, /Meeko/);
+  assert.match(html, /Gemmi/);
+  assert.match(html, /0\.7\.1/);
+  assert.match(html, /0\.7\.5/);
   assert.match(html, /AutoDock Vina 1\.1\.2/);
   assert.match(html, /Open Babel 3\.1\.0/);
-  assert.match(html, /does not establish pH-correct protonation/);
-  assert.match(html, /not binding free energy/);
-  assert.match(html, /Runtime source: Current application process/);
-  assert.match(html, /Runtime source: Packaged scientific runtime/);
+  assert.match(html, /not experimental binding free energy/);
+  assert.match(html, /Current application process/);
+  assert.match(html, /Packaged scientific runtime/);
   assert.doesNotMatch(html, /application_process/);
 });
 
@@ -422,18 +422,18 @@ test('scientific presentation mappings preserve distinct states and safely label
   assert.equal(module.formatRuntimeSource('future_runtime_source'), 'Future runtime source');
 });
 
-test('Settings moves obsolete BBB cache presentation under Advanced diagnostics', () => {
+test('Settings keeps obsolete BBB cache presentation inside secondary diagnostics', () => {
   const html = renderToStaticMarkup(React.createElement(module.ModelDataSourcesPage, {
     sourceStatusState: { payload: null, loading: false, error: '' },
     onCheckLocalModelCache: () => {},
     onRefreshSourceStatus: () => {},
   }));
 
-  assert.match(html, /Advanced diagnostics · legacy BBB cache and run manifests/);
+  assert.match(html, /Diagnostics/);
   assert.match(html, /<details/);
-  assert.match(html, /Legacy BBB Cache Diagnostics/);
+  assert.match(html, /Legacy BBB cache compatibility details/);
   assert.match(html, /retired cache-backed BBB classifier/);
-  assert.match(html, /does not describe current production ChemBERTa classification or GMC-MPNN BBB inference/);
+  assert.match(html, /Current ChemBERTa and GMC-MPNN availability is reported in Scientific Runtime/);
   assert.doesNotMatch(html, /BBB\/ChemBERTa model/);
   assert.doesNotMatch(html, />Local Model Cache</);
 });
@@ -480,9 +480,9 @@ test('scientific runtime cards render completed families while another remains p
     runtimeState: { loading: false, error: '', payload }, onRefresh: () => {},
   }));
 
-  assert.match(html, /ChemBERTa classification[\s\S]*Available/);
+  assert.match(html, /ChemBERTa Classification[\s\S]*Available/);
   assert.match(html, /GMC-MPNN BBB[\s\S]*Checking/);
-  assert.match(html, /Completed runtimes are shown as they finish/);
+  assert.match(html, /Completed probes appear as they finish/);
 });
 
 test('scientific runtime polling continues only while statuses are non-terminal', () => {

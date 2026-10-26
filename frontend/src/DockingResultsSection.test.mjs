@@ -16,6 +16,11 @@ before(async () => {
 
 after(async () => vite?.close());
 
+test('docking value formatting never leaves a bare unit for missing data', () => {
+  assert.equal(module.valueWithUnit(0, 'kcal/mol'), '0 kcal/mol');
+  assert.equal(module.valueWithUnit(null, 'kcal/mol'), 'Not available');
+});
+
 function render(dockingResult) {
   return renderToStaticMarkup(React.createElement(DockingResultsSection, {
     compound: { molecule_id: 'CMPD-01', docking_result: dockingResult },
