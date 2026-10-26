@@ -68,6 +68,7 @@ import DockingResultsSection, { dockingStatusLabel } from './DockingResultsSecti
 import DockingSetup from './DockingSetup.jsx';
 import PrioritizationExplanationSection from './PrioritizationExplanationSection.jsx';
 import PrioritizationAnalysisPanel from './PrioritizationAnalysisPanel.jsx';
+import AnalysisWorkspace, { persistedAnalysisProfileContext } from './AnalysisWorkspace.jsx';
 import PrioritizationWorkspace from './PrioritizationWorkspace.jsx';
 import PrioritizationSetupDialog, {
   createPrioritizationSetupConfiguration,
@@ -1427,9 +1428,9 @@ function ActivePage({
       <AnalysisWorkflowPage
         key={activeJobId}
         currentRunState={prioritizationState}
+        openedHistorical={Boolean(uploadState.upload?.restored_from_job)}
         annotationsState={annotationsState}
         onSaveReviewAnnotation={onSaveReviewAnnotation}
-        prioritizationSettings={prioritizationSettings}
       />
     );
   }
@@ -2065,11 +2066,18 @@ export function SingleCompoundAssessment({ compound, profile, profileSha256, job
   );
 }
 
-export function AnalysisWorkflowPage({ currentRunState, annotationsState, onSaveReviewAnnotation, prioritizationSettings }) {
+export function AnalysisWorkflowPage({
+  currentRunState,
+  openedHistorical = false,
+  annotationsState,
+  onSaveReviewAnnotation,
+}) {
   const [tab, setTab] = useState(0);
   const rows = currentRunState.result?.results ?? [];
-  const profileMatches = Boolean(prioritizationSettings.validation?.scoreable
-    && prioritizationSettings.validation?.profile_sha256 === currentRunState.result?.prioritization_profile_sha256);
+  const {
+    profile: persistedProfile,
+    scoreable: profileScoreable,
+  } = persistedAnalysisProfileContext(currentRunState.result, currentRunState.job);
   const single = currentRunState.result?.analysis_mode === 'single_compound'
     || currentRunState.job?.analysis_mode === 'single_compound';
   if (single) {
@@ -2078,19 +2086,31 @@ export function AnalysisWorkflowPage({ currentRunState, annotationsState, onSave
   return (
     <Stack spacing={2}>
       <PageIntro title="Analysis" description="Explore current calculation outputs without changing the underlying scientific priority score." />
-      <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
-        <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="scrollable" scrollButtons="auto" aria-label="Analysis views">
-          <Tab label="Chemical Space" /><Tab label="Pareto & Sensitivity" /><Tab label="Biopharma Intelligence" />
-        </Tabs>
-      </Paper>
-      {!rows.length ? <Alert severity="info">No current calculation results are available for analysis.</Alert> : null}
-      {tab === 0 ? <ChemicalSpacePage latestRunState={currentRunState} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} /> : null}
-      {tab === 1 ? (
-        currentRunState.result?.prioritization_method === 'v2'
-          ? <PrioritizationAnalysisPanel apiBaseUrl={apiBaseUrl} jobId={currentRunState.job?.job_id || ''} results={rows} profile={profileMatches ? prioritizationSettings.profile : null} profileScoreable={profileMatches} />
-          : <Alert severity="info">Pareto and sensitivity analysis require current Multi-Parameter Prioritization results. Analysis has not been run.</Alert>
-      ) : null}
-      {tab === 2 ? <BiopharmaIntelligencePage latestRunState={currentRunState} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} /> : null}
+      <AnalysisWorkspace
+        job={currentRunState.job}
+        result={currentRunState.result}
+        openedHistorical={openedHistorical}
+      >
+        <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
+          <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="scrollable" scrollButtons="auto" aria-label="Analysis views">
+            <Tab label="Chemical Space" /><Tab label="Pareto & Sensitivity" /><Tab label="Biopharma Intelligence" />
+          </Tabs>
+        </Paper>
+        {!rows.length ? <Alert severity="info">No current calculation results are available for analysis.</Alert> : null}
+        {tab === 0 ? <ChemicalSpacePage latestRunState={currentRunState} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} /> : null}
+        {tab === 1 ? (
+          currentRunState.result?.prioritization_method === 'v2'
+            ? <PrioritizationAnalysisPanel
+                apiBaseUrl={apiBaseUrl}
+                jobId={currentRunState.job?.job_id || ''}
+                results={rows}
+                profile={persistedProfile}
+                profileScoreable={profileScoreable}
+              />
+            : <Alert severity="info">Pareto and sensitivity analysis require current Multi-Parameter Prioritization results. Analysis has not been run.</Alert>
+        ) : null}
+        {tab === 2 ? <BiopharmaIntelligencePage latestRunState={currentRunState} annotationsState={annotationsState} onSaveReviewAnnotation={onSaveReviewAnnotation} /> : null}
+      </AnalysisWorkspace>
     </Stack>
   );
 }
