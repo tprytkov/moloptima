@@ -45,6 +45,7 @@ import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
 import moloptimaLogo from './assets/moloptima-logo.png';
 import AdmetResultsSection, {
@@ -89,6 +90,8 @@ import {
 import ResultsPackageDownloads from './ResultsPackageDownloads.jsx';
 import ResultsWorkspace, { deriveResultDomains } from './ResultsWorkspace.jsx';
 import SettingsWorkspace from './SettingsWorkspace.jsx';
+import { ContextHelp, HelpWorkspace, ModuleHelpDialog } from './HelpSystem.jsx';
+import { contextHelpForModule, moduleHelpForNavigation } from './helpContent.js';
 import { formatScientificPresentationValue } from './scientificPresentation.js';
 import {
   TERMINAL_JOB_STATUSES,
@@ -166,6 +169,7 @@ export const PRIMARY_NAVIGATION = [
   {
     section: 'SYSTEM', items: [
       { label: 'Settings', icon: SettingsOutlinedIcon },
+      { label: 'Help', icon: HelpOutlineIcon },
     ],
   },
 ];
@@ -308,6 +312,8 @@ const theme = createTheme({
 
 function App() {
   const [activeItem, setActiveItem] = useState('Workspace');
+  const [helpTopicId, setHelpTopicId] = useState('getting-started');
+  const [moduleHelpOpen, setModuleHelpOpen] = useState(false);
   const previousActiveItem = useRef(activeItem);
   const [uploadState, setUploadState] = useState({ ...EMPTY_UPLOAD_STATE });
   const activeImportRef = useRef(null);
@@ -1020,6 +1026,13 @@ function App() {
   const currentMoleculeCount = validatedMoleculeCount(uploadState.upload)
     || prioritizationState.result?.results?.length
     || 0;
+  const activeModuleHelp = moduleHelpForNavigation(activeItem);
+
+  const openFullHelp = (topicId = 'getting-started') => {
+    setHelpTopicId(topicId);
+    setModuleHelpOpen(false);
+    setActiveItem('Help');
+  };
 
   useEffect(() => {
     if (previousActiveItem.current !== activeItem) {
@@ -1037,7 +1050,13 @@ function App() {
           onSelect={setActiveItem}
         />
         <Box component="main" sx={{ flexGrow: 1, minWidth: 0, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-          <AppHeader activeItem={activeItem} onNewCalculation={handleNewCalculation} />
+          <AppHeader
+            activeItem={activeItem}
+            onNewCalculation={handleNewCalculation}
+            moduleHelp={activeModuleHelp}
+            onOpenModuleHelp={() => setModuleHelpOpen(true)}
+            onOpenFullHelp={openFullHelp}
+          />
           <Box sx={{ px: { xs: 2, md: 3 }, py: 2.5, width: '100%', flexGrow: 1 }}>
             <ActivePage
               activeItem={activeItem}
@@ -1075,6 +1094,8 @@ function App() {
               onNavigate={setActiveItem}
               workflowStatuses={workflowStatuses}
               currentMoleculeCount={currentMoleculeCount}
+              helpTopicId={helpTopicId}
+              onHelpTopicChange={setHelpTopicId}
             />
           </Box>
           <AppStatusBar
@@ -1083,6 +1104,12 @@ function App() {
             moleculeCount={currentMoleculeCount}
           />
         </Box>
+        <ModuleHelpDialog
+          open={moduleHelpOpen}
+          moduleHelp={activeModuleHelp}
+          onClose={() => setModuleHelpOpen(false)}
+          onOpenFullHelp={openFullHelp}
+        />
       </Box>
     </ThemeProvider>
   );
@@ -1156,7 +1183,8 @@ export function Sidebar({ activeItem, onSelect }) {
   );
 }
 
-export function AppHeader({ activeItem, onNewCalculation }) {
+export function AppHeader({ activeItem, onNewCalculation, moduleHelp = null, onOpenModuleHelp, onOpenFullHelp }) {
+  const contextTermId = contextHelpForModule(activeItem);
   return (
     <AppBar
       position="sticky"
@@ -1164,16 +1192,26 @@ export function AppHeader({ activeItem, onNewCalculation }) {
       elevation={0}
       sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}
     >
-      <Toolbar sx={{ justifyContent: 'space-between', px: { xs: 2, md: 3 } }}>
-        <Typography variant="h2">{activeItem}</Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddCircleOutlineIcon />}
-          onClick={onNewCalculation}
-          aria-label="Start a new calculation"
-        >
-          New Calculation
-        </Button>
+      <Toolbar sx={{ justifyContent: 'space-between', px: { xs: 2, md: 3 }, py: 0.75, gap: 1, flexWrap: 'wrap' }}>
+        <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0 }}>
+          <Typography variant="h2" sx={{ overflowWrap: 'anywhere' }}>{activeItem}</Typography>
+          {contextTermId ? <ContextHelp termId={contextTermId} onLearnMore={onOpenFullHelp} /> : null}
+        </Stack>
+        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="flex-end">
+          {moduleHelp ? (
+            <Button variant="outlined" startIcon={<HelpOutlineIcon />} onClick={onOpenModuleHelp} aria-label={`Open ${moduleHelp.title}`}>
+              Help
+            </Button>
+          ) : null}
+          <Button
+            variant="contained"
+            startIcon={<AddCircleOutlineIcon />}
+            onClick={onNewCalculation}
+            aria-label="Start a new calculation"
+          >
+            New Calculation
+          </Button>
+        </Stack>
       </Toolbar>
     </AppBar>
   );
@@ -1254,9 +1292,14 @@ function ActivePage({
   onNavigate,
   workflowStatuses,
   currentMoleculeCount,
+  helpTopicId,
+  onHelpTopicChange,
 }) {
   const activeJobId = prioritizationState.job?.job_id || '';
   const jobScopeKey = activeCalculationKey(prioritizationState, uploadState.upload);
+  if (activeItem === 'Help') {
+    return <HelpWorkspace initialTopicId={helpTopicId} onTopicChange={onHelpTopicChange} />;
+  }
   if (activeItem === 'Workspace') {
     return (
       <WorkspacePage
