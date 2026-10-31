@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -7,6 +7,12 @@ const {
   createSafeLogger,
   stopChildProcess,
 } = require('./lifecycle.js');
+const {
+  buildManualHtml,
+  manualHeadingId,
+  readManual,
+  resolveManualPath,
+} = require('./manual.js');
 
 const examplePythonPath = 'C:\\path\\to\\conda-env\\python.exe';
 const backendUrl = process.env.MOLOPTIMA_BACKEND_URL || 'http://127.0.0.1:8000';
@@ -17,6 +23,7 @@ const startFrontend =
 let backendProcess = null;
 let frontendProcess = null;
 let mainWindow = null;
+let manualWindow = null;
 let frontendLoaded = false;
 let backendShutdownExpected = false;
 let lastBackendStderr = '';
@@ -38,6 +45,56 @@ function getFrontendIndexPath() {
   }
   return path.join(getProjectRoot(), 'frontend', 'dist', 'index.html');
 }
+
+function getUserManualPath() {
+  return resolveManualPath({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    projectRoot: getProjectRoot(),
+  });
+}
+
+async function showUserManual(sectionId = 'introduction') {
+  const manual = readManual(getUserManualPath());
+  if (!manual.ok) return manual;
+
+  const resolvedSection = manualHeadingId(sectionId);
+  const html = buildManualHtml(manual.markdown, resolvedSection);
+  if (!manualWindow || manualWindow.isDestroyed()) {
+    manualWindow = new BrowserWindow({
+      width: 1120,
+      height: 900,
+      minWidth: 680,
+      minHeight: 540,
+      parent: mainWindow || undefined,
+      title: 'MolOptima User Manual',
+      show: false,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    manualWindow.on('closed', () => { manualWindow = null; });
+  }
+
+  await manualWindow.loadURL(`data:text/html;base64,${Buffer.from(html, 'utf8').toString('base64')}`);
+  manualWindow.show();
+  manualWindow.focus();
+  return { ok: true, sectionId: resolvedSection };
+}
+
+ipcMain.handle('moloptima:open-user-manual', async (event, sectionId) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    return { ok: false, code: 'manual_request_denied', message: 'The user manual request was not accepted.' };
+  }
+  try {
+    return await showUserManual(sectionId);
+  } catch (error) {
+    lifecycleLog.error(`User manual failed to open: ${error.message}`);
+    return { ok: false, code: 'manual_open_failed', message: 'The offline user manual could not be opened.' };
+  }
+});
 
 function getBundledPythonPath() {
   const executableName = process.platform === 'win32' ? 'python.exe' : 'python';

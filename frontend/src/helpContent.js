@@ -377,16 +377,16 @@ export const HELP_TOPICS = {
   'user-manual': {
     category: 'Reference',
     title: 'User Manual',
-    summary: 'About the installed educational guidance.',
+    summary: 'Open the comprehensive printable manual packaged with MolOptima.',
     keywords: ['manual', 'offline', 'documentation'],
     sections: [
       {
-        heading: 'Installed help',
-        paragraphs: ['This Help workspace is the authoritative, offline educational guide included with the MolOptima interface. It remains available without an internet connection and without an active calculation.'],
+        heading: 'Help and manual hierarchy',
+        paragraphs: ['Context Help gives immediate definitions, Module Help focuses on the current workspace, Central Help is searchable, and the User Manual provides comprehensive structured guidance. All are local and remain available without an active calculation.'],
       },
       {
-        heading: 'Separate printable manual',
-        paragraphs: ['A separate printable manual is not currently bundled with the desktop application. The repository manual requires terminology and navigation updates before it should be exposed as installed student guidance.'],
+        heading: 'Packaged printable manual',
+        paragraphs: ['Select Open User Manual to open the packaged offline manual. Module Help opens the corresponding manual section where a stable section link is available. The manual window includes a print action and does not run or modify scientific work.'],
       },
     ],
   },

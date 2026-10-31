@@ -98,6 +98,7 @@ test('module Help uses one bounded dialog pattern with full-Help navigation', as
   assert.match(source, /export function ModuleHelpDialog/);
   assert.match(source, /maxHeight: 'min\(760px, calc\(100vh - 32px\)\)'/);
   assert.match(source, /Open full Help/);
+  assert.match(source, /Open User Manual/);
   assert.match(source, />Key terms</);
   assert.match(source, /moduleHelp\.terms\.map/);
   assert.match(source, /aria-labelledby="module-help-title"/);
@@ -107,14 +108,29 @@ test('module Help uses one bounded dialog pattern with full-Help navigation', as
 test('Help components accept no active calculation or scientific mutation callbacks', async () => {
   const source = await readFile(new URL('./HelpSystem.jsx', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /activeJob|prioritizationState|onRun|onApply|apiRequest|fetch\(/);
+  const manualSource = await readFile(new URL('./manualLinks.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(manualSource, /activeJob|prioritizationState|onRun|onApply|apiRequest|fetch\(/);
   const html = renderToStaticMarkup(React.createElement(components.HelpWorkspace, { initialTopicId: 'troubleshooting' }));
   assert.match(html, /Troubleshooting &amp; Status Interpretation/);
+  assert.match(html, /aria-label="Open User Manual"/);
 });
 
-test('manual guidance does not expose an unbundled development path', () => {
+test('manual guidance describes the packaged offline manual without a development path', () => {
   const text = JSON.stringify(content.HELP_TOPICS['user-manual']);
-  assert.match(text, /not currently bundled/);
+  assert.match(text, /packaged offline manual/);
+  assert.match(text, /print action/);
   assert.doesNotMatch(text, /C:\\MolOptima|docs\/MolOptima_User_Manual/);
+});
+
+test('manual and Help keep critical scientific terminology aligned', async () => {
+  const manual = await readFile(new URL('../../docs/MolOptima_User_Manual.md', import.meta.url), 'utf8');
+  for (const expected of [
+    '0.5', 'provisional_raw', 'not_frozen', 'Probability is not formal confidence',
+    'not experimental affinity', 'Exact evidence', 'Analog evidence',
+    'Standard Prioritization', 'Multi-Parameter Prioritization', 'Priority Rank',
+    'Prioritization Score', 'Evidence Status', 'Results Need Recalculation',
+  ]) assert.match(manual, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  assert.doesNotMatch(manual, /Legacy v1|Legacy v2|Prioritization v2|AI Ranking|Smart Ranking/);
 });
 
 test('simple labels are deliberately absent from contextual Help', () => {

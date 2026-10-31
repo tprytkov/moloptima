@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -28,6 +29,17 @@ import {
   helpTopic,
   helpTopics,
 } from './helpContent.js';
+import { openUserManual } from './manualLinks.js';
+
+function useManualAction() {
+  const [manualError, setManualError] = useState('');
+  const openManual = async (topicId) => {
+    const result = await openUserManual(topicId);
+    setManualError(result.ok ? '' : result.message);
+    return result;
+  };
+  return { manualError, openManual };
+}
 
 function TopicSections({ topic }) {
   return (
@@ -81,6 +93,7 @@ export function HelpWorkspace({ initialTopicId = 'getting-started', onTopicChang
   const allTopics = useMemo(() => helpTopics(), []);
   const matches = useMemo(() => filterHelpTopics(query), [query]);
   const topic = helpTopic(selectedTopicId);
+  const { manualError, openManual } = useManualAction();
 
   useEffect(() => {
     if (initialTopicId) setSelectedTopicId(initialTopicId);
@@ -94,12 +107,19 @@ export function HelpWorkspace({ initialTopicId = 'getting-started', onTopicChang
 
   return (
     <Box sx={{ width: '100%', maxWidth: 1440, mx: 'auto', minWidth: 0 }}>
-      <Stack spacing={0.5} sx={{ mb: 2 }}>
-        <Typography component="h1" variant="h1">MolOptima Help</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ maxWidth: '80ch' }}>
-          Offline guidance for workflows, scientific interpretation, terminology, and limitations. Help is informational and never runs or changes a calculation.
-        </Typography>
+      <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'flex-start' }} spacing={1.5} sx={{ mb: 2 }}>
+        <Box>
+          <Typography component="h1" variant="h1">MolOptima Help</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ maxWidth: '80ch' }}>
+            Offline guidance for workflows, scientific interpretation, terminology, and limitations. Help is informational and never runs or changes a calculation.
+          </Typography>
+        </Box>
+        <Button variant="outlined" onClick={() => openManual(selectedTopicId)} aria-label="Open User Manual">
+          Open User Manual
+        </Button>
       </Stack>
+
+      {manualError ? <Alert severity="warning" sx={{ mb: 2 }}>{manualError}</Alert> : null}
 
       <TextField
         fullWidth
@@ -154,6 +174,7 @@ export function HelpWorkspace({ initialTopicId = 'getting-started', onTopicChang
 }
 
 export function ModuleHelpDialog({ open, moduleHelp, onClose, onOpenFullHelp }) {
+  const { manualError, openManual } = useManualAction();
   if (!moduleHelp) return null;
   const topic = helpTopic(moduleHelp.topicId);
   return (
@@ -172,6 +193,7 @@ export function ModuleHelpDialog({ open, moduleHelp, onClose, onOpenFullHelp }) 
         </IconButton>
       </DialogTitle>
       <DialogContent dividers sx={{ overflowWrap: 'anywhere' }}>
+        {manualError ? <Alert severity="warning" sx={{ mb: 2 }}>{manualError}</Alert> : null}
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{topic.summary}</Typography>
         {moduleHelp.terms?.length ? (
           <Box component="section" sx={{ mb: 2 }}>
@@ -188,8 +210,9 @@ export function ModuleHelpDialog({ open, moduleHelp, onClose, onOpenFullHelp }) 
         ) : null}
         <TopicSections topic={topic} />
       </DialogContent>
-      <DialogActions sx={{ px: 2.5, py: 1.5 }}>
+      <DialogActions sx={{ px: 2.5, py: 1.5, flexWrap: 'wrap' }}>
         <Button onClick={onClose}>Close</Button>
+        <Button variant="outlined" onClick={() => openManual(moduleHelp.topicId)} aria-label={`Open User Manual: ${topic.title}`}>Open User Manual</Button>
         <Button variant="contained" onClick={() => onOpenFullHelp?.(moduleHelp.topicId)}>Open full Help</Button>
       </DialogActions>
     </Dialog>
