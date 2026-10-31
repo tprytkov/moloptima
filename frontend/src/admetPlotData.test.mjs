@@ -22,6 +22,12 @@ function molecule(id, x, y, options = {}) {
   };
 }
 
+function mixedMolecule(id, probability, regression) {
+  const row = molecule(id, regression, -regression);
+  row.properties.gmc_mpnn_bbb = { probability, classification: probability >= 0.5 ? 'BBB+' : 'BBB-', status: { code: 'available' } };
+  return row;
+}
+
 test('numeric values are extracted in source order with zero and negative values', () => {
   const result = extractAdmetNumericValues([molecule('m1', -2, 1), molecule('m2', 0, 2), molecule('m3', 3, 3)], 'lipophilicity_astrazeneca');
   assert.deepEqual(result.values, [-2, 0, 3]);
@@ -38,6 +44,17 @@ test('missing and unavailable values are excluded and counted', () => {
 test('histogram bins are deterministic', () => {
   const rows = Array.from({ length: 37 }, (_, index) => molecule(`m${index}`, index - 18, index));
   assert.deepEqual(createAdmetHistogram(rows, 'lipophilicity_astrazeneca').bins, createAdmetHistogram(rows, 'lipophilicity_astrazeneca').bins);
+});
+
+test('classification histograms use ten deterministic bins across the fixed 0–1 probability domain', () => {
+  const histogram = createAdmetHistogram([
+    mixedMolecule('zero', 0, 1), mixedMolecule('middle', 0.5, 2), mixedMolecule('one', 1, 3),
+  ], 'gmc_mpnn_bbb');
+  assert.deepEqual(histogram.domain, [0, 1]);
+  assert.equal(histogram.bins.length, 10);
+  assert.equal(histogram.bins.reduce((sum, bin) => sum + bin.count, 0), 3);
+  assert.equal(histogram.bins[0].count, 1);
+  assert.equal(histogram.bins[9].count, 1);
 });
 
 test('constant-value histogram creates one non-zero-width bin', () => {
@@ -71,6 +88,11 @@ test('scatter maps X and Y raw values correctly', () => {
   const result = prepareAdmetScatterPoints([molecule('m1', 1.25, -3.5)], 'lipophilicity_astrazeneca', 'solubility_aqsoldb');
   assert.equal(result.points[0].x, 1.25);
   assert.equal(result.points[0].y, -3.5);
+});
+
+test('scatter supports a classification probability against a regression endpoint', () => {
+  const result = prepareAdmetScatterPoints([mixedMolecule('mixed', 0.823, 2.1)], 'gmc_mpnn_bbb', 'lipophilicity_astrazeneca');
+  assert.deepEqual(result.points.map(({ x, y }) => [x, y]), [[0.823, 2.1]]);
 });
 
 test('scatter includes only molecules with both numeric values', () => {

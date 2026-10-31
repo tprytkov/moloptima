@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   FormControl,
   InputLabel,
   MenuItem,
@@ -14,6 +15,9 @@ import {
   Typography,
 } from '@mui/material';
 import { ADMET_ENDPOINT_BY_KEY } from './admetAnalysisData.js';
+import { ContextHelp } from './HelpSystem.jsx';
+import { AdmetHeatMap } from './AdmetVisualizations.jsx';
+import { admetEndpointThreshold, admetVisualizationValue } from './admetVisualizationData.js';
 import {
   ADMET_PLOT_ENDPOINTS,
   createAdmetHistogram,
@@ -53,7 +57,7 @@ function EndpointSelect({ id, label, value, onChange, exclude = null }) {
       <Select labelId={`${id}-label`} id={id} value={value} label={label} onChange={(event) => onChange(event.target.value)}>
         {ADMET_PLOT_ENDPOINTS.filter((key) => key !== exclude).map((key) => {
           const endpoint = ADMET_ENDPOINT_BY_KEY.get(key);
-          return <MenuItem key={key} value={key}>{endpoint.label} · {endpoint.unit}</MenuItem>;
+          return <MenuItem key={key} value={key}>{endpoint.label} · {endpoint.valueType === 'regression' ? endpoint.unit : 'Probability'}</MenuItem>;
         })}
       </Select>
     </FormControl>
@@ -68,7 +72,7 @@ function PlotCounts({ totalCount, plottedCount, unavailableCount, unavailableLab
   );
 }
 
-function DistributionPlot({ molecules, endpointKey }) {
+function DistributionPlot({ molecules, endpointKey, selectedMoleculeId = '' }) {
   const histogram = useMemo(() => createAdmetHistogram(molecules, endpointKey), [endpointKey, molecules]);
   const endpoint = ADMET_ENDPOINT_BY_KEY.get(endpointKey);
   const width = 900;
@@ -77,6 +81,12 @@ function DistributionPlot({ molecules, endpointKey }) {
   const chartWidth = width - margin.left - margin.right;
   const chartHeight = height - margin.top - margin.bottom;
   const barWidth = histogram.bins.length ? chartWidth / histogram.bins.length : chartWidth;
+  const selectedMolecule = molecules.find((molecule) => molecule.moleculeId === selectedMoleculeId);
+  const selectedValue = admetVisualizationValue(selectedMolecule, endpointKey);
+  const domainSpan = histogram.domain[1] - histogram.domain[0] || 1;
+  const selectedX = selectedValue === null ? null : margin.left + ((selectedValue - histogram.domain[0]) / domainSpan) * chartWidth;
+  const threshold = admetEndpointThreshold(selectedMolecule?.properties?.[endpointKey], endpointKey);
+  const thresholdX = threshold === null ? null : margin.left + ((threshold - histogram.domain[0]) / domainSpan) * chartWidth;
 
   return (
     <Stack spacing={1.25} data-testid="admet-distribution-view">
@@ -92,6 +102,8 @@ function DistributionPlot({ molecules, endpointKey }) {
               const barHeight = histogram.maxCount ? (bin.count / histogram.maxCount) * chartHeight : 0;
               return <rect key={`${bin.x0}-${index}`} x={margin.left + index * barWidth + 1} y={margin.top + chartHeight - barHeight} width={Math.max(1, barWidth - 2)} height={barHeight} fill="#2b6cb0"><title>{`${bin.x0.toPrecision(4)} to ${bin.x1.toPrecision(4)}: ${bin.count} compounds`}</title></rect>;
             })}
+            {thresholdX !== null ? <><line x1={thresholdX} x2={thresholdX} y1={margin.top} y2={margin.top + chartHeight} stroke="#111827" strokeWidth="2" strokeDasharray="5 4" /><text x={thresholdX + 5} y={margin.top + 14} fontSize="12" fill="#111827">BBB threshold 0.5</text></> : null}
+            {selectedX !== null ? <><line x1={selectedX} x2={selectedX} y1={margin.top} y2={margin.top + chartHeight} stroke="#c2410c" strokeWidth="3" /><text x={Math.min(width - margin.right - 6, selectedX + 5)} y={margin.top + 32} fontSize="12" fill="#9a3412">Selected molecule</text></> : null}
             <text x={margin.left} y={height - 38} fontSize="13" fill="#52606d">{histogram.domain[0].toPrecision(4)}</text>
             <text x={width - margin.right} y={height - 38} textAnchor="end" fontSize="13" fill="#52606d">{histogram.domain[1].toPrecision(4)}</text>
             <text x={margin.left + chartWidth / 2} y={height - 10} textAnchor="middle" fontSize="14" fill="#263238">{plotEndpointLabel(endpointKey)}</text>
@@ -99,6 +111,7 @@ function DistributionPlot({ molecules, endpointKey }) {
           </svg>
         </Box>
       ) : null}
+      <Typography variant="caption" color="text.secondary">The histogram describes predictions in the current filtered collection; it is not a model-validation metric. Missing values are excluded and counted above.</Typography>
     </Stack>
   );
 }
@@ -114,14 +127,17 @@ function selectedPointLabel(point, xKey, yKey) {
   return `${name} · ${ADMET_ENDPOINT_BY_KEY.get(xKey).label}: ${point.x} · ${ADMET_ENDPOINT_BY_KEY.get(yKey).label}: ${point.y}${source}`;
 }
 
-function ScatterPlot({ molecules, xKey, yKey, selectedComparisonIds, onAddToComparison }) {
+function ScatterPlot({ molecules, xKey, yKey, selectedMoleculeId = '', onSelectMolecule, selectedComparisonIds, onAddToComparison }) {
   const canvasRef = useRef(null);
   const [hovered, setHovered] = useState(null);
-  const [selected, setSelected] = useState(null);
   const scatter = useMemo(() => prepareAdmetScatterPoints(molecules, xKey, yKey), [molecules, xKey, yKey]);
   const projected = useMemo(
     () => projectAdmetScatterPoints(scatter.points, scatter.xDomain, scatter.yDomain, SCATTER_WIDTH, SCATTER_HEIGHT, SCATTER_PADDING),
     [scatter],
+  );
+  const selected = useMemo(
+    () => projected.find((point) => point.moleculeId === selectedMoleculeId) || null,
+    [projected, selectedMoleculeId],
   );
 
   useEffect(() => {
@@ -170,7 +186,7 @@ function ScatterPlot({ molecules, xKey, yKey, selectedComparisonIds, onAddToComp
     let next = event.key === 'Home' ? 0 : event.key === 'End' ? projected.length - 1 : current + (event.key === 'ArrowLeft' ? -1 : 1);
     if (next < 0) next = projected.length - 1;
     if (next >= projected.length) next = 0;
-    setSelected(projected[next]);
+    onSelectMolecule(projected[next].moleculeId);
   }
 
   const identified = hovered || selected;
@@ -192,7 +208,7 @@ function ScatterPlot({ molecules, xKey, yKey, selectedComparisonIds, onAddToComp
               aria-label={`Scatter plot with ${scatter.plottedCount} compounds. Use left and right arrow keys to identify points.`}
               onPointerMove={(event) => { const point = pointAtEvent(event); if (point?.sourceIndex !== hovered?.sourceIndex) setHovered(point); }}
               onPointerLeave={() => setHovered(null)}
-              onClick={(event) => setSelected(pointAtEvent(event))}
+              onClick={(event) => { const point = pointAtEvent(event); if (point) onSelectMolecule(point.moleculeId); }}
               onKeyDown={handleKeyboard}
               style={{ display: 'block', width: '100%', height: 'auto', aspectRatio: `${SCATTER_WIDTH} / ${SCATTER_HEIGHT}`, border: '1px solid #cbd5e1', borderRadius: 6 }}
             />
@@ -216,6 +232,7 @@ function ScatterPlot({ molecules, xKey, yKey, selectedComparisonIds, onAddToComp
               </Button>
             ) : null}
           </Paper>
+          <Typography variant="caption" color="text.secondary">Each point is one molecule. Apparent trends are descriptive and do not establish causal relationships.</Typography>
         </>
       ) : null}
     </Stack>
@@ -227,31 +244,40 @@ export default function AdmetPlots({
   initialState = DEFAULT_ADMET_PLOT_STATE,
   selectedComparisonIds = [],
   onAddToComparison = () => {},
+  selectedMoleculeId = '',
+  onSelectMolecule = () => {},
+  onOpenHelp = () => {},
 }) {
   const [state, dispatch] = useReducer(admetPlotStateReducer, { ...DEFAULT_ADMET_PLOT_STATE, ...initialState });
   return (
     <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
       <Stack spacing={2}>
         <Box>
-          <Typography variant="h2">ADMET property plots</Typography>
-          <Typography variant="body2" color="text.secondary">Raw available prediction values for the current shared search and filter result.</Typography>
+          <Typography variant="h2">ADMET visual exploration</Typography>
+          <Typography variant="body2" color="text.secondary">Existing raw prediction values from the shared search and filter result. Visual scaling never changes scientific state.</Typography>
+          {selectedMoleculeId ? <Chip size="small" variant="outlined" label={`Selected: ${selectedMoleculeId}`} sx={{ mt: 1 }} /> : null}
         </Box>
         <ToggleButtonGroup exclusive size="small" value={state.plotType} onChange={(_, value) => { if (value) dispatch({ type: 'set-plot-type', plotType: value }); }} aria-label="ADMET plot type">
-          <ToggleButton value="distribution">Distribution</ToggleButton>
-          <ToggleButton value="scatter">Scatter</ToggleButton>
+          <ToggleButton value="heat-map">Heat Map</ToggleButton>
+          <ToggleButton value="distribution">Distributions</ToggleButton>
+          <ToggleButton value="scatter">Relationships</ToggleButton>
         </ToggleButtonGroup>
-        {state.plotType === 'distribution' ? (
+        {state.plotType === 'heat-map' ? (
+          <AdmetHeatMap molecules={molecules} selectedMoleculeId={selectedMoleculeId} onSelectMolecule={onSelectMolecule} onOpenHelp={onOpenHelp} />
+        ) : state.plotType === 'distribution' ? (
           <>
-            <EndpointSelect id="admet-distribution-property" label="Property" value={state.distributionKey} onChange={(endpointKey) => dispatch({ type: 'set-distribution-key', endpointKey })} />
-            <DistributionPlot molecules={molecules} endpointKey={state.distributionKey} />
+            <Stack direction="row" spacing={0.25} alignItems="center"><Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Predicted-value distribution</Typography><ContextHelp termId="admet-histogram" onLearnMore={onOpenHelp} /></Stack>
+            <EndpointSelect id="admet-distribution-property" label="Endpoint" value={state.distributionKey} onChange={(endpointKey) => dispatch({ type: 'set-distribution-key', endpointKey })} />
+            <DistributionPlot molecules={molecules} endpointKey={state.distributionKey} selectedMoleculeId={selectedMoleculeId} />
           </>
         ) : (
           <>
+            <Stack direction="row" spacing={0.25} alignItems="center"><Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Endpoint relationship</Typography><ContextHelp termId="admet-scatter" onLearnMore={onOpenHelp} /></Stack>
             <Stack direction={{ xs: 'column', sm: 'row' }} useFlexGap flexWrap="wrap" spacing={1.25}>
               <EndpointSelect id="admet-scatter-x" label="X axis" value={state.xKey} exclude={state.yKey} onChange={(endpointKey) => dispatch({ type: 'set-x-key', endpointKey })} />
               <EndpointSelect id="admet-scatter-y" label="Y axis" value={state.yKey} exclude={state.xKey} onChange={(endpointKey) => dispatch({ type: 'set-y-key', endpointKey })} />
             </Stack>
-            <ScatterPlot molecules={molecules} xKey={state.xKey} yKey={state.yKey} selectedComparisonIds={selectedComparisonIds} onAddToComparison={onAddToComparison} />
+            <ScatterPlot molecules={molecules} xKey={state.xKey} yKey={state.yKey} selectedMoleculeId={selectedMoleculeId} onSelectMolecule={onSelectMolecule} selectedComparisonIds={selectedComparisonIds} onAddToComparison={onAddToComparison} />
           </>
         )}
       </Stack>

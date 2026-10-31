@@ -60,6 +60,10 @@ test('ADMET Help preserves current model families, units, and BBB semantics', ()
     'five-seed', '0.5', 'provisional_raw', 'not_frozen',
   ]) assert.match(text, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(text, /not a formal confidence estimate/);
+  for (const termId of ['admet-probability-bars', 'admet-regression-scales', 'admet-heat-map', 'admet-histogram', 'admet-scatter', 'admet-comparison']) {
+    assert.equal(content.CONTEXT_HELP[termId].topicId, 'admet');
+    assert.ok(content.MODULE_HELP.ADMET.terms.includes(termId));
+  }
 });
 
 test('scientific boundaries distinguish docking, projections, evidence, and analysis', () => {

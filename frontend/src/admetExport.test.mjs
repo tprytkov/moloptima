@@ -96,7 +96,7 @@ test('regression raw value is preserved', () => assert.match(buildFilteredAdmetC
 
 test('zero regression value is preserved', () => assert.match(buildFilteredAdmetCsv(molecules(1), context(1)), /,0,percent bound,available,/));
 
-test('negative regression value is preserved', () => assert.match(buildFilteredAdmetCsv(molecules(2), context(2)), /,-2,log10\(mol\/L\),available,/));
+test('negative regression value is preserved', () => assert.match(buildFilteredAdmetCsv(molecules(2), context(2)), /,-2,log mol\/L,available,/));
 
 test('missing numeric value is empty while status remains explicit', () => {
   const row = rawRow(1); row.admet_regression.endpoints.vdss_lombardo = { status: 'failed' };

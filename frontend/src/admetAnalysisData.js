@@ -13,8 +13,8 @@ export const ADMET_ENDPOINT_REGISTRY = Object.freeze([
   { key: 'ames', label: 'AMES mutagenicity', category: 'Toxicity', unit: 'Probability', modelFamily: 'chemberta', modelName: 'ChemBERTa multitask classifier', valueType: 'binary_classification' },
   { key: 'gmc_mpnn_bbb', label: 'BBB permeability', category: 'Distribution', unit: 'Raw ensemble probability', modelFamily: 'gmc_mpnn_bbb', modelName: 'GMC-MPNN BBB five-seed ensemble', valueType: 'binary_classification' },
   { key: 'caco2_wang', label: 'Caco-2 permeability', category: 'Absorption', unit: 'log10(Papp [cm/s])', modelFamily: 'chemprop_regression', modelName: 'Chemprop regression', valueType: 'regression' },
-  { key: 'lipophilicity_astrazeneca', label: 'Lipophilicity', category: 'Physicochemical', unit: 'log ratio', modelFamily: 'chemprop_regression', modelName: 'Chemprop regression', valueType: 'regression' },
-  { key: 'solubility_aqsoldb', label: 'Aqueous solubility', category: 'Solubility', unit: 'log10(mol/L)', modelFamily: 'chemprop_regression', modelName: 'Chemprop regression', valueType: 'regression' },
+  { key: 'lipophilicity_astrazeneca', label: 'Lipophilicity', category: 'Physicochemical', unit: 'log-ratio', modelFamily: 'chemprop_regression', modelName: 'Chemprop regression', valueType: 'regression' },
+  { key: 'solubility_aqsoldb', label: 'Aqueous solubility', category: 'Solubility', unit: 'log mol/L', modelFamily: 'chemprop_regression', modelName: 'Chemprop regression', valueType: 'regression' },
   { key: 'ppbr_az', label: 'Plasma protein binding', category: 'Distribution', unit: 'percent bound', modelFamily: 'chemprop_regression', modelName: 'Chemprop regression', valueType: 'regression' },
   { key: 'vdss_lombardo', label: 'Volume of distribution', category: 'Distribution', unit: 'L/kg', modelFamily: 'chemprop_regression', modelName: 'Chemprop regression', valueType: 'regression' },
 ]);

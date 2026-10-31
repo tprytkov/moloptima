@@ -55,7 +55,7 @@ test('primary navigation follows the scientific workflow and hides history tools
   assert.equal(labels.includes('Run Comparison'), false);
 });
 
-test('ADMET workspace keeps Overview, Property Table, and Plots and adds Compare', () => {
+test('ADMET workspace keeps Overview and Property Table and adds Visualize and Compare', () => {
   const html = renderToStaticMarkup(React.createElement(module.AdmetWorkflowPage, {
     uploadState: activeUpload(),
     prioritizationState: { result: null, job: null, loading: false },
@@ -63,7 +63,7 @@ test('ADMET workspace keeps Overview, Property Table, and Plots and adds Compare
   }));
   assert.match(html, />Overview</);
   assert.match(html, />Property Table</);
-  assert.match(html, />Plots</);
+  assert.match(html, />Visualize</);
   assert.match(html, />Compare</);
   assert.match(html, /ADMET has not been run for the active molecule collection/);
   assert.match(html, /aria-label="ADMET workspace views"/);

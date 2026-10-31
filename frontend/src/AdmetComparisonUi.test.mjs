@@ -110,6 +110,8 @@ test('clear and remove controls expose accessible names', () => {
   const html = render({ molecules, selectedIds: molecules.map(({ moleculeId }) => moleculeId) });
   assert.match(html, />Clear comparison</);
   assert.match(html, /aria-label="Remove Compound 1 from comparison"/);
+  assert.match(html, /aria-label="Inspect Compound 1"/);
+  assert.match(html, /Help: Compound comparison/);
 });
 
 test('comparison reuses endpoint model metadata including BBB threshold and calibration status', () => {

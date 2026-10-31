@@ -17,6 +17,7 @@ import {
 } from '@mui/material';
 import { formatAdmetProperty } from './admetAnalysisData.js';
 import AdmetModelInfo from './AdmetModelInfo.jsx';
+import { ContextHelp } from './HelpSystem.jsx';
 import { endpointMetadataFromMolecules } from './admetModelMetadata.js';
 import {
   ADMET_COMPARISON_PICKER_LIMIT,
@@ -78,7 +79,7 @@ function ComparisonValue({ property, endpoint, summary }) {
   );
 }
 
-function CompoundHeader({ entry, outsideCurrentFilters, onRemove }) {
+function CompoundHeader({ entry, outsideCurrentFilters, selected, onSelect, onRemove }) {
   if (!entry.molecule) {
     return (
       <Stack spacing={0.75} sx={{ minWidth: 190 }}>
@@ -96,12 +97,15 @@ function CompoundHeader({ entry, outsideCurrentFilters, onRemove }) {
       {molecule.sourceName ? <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{molecule.sourceName}</Typography> : null}
       {molecule.canonicalSmiles ? <Typography variant="caption" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{molecule.canonicalSmiles}</Typography> : null}
       {outsideCurrentFilters ? <Chip size="small" color="warning" variant="outlined" label="Outside current filters" sx={{ alignSelf: 'flex-start' }} /> : null}
-      <Button size="small" onClick={() => onRemove(molecule.moleculeId)} aria-label={`Remove ${molecule.displayName} from comparison`} sx={{ alignSelf: 'flex-start' }}>Remove</Button>
+      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+        <Button size="small" variant={selected ? 'contained' : 'outlined'} onClick={() => onSelect(molecule.moleculeId)} aria-label={`Inspect ${molecule.displayName}`}>{selected ? 'Selected' : 'Inspect'}</Button>
+        <Button size="small" onClick={() => onRemove(molecule.moleculeId)} aria-label={`Remove ${molecule.displayName} from comparison`}>Remove</Button>
+      </Stack>
     </Stack>
   );
 }
 
-export default function AdmetComparison({ molecules = [], filteredMolecules = [], selectedIds = [], onAdd, onRemove, onClear, initialPickerQuery = '' }) {
+export default function AdmetComparison({ molecules = [], filteredMolecules = [], selectedIds = [], selectedMoleculeId = '', onSelect = () => {}, onOpenHelp = () => {}, onAdd, onRemove, onClear, initialPickerQuery = '' }) {
   const [pickerQuery, setPickerQuery] = useState(initialPickerQuery);
   const deferredQuery = useDeferredValue(pickerQuery);
   const resolved = useMemo(() => resolveAdmetComparisonMolecules(molecules, selectedIds), [molecules, selectedIds]);
@@ -120,7 +124,7 @@ export default function AdmetComparison({ molecules = [], filteredMolecules = []
         <Stack spacing={1.5}>
           <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={1}>
             <Box>
-              <Typography variant="h2">Compound comparison</Typography>
+              <Stack direction="row" spacing={0.25} alignItems="center"><Typography variant="h2">Compound comparison</Typography><ContextHelp termId="admet-comparison" onLearnMore={onOpenHelp} /></Stack>
               <Typography variant="body2" color="text.secondary">Compare 2–5 normalized ADMET profiles. Lowest and highest labels are descriptive, not scientific preferences.</Typography>
             </Box>
             <Button size="small" disabled={!selectedIds.length} onClick={onClear}>Clear comparison</Button>
@@ -169,7 +173,7 @@ export default function AdmetComparison({ molecules = [], filteredMolecules = []
                 <TableCell sx={{ minWidth: 260, position: 'sticky', left: 0, zIndex: 3, bgcolor: 'background.paper' }}>Property</TableCell>
                 {resolved.map((entry) => (
                   <TableCell key={entry.moleculeId} component="th" scope="col" sx={{ minWidth: 220, verticalAlign: 'top' }}>
-                    <CompoundHeader entry={entry} outsideCurrentFilters={!visibility[entry.moleculeId]} onRemove={onRemove} />
+                    <CompoundHeader entry={entry} outsideCurrentFilters={!visibility[entry.moleculeId]} selected={entry.moleculeId === selectedMoleculeId} onSelect={onSelect} onRemove={onRemove} />
                   </TableCell>
                 ))}
               </TableRow>

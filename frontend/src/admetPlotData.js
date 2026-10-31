@@ -1,17 +1,12 @@
-import { ADMET_ENDPOINT_BY_KEY } from './admetAnalysisData.js';
+import { ADMET_ENDPOINT_BY_KEY, ADMET_ENDPOINT_REGISTRY } from './admetAnalysisData.js';
 
-export const ADMET_PLOT_ENDPOINTS = Object.freeze([
-  'caco2_wang',
-  'lipophilicity_astrazeneca',
-  'solubility_aqsoldb',
-  'ppbr_az',
-  'vdss_lombardo',
-]);
+export const ADMET_PLOT_ENDPOINTS = Object.freeze(ADMET_ENDPOINT_REGISTRY.map(({ key }) => key));
 
 export function numericAdmetPlotValue(molecule, endpointKey) {
   const property = molecule?.properties?.[endpointKey];
   if (property?.status?.code !== 'available') return null;
-  const value = endpointKey === 'gmc_mpnn_bbb' ? property.probability : property.value;
+  const endpoint = ADMET_ENDPOINT_BY_KEY.get(endpointKey);
+  const value = endpoint?.valueType === 'binary_classification' ? property.probability : property.value;
   return Number.isFinite(value) ? value : null;
 }
 
@@ -64,23 +59,45 @@ export function createAdmetHistogram(molecules = [], endpointKey) {
   const extracted = extractAdmetNumericValues(molecules, endpointKey);
   const sorted = [...extracted.values].sort((left, right) => left - right);
   if (!sorted.length) return { ...extracted, bins: [], domain: [0, 1], maxCount: 0 };
+  const endpoint = ADMET_ENDPOINT_BY_KEY.get(endpointKey);
+  if (endpoint?.valueType === 'binary_classification') {
+    const binCount = 10;
+    const counts = Array.from({ length: binCount }, () => 0);
+    const observationsByBin = Array.from({ length: binCount }, () => []);
+    for (const observation of extracted.observations) {
+      const index = Math.max(0, Math.min(binCount - 1, Math.floor(observation.value * binCount)));
+      counts[index] += 1;
+      observationsByBin[index].push(observation);
+    }
+    const bins = counts.map((count, index) => ({
+      x0: index / binCount,
+      x1: (index + 1) / binCount,
+      count,
+      observations: observationsByBin[index],
+    }));
+    return { ...extracted, bins, domain: [0, 1], maxCount: Math.max(...counts) };
+  }
   const binCount = boundedBinCount(sorted);
   const minimum = sorted[0];
   const maximum = sorted.at(-1);
   const domain = numericDisplayDomain(sorted);
   if (binCount === 1) {
-    return { ...extracted, bins: [{ x0: domain[0], x1: domain[1], count: sorted.length }], domain, maxCount: sorted.length };
+    return { ...extracted, bins: [{ x0: domain[0], x1: domain[1], count: sorted.length, observations: extracted.observations }], domain, maxCount: sorted.length };
   }
   const width = (maximum - minimum) / binCount;
   const counts = Array.from({ length: binCount }, () => 0);
-  for (const value of sorted) {
+  const observationsByBin = Array.from({ length: binCount }, () => []);
+  for (const observation of extracted.observations) {
+    const { value } = observation;
     const index = value === maximum ? binCount - 1 : Math.floor((value - minimum) / width);
     counts[Math.max(0, Math.min(binCount - 1, index))] += 1;
+    observationsByBin[Math.max(0, Math.min(binCount - 1, index))].push(observation);
   }
   const bins = counts.map((count, index) => ({
     x0: minimum + width * index,
     x1: index === binCount - 1 ? maximum : minimum + width * (index + 1),
     count,
+    observations: observationsByBin[index],
   }));
   return { ...extracted, bins, domain: [minimum, maximum], maxCount: Math.max(...counts) };
 }

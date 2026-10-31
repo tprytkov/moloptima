@@ -34,7 +34,7 @@ test('distribution renders with property selector, count, and unit-bearing axis 
   const html = render([molecule(1), molecule(2)]);
   assert.match(html, /data-testid="admet-distribution-view"/);
   assert.match(html, /Aqueous solubility/);
-  assert.match(html, /log10\(mol\/L\)/);
+  assert.match(html, /log mol\/L/);
   assert.match(html, /2 filtered compounds · 2 plotted · 0 unavailable/);
   assert.match(html, /Compound count/);
 });
@@ -48,12 +48,30 @@ test('distribution property state changes the histogram endpoint', () => {
   assert.match(html, /log10\(Papp \[cm\/s\]\)/);
 });
 
+test('BBB probability distribution shows its authoritative threshold and never calls probability confidence', () => {
+  const row = molecule(1);
+  row.properties.gmc_mpnn_bbb = { probability: 0.823, classification: 'BBB+', status: { code: 'available' }, raw: { threshold: 0.5 } };
+  const html = render([row], { plotType: 'distribution', distributionKey: 'gmc_mpnn_bbb' });
+  assert.match(html, /BBB threshold 0\.5/);
+  assert.match(html, /Raw ensemble probability/);
+  assert.doesNotMatch(html, />confidence</i);
+});
+
 test('scatter view renders one canvas and raw count summary', () => {
   const html = render([molecule(1), molecule(2)], { plotType: 'scatter' });
   assert.match(html, /data-testid="admet-scatter-view"/);
   assert.match(html, /data-testid="admet-scatter-canvas"/);
   assert.equal((html.match(/<canvas/g) || []).length, 1);
   assert.match(html, /2 filtered compounds · 2 plotted · 0 unavailable for one or both selected properties/);
+});
+
+test('scatter selectors include classification and regression endpoints for mixed-model relationships', () => {
+  const row = molecule(1);
+  row.properties.gmc_mpnn_bbb = { probability: 0.7, classification: 'BBB+', status: { code: 'available' } };
+  const html = render([row], { plotType: 'scatter', xKey: 'gmc_mpnn_bbb', yKey: 'lipophilicity_astrazeneca' });
+  assert.match(html, /BBB permeability · Probability/);
+  assert.match(html, /Lipophilicity · log-ratio/);
+  assert.match(html, /Apparent trends are descriptive and do not establish causal relationships/);
 });
 
 test('X and Y selector actions prevent identical endpoints', () => {
@@ -103,6 +121,6 @@ test('canvas accessibility uses one focus target with keyboard identification in
 test('scatter selection exposes an explicit comparison action without auto-adding on canvas click', async () => {
   const source = await readFile(new URL('./AdmetPlots.jsx', import.meta.url), 'utf8');
   assert.match(source, /Add to comparison/);
-  assert.match(source, /onClick=\{\(event\) => setSelected\(pointAtEvent\(event\)\)\}/);
+  assert.match(source, /if \(point\) onSelectMolecule\(point\.moleculeId\)/);
   assert.doesNotMatch(source, /onClick=\{\(event\) => onAddToComparison\(pointAtEvent/);
 });
