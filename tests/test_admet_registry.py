@@ -15,7 +15,7 @@ from molecular_prioritization.chemprop_regression_predictor import (
     REPRESENTATIONS,
     ChempropRegressionPredictor,
 )
-from molecular_prioritization.gmc_bbb_predictor import GMCBBBPredictor, SEEDS
+from molecular_prioritization.gmc_bbb_predictor import GMCBBBPredictor, GMCBBBUnavailable, SEEDS
 from molecular_prioritization.pipeline import prioritize_smiles
 
 
@@ -171,6 +171,110 @@ def test_gmc_adapter_verifies_arithmetic_mean_and_threshold(monkeypatch, tmp_pat
     assert result["calibration_status"] == "not_frozen"
     assert result["raw_classification"] == "BBB+"
     assert result["prediction"] == "BBB+"
+
+
+def test_gmc_adapter_isolates_feature_failure_without_shifting_results(monkeypatch, tmp_path):
+    predictor = GMCBBBPredictor.__new__(GMCBBBPredictor)
+    predictor.python, predictor.runner = "python", tmp_path / "runner.py"
+    predictor.manifest, predictor.artifact_root = tmp_path / "manifest.json", tmp_path
+    predictor.runner.touch()
+    molecule_ids = ["duplicate", "water", "duplicate"]
+    smiles = ["CCO", "O", "CCO"]
+    probabilities = {
+        0: [0.91, 0.92, 0.93, 0.94, 0.95],
+        2: [0.71, 0.72, 0.73, 0.74, 0.75],
+    }
+
+    def fake_run(command, **_kwargs):
+        output = Path(command[command.index("--output-csv") + 1])
+        fields = [
+            "molecule_id", *(f"seed{s}_probability" for s in SEEDS),
+            "ensemble_probability", "ensemble_standard_deviation", "threshold",
+            "prediction", "status", "model_family", "manifest_version",
+            "model_interface_version", "error_code", "error_message",
+        ]
+        with output.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for index, molecule_id in enumerate(molecule_ids):
+                if index == 1:
+                    writer.writerow({
+                        "molecule_id": molecule_id,
+                        "status": "failed",
+                        "model_family": "GMC-MPNN",
+                        "threshold": 0.5,
+                        "error_code": "ggl_nonfinite_features",
+                        "error_message": (
+                            "nonfinite_features: Final GGL matrix contains NaN/Inf; "
+                            "empty-neighborhood rows: [0]."
+                        ),
+                    })
+                    continue
+                values = probabilities[index]
+                mean = sum(values) / len(values)
+                standard_deviation = math.sqrt(
+                    sum((value - mean) ** 2 for value in values) / len(values)
+                )
+                writer.writerow({
+                    "molecule_id": molecule_id,
+                    **{f"seed{seed}_probability": value for seed, value in zip(SEEDS, values)},
+                    "ensemble_probability": mean,
+                    "ensemble_standard_deviation": standard_deviation,
+                    "threshold": 0.5,
+                    "prediction": "BBB+",
+                    "status": "success",
+                    "model_family": "GMC-MPNN",
+                })
+        return type("Completed", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+
+    monkeypatch.setattr("molecular_prioritization.gmc_bbb_predictor.subprocess.run", fake_run)
+    results = predictor.predict_batch(molecule_ids, smiles)
+
+    assert results[0]["ensemble_probability"] == pytest.approx(sum(probabilities[0]) / 5)
+    assert results[1]["ensemble_probability"] is None
+    assert results[2]["ensemble_probability"] == pytest.approx(sum(probabilities[2]) / 5)
+    water = results[1]
+    assert water["status"] == "model_unavailable"
+    assert water["error_code"] == "ggl_nonfinite_features"
+    assert water["failure_stage"] == "feature_generation"
+    assert water["seed_probabilities"] == {}
+    assert water["ensemble_probability"] is None
+    assert water["raw_classification"] is None
+    assert water["prediction"] == "unavailable"
+    assert "descriptors could not be generated" in water["error_message"]
+    assert "NaN/Inf" in water["diagnostic_message"]
+    assert results[0]["seed_probabilities"] != results[2]["seed_probabilities"]
+
+
+def test_gmc_adapter_rejects_nonfinite_success_values(monkeypatch, tmp_path):
+    predictor = GMCBBBPredictor.__new__(GMCBBBPredictor)
+    predictor.python, predictor.runner = "python", tmp_path / "runner.py"
+    predictor.manifest, predictor.artifact_root = tmp_path / "manifest.json", tmp_path
+    predictor.runner.touch()
+
+    def fake_run(command, **_kwargs):
+        output = Path(command[command.index("--output-csv") + 1])
+        fields = [
+            "molecule_id", *(f"seed{s}_probability" for s in SEEDS),
+            "ensemble_probability", "ensemble_standard_deviation", "threshold",
+            "prediction", "status", "model_family", "manifest_version",
+            "model_interface_version", "error_code", "error_message",
+        ]
+        row = {
+            "molecule_id": "one", "status": "success", "threshold": 0.5,
+            "ensemble_probability": "nan", "ensemble_standard_deviation": 0,
+            "prediction": "BBB+", "model_family": "GMC-MPNN",
+            **{f"seed{seed}_probability": 0.8 for seed in SEEDS},
+        }
+        with output.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            writer.writerow(row)
+        return type("Completed", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+
+    monkeypatch.setattr("molecular_prioritization.gmc_bbb_predictor.subprocess.run", fake_run)
+    with pytest.raises(GMCBBBUnavailable, match="non-finite ensemble probability"):
+        predictor.predict_batch(["one"], ["CCO"])
 
 
 def test_regression_adapter_exposes_exact_units_and_transforms(monkeypatch, tmp_path):

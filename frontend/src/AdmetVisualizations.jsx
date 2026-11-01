@@ -37,7 +37,7 @@ function ProbabilityBar({ molecule, endpointKey }) {
   const percentage = probability === null ? 0 : Math.max(0, Math.min(100, probability * 100));
   const statusLabel = property?.status?.label || 'Not available';
   return (
-    <Box component="article" aria-label={`${endpoint.label}: ${probability === null ? statusLabel : `${probability.toFixed(3)} probability, ${property?.classification || 'class not returned'}${threshold !== null ? `, threshold ${threshold}` : ''}`}`} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '190px minmax(180px, 1fr) 150px' }, gap: 1, alignItems: 'center', py: 0.8, borderBottom: '1px solid', borderColor: 'divider' }}>
+    <Box component="article" aria-label={`${endpoint.label}: ${probability === null ? statusLabel : `${probability.toFixed(3)} probability, ${property?.classification || 'class not returned'}${threshold !== null ? `, threshold ${threshold}` : ''}`}`} sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: '190px minmax(180px, 1fr) 150px' }, gap: 1, alignItems: 'center', py: 0.8, borderBottom: '1px solid', borderColor: 'divider' }}>
       <Box sx={{ minWidth: 0 }}>
         <Typography variant="body2" sx={{ fontWeight: 750 }}>{endpoint.label}</Typography>
         <Typography variant="caption" color="text.secondary">{endpoint.modelName}</Typography>
@@ -72,7 +72,7 @@ function RegressionScale({ molecule, molecules, endpointKey }) {
   const unit = property?.unit || endpoint.unit;
   const statusLabel = property?.status?.label || 'Not available';
   return (
-    <Box component="article" aria-label={`${endpoint.label}: ${formatAdmetVisualizationValue(value, endpointKey, unit)}`} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '190px minmax(180px, 1fr) 170px' }, gap: 1, alignItems: 'center', py: 0.8, borderBottom: '1px solid', borderColor: 'divider' }}>
+    <Box component="article" aria-label={`${endpoint.label}: ${formatAdmetVisualizationValue(value, endpointKey, unit)}`} sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: '190px minmax(180px, 1fr) 170px' }, gap: 1, alignItems: 'center', py: 0.8, borderBottom: '1px solid', borderColor: 'divider' }}>
       <Box sx={{ minWidth: 0 }}>
         <Typography variant="body2" sx={{ fontWeight: 750 }}>{endpoint.label}</Typography>
         <Typography variant="caption" color="text.secondary">{unit}</Typography>
@@ -86,7 +86,7 @@ function RegressionScale({ molecule, molecules, endpointKey }) {
           <Box sx={{ position: 'absolute', left: `calc(${position * 100}% - 5px)`, top: 3, width: 10, height: 10, borderRadius: '50%', bgcolor: '#172a3a', border: '2px solid #fff', boxShadow: '0 0 0 1px #172a3a' }} />
         </Box>
       )}
-      <Box>
+      <Box sx={{ minWidth: 0 }}>
         <Typography variant="body2" sx={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{formatAdmetVisualizationValue(value, endpointKey, unit)}</Typography>
         {value !== null ? <Typography variant="caption" color="text.secondary">Relative position within {scale.count} available value{scale.count === 1 ? '' : 's'}</Typography> : null}
       </Box>

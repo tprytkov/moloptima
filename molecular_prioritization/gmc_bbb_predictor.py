@@ -25,6 +25,10 @@ SEEDS = (13, 37, 73, 101, 137)
 RAW_EVALUATION_THRESHOLD = 0.5
 THRESHOLD_STATUS = "provisional_raw"
 CALIBRATION_STATUS = "not_frozen"
+FEATURE_UNAVAILABLE_MESSAGE = (
+    "BBB prediction unavailable because the required GMC-MPNN molecular "
+    "descriptors could not be generated for this molecule."
+)
 PYTHON_ENV = "MOLOPTIMA_GMC_PYTHON"
 RUNNER_ENV = "MOLOPTIMA_GMC_RUNNER"
 ARCHIVE_SHA256 = "44eb3868f8890dbdc4a84e2ea6bee8e5c51319191df073189c2359b4c3708913"
@@ -123,15 +127,23 @@ class GMCBBBPredictor:
         for expected_id, row in zip(molecule_ids, rows, strict=True):
             if row.get("molecule_id") != expected_id:
                 raise GMCBBBUnavailable("GMC runner changed molecule order or identifiers.")
-            probabilities = [float(row[f"seed{seed}_probability"]) for seed in SEEDS]
+            if row.get("status") != "success":
+                results.append(_unavailable_row(row))
+                continue
+            probabilities = [
+                _finite_float(row[f"seed{seed}_probability"], f"seed {seed} probability")
+                for seed in SEEDS
+            ]
             mean = sum(probabilities) / len(probabilities)
             standard_deviation = math.sqrt(
                 sum((probability - mean) ** 2 for probability in probabilities)
                 / len(probabilities)
             )
-            reported = float(row["ensemble_probability"])
-            reported_standard_deviation = float(row["ensemble_standard_deviation"])
-            threshold = float(row["threshold"])
+            reported = _finite_float(row["ensemble_probability"], "ensemble probability")
+            reported_standard_deviation = _finite_float(
+                row["ensemble_standard_deviation"], "ensemble standard deviation"
+            )
+            threshold = _finite_float(row["threshold"], "threshold")
             if (
                 abs(mean - reported) > 1e-10
                 or abs(standard_deviation - reported_standard_deviation) > 1e-10
@@ -157,3 +169,37 @@ class GMCBBBPredictor:
                 "model_interface_version": row.get("model_interface_version"),
             })
         return results
+
+
+def _finite_float(value: str, label: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise GMCBBBUnavailable(f"GMC runner returned an invalid {label}.") from exc
+    if not math.isfinite(parsed):
+        raise GMCBBBUnavailable(f"GMC runner returned a non-finite {label}.")
+    return parsed
+
+
+def _unavailable_row(row: dict[str, str]) -> dict[str, object]:
+    """Normalize a runner-declared molecule failure without fabricating inference."""
+
+    return {
+        "status": "model_unavailable",
+        "warning": FEATURE_UNAVAILABLE_MESSAGE,
+        "error_code": row.get("error_code") or "feature_generation_failed",
+        "error_message": FEATURE_UNAVAILABLE_MESSAGE,
+        "diagnostic_message": row.get("error_message") or None,
+        "failure_stage": "feature_generation",
+        "seed_probabilities": {},
+        "ensemble_probability": None,
+        "ensemble_standard_deviation": None,
+        "threshold": RAW_EVALUATION_THRESHOLD,
+        "threshold_status": THRESHOLD_STATUS,
+        "raw_classification": None,
+        "calibration_status": CALIBRATION_STATUS,
+        "prediction": "unavailable",
+        "model_family": row.get("model_family") or "gmc_mpnn_bbb",
+        "manifest_version": row.get("manifest_version"),
+        "model_interface_version": row.get("model_interface_version"),
+    }
