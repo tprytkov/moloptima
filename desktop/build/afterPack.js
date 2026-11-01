@@ -5,7 +5,12 @@ function shouldCopyRuntimePath(sourcePath) {
   const normalized = path.normalize(sourcePath);
   const parts = normalized.split(path.sep);
   const lower = normalized.toLowerCase();
-  return !parts.includes('__pycache__') && !lower.endsWith('.pyc') && !lower.endsWith('.pyo');
+  return (
+    !parts.includes('__pycache__') &&
+    !lower.endsWith('.pyc') &&
+    !lower.endsWith('.pyo') &&
+    !lower.endsWith('.lib')
+  );
 }
 
 exports.default = async function afterPack(context) {

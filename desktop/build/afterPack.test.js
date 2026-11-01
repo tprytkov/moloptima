@@ -5,9 +5,10 @@ const path = require('node:path');
 
 const { shouldCopyRuntimePath } = require('./afterPack.js');
 
-test('runtime packaging omits generated Python bytecode only', () => {
+test('runtime packaging omits generated Python bytecode and link-time libraries', () => {
   assert.equal(shouldCopyRuntimePath(path.join('runtime', 'python', 'module.py')), true);
   assert.equal(shouldCopyRuntimePath(path.join('runtime', 'python', 'module.pyd')), true);
+  assert.equal(shouldCopyRuntimePath(path.join('runtime', 'python', 'module.dll')), true);
   assert.equal(shouldCopyRuntimePath(path.join('runtime', 'python', 'model.pt')), true);
   assert.equal(
     shouldCopyRuntimePath(path.join('runtime', 'python', 'Lib', '__pycache__', 'module.pyc')),
@@ -15,6 +16,8 @@ test('runtime packaging omits generated Python bytecode only', () => {
   );
   assert.equal(shouldCopyRuntimePath(path.join('runtime', 'python', 'module.pyc')), false);
   assert.equal(shouldCopyRuntimePath(path.join('runtime', 'python', 'module.pyo')), false);
+  assert.equal(shouldCopyRuntimePath(path.join('runtime', 'python', 'Library', 'lib', 'module.lib')), false);
+  assert.equal(shouldCopyRuntimePath(path.join('runtime', 'python', 'Lib', 'site-packages', 'torch', 'lib', 'torch_cpu.lib')), false);
 });
 
 test('packaged backend process disables bytecode writes', () => {
