@@ -70,8 +70,13 @@ export function deriveVinaBoxGeometry(box) {
   };
 }
 
-export async function createReceptorViewer(host, load3Dmol = () => import('3dmol/build/3Dmol.es6.js')) {
+export async function createReceptorViewer(
+  host,
+  load3Dmol = () => import('3dmol/build/3Dmol.es6.js'),
+  shouldCreate = () => true,
+) {
   const { createViewer } = await load3Dmol();
+  if (!shouldCreate()) return null;
   return createViewer(host, { backgroundColor: '#f7f9fb' });
 }
 
@@ -410,6 +415,7 @@ export function ViewerLegend({ selectedLigand, box, dockedLigand }) {
 
 export function renderResidueHighlights(
   viewer, selectedResidues = [], selectedLigand = null, receptorModel = null, showDockedLigand = false,
+  displayOverrides = [],
 ) {
   setModelStyle(receptorModel, viewer, {}, showDockedLigand ? DOCKED_RECEPTOR_STYLE : RECEPTOR_STYLE);
   setModelStyle(receptorModel, viewer, { hetflag: true }, HETERO_STYLE, 'addStyle');
@@ -422,7 +428,19 @@ export function renderResidueHighlights(
   if (selectedLigandAtoms) setModelStyle(
     receptorModel, viewer, selectedLigandAtoms, SELECTED_LIGAND_STYLE, 'addStyle',
   );
+  displayOverrides.forEach((override) => setModelStyle(
+    receptorModel, viewer, override.selection, override.style,
+  ));
   viewer.render();
+}
+
+export function focusViewerOnAtoms(viewer, atoms = []) {
+  if (!viewer || !atoms.length) return false;
+  const keys = new Set(atoms.map((atom) => atom.serial ?? atom.index).filter((value) => value !== null && value !== undefined));
+  if (!keys.size) return false;
+  viewer.zoomTo({ predicate: (atom) => keys.has(atom.serial ?? atom.index) });
+  viewer.render();
+  return true;
 }
 
 export function observeViewerResize(host, viewer, ResizeObserverClass = globalThis.ResizeObserver) {
@@ -580,6 +598,7 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
   onSelectPharmacophoreFeature = () => {},
   showViewerLegend = true,
   viewerAspectRatio = '',
+  displayOverrides = [],
 }, ref) {
   const hostRef = useRef(null);
   const viewerRef = useRef(null);
@@ -615,6 +634,9 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
     focusBox() {
       return focusViewerOnBox(viewerRef.current, box);
     },
+    focusAtoms(atoms) {
+      return focusViewerOnAtoms(viewerRef.current, atoms);
+    },
     exportPng(width, height, transparent = false) {
       return renderViewerPngAtResolution(viewerRef.current, hostRef.current, width, height, transparent);
     },
@@ -636,9 +658,9 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
       if (disposed || started || !host || host.clientWidth < 1 || host.clientHeight < 1) return;
       started = true;
       pendingObserver?.disconnect();
-      createReceptorViewer(host)
+      createReceptorViewer(host, undefined, () => !disposed)
         .then((createdViewer) => {
-          if (disposed) { disposeViewer(host); return; }
+          if (!createdViewer || disposed) return;
           viewer = createdViewer;
           viewerRef.current = viewer;
           setViewerGeneration((current) => current + 1);
@@ -722,8 +744,9 @@ const ReceptorViewer = forwardRef(function ReceptorViewer({
     if (!viewer || !structure || !prepareViewerForRender(hostRef.current, viewer)) return;
     renderResidueHighlights(
       viewer, selectedResidues, selectedLigand, receptorModelRef.current, hasDockedLigand,
+      displayOverrides,
     );
-  }, [selectedResidues, selectedLigand, hasDockedLigand, artifactIdentity, viewerGeneration]);
+  }, [selectedResidues, selectedLigand, displayOverrides, hasDockedLigand, artifactIdentity, viewerGeneration]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

@@ -94,15 +94,36 @@ export const HELP_TOPICS = {
     category: 'Workspace guide',
     title: 'Receptor & Docking',
     summary: 'Prepare a receptor, define a search box, and interpret protocol-dependent docking.',
-    keywords: ['receptor', 'binding site', 'docking box', 'Vina', 'PDBQT', 'affinity'],
+    keywords: ['receptor', 'binding site', 'docking box', 'Vina', 'PDBQT', 'affinity', 'atom selection', 'residue selection', 'molecular commands'],
     sections: [
       {
         heading: 'Main workflow',
         bullets: [
           'Select a receptor and review chains, waters, hetero groups, and alternate locations.',
           'Prepare the receptor and preserve its provenance.',
-          'Define the binding-site search box from a reference ligand or explicit coordinates.',
+          'Inspect atoms, residues, and non-protein components in the 3D viewer.',
+          'Define the binding-site search box from a reference ligand, selected region, or explicit coordinates.',
           'Confirm the docking setup before running docking.',
+        ],
+      },
+      {
+        heading: 'Interactive molecular selection',
+        paragraphs: [
+          'Clicking reports the exact atom identity and coordinates supplied by the loaded structure. Click selects defaults to Residue; Atom and Molecule / ligand modes are also available. Replace, Add, and Remove control how each pick changes the transient selection.',
+          'Selection does not automatically recolor the structure or alter docking. Representation and color commands apply only to the current selection, while previous display overrides remain until Reset Display. Clear Selection removes the active selection without removing those display overrides.',
+        ],
+        bullets: [
+          'Select All is intended for display manipulation and does not define a docking box.',
+          'The Molecular Command Console accepts a small allowlisted RasMol-inspired subset; it is not a shell or full RasMol compatibility.',
+          'A different receptor clears molecular selection and viewer-specific display overrides.',
+        ],
+      },
+      {
+        heading: 'Selected region and reference ligand',
+        paragraphs: [
+          'Bound reference ligand and Selected region are separate pocket methods. A selected region can contain arbitrary inspected atoms or residues. Fit selected region calculates a draft box from their coordinate bounds plus the chosen padding.',
+          'Viewer selection, draft box, and applied box are distinct. The main viewer changes only after the existing Apply action saves the draft binding-site values.',
+          'A crystallographic structure may contain waters, ions, cofactors, additives, or several non-protein molecules. MolOptima reports structural identity and existing detected-ligand status but does not identify the biologically correct functional ligand. Use visual inspection and literature knowledge.',
         ],
       },
       {

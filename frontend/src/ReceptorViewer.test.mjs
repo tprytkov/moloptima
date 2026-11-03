@@ -340,6 +340,36 @@ test('docked-pose context changes only receptor cartoon opacity and never applie
   assert.ok(!receptor.styles.some(({ style }) => style === module.DOCKED_LIGAND_CARBON_STYLE));
 });
 
+test('molecular display overrides apply only to their exact atom predicate and preserve the camera', () => {
+  const viewer = fakeViewer();
+  const receptor = {
+    styles: [],
+    setStyle(selection, style) { this.styles.push({ operation: 'set', selection, style }); },
+    addStyle(selection, style) { this.styles.push({ operation: 'add', selection, style }); },
+  };
+  const camera = [...viewer.view];
+  const override = {
+    selection: { predicate: (atom) => atom.serial === 12 },
+    style: { sphere: { color: '#2e7d32' } },
+  };
+  module.renderResidueHighlights(viewer, [], null, receptor, false, [override]);
+  assert.equal(receptor.styles.at(-1).selection.predicate({ serial: 12 }), true);
+  assert.equal(receptor.styles.at(-1).selection.predicate({ serial: 13 }), false);
+  assert.deepEqual(receptor.styles.at(-1).style, override.style);
+  assert.deepEqual(viewer.view, camera);
+  assert.equal(viewer.zoomToCount, 0);
+});
+
+test('focus selection changes the camera only when explicitly invoked', () => {
+  const viewer = fakeViewer();
+  assert.equal(module.focusViewerOnAtoms(viewer, []), false);
+  assert.equal(viewer.zoomToCount, 0);
+  assert.equal(module.focusViewerOnAtoms(viewer, [{ serial: 7 }, { serial: 8 }]), true);
+  assert.equal(viewer.zoomToCount, 1);
+  assert.equal(viewer.lastZoomSelection.predicate({ serial: 8 }), true);
+  assert.equal(viewer.lastZoomSelection.predicate({ serial: 9 }), false);
+});
+
 test('clearing a compound pose removes only the ligand model', () => {
   const viewer = fakeViewer();
   const receptor = viewer.addModel('RECEPTOR', 'pdbqt');
@@ -363,6 +393,22 @@ test('renders an existing valid box immediately after delayed viewer creation', 
   module.renderVinaBox(createdViewer, null, validBox());
   assert.equal(viewer.shapes.length, 2);
   assert.deepEqual(viewer.shapes[0].spec.center, { x: 1.25, y: -2.5, z: 0 });
+});
+
+test('does not create a delayed viewer after its React effect lifecycle is cancelled', async () => {
+  let releaseModule;
+  let createCount = 0;
+  let active = true;
+  const pendingViewer = module.createReceptorViewer(
+    {},
+    () => new Promise((resolve) => { releaseModule = resolve; }),
+    () => active,
+  );
+  await Promise.resolve();
+  active = false;
+  releaseModule({ createViewer: () => { createCount += 1; return fakeViewer(); } });
+  assert.equal(await pendingViewer, null);
+  assert.equal(createCount, 0);
 });
 
 test('derives all eight exact corners and twelve edge connections from center and half-dimensions', () => {

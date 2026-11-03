@@ -28,6 +28,10 @@ test('renders the compact modular receptor workspace with the viewer kept in mai
   assert.match(html, /Reset view/);
   assert.match(html, /Focus search box/);
   assert.match(html, /data-testid="receptor-viewer"/);
+  assert.match(html, /Current molecular selection/);
+  assert.match(html, /Click selects/);
+  assert.match(html, /Selection action/);
+  assert.match(html, /Molecular Command Console/);
   assert.doesNotMatch(html, /Preparation choices and provenance/);
 });
 
@@ -40,6 +44,10 @@ test('source uses shared setup dialogs for receptor, preparation, binding site, 
   assert.match(source, /<ModuleConfigurationSummary/);
   assert.match(source, /Draft values are not rendered in the main viewer until Apply/);
   assert.match(source, /Apply saves a backend configuration without running docking/);
+  assert.match(source, /value="selected_region"/);
+  assert.match(source, /displayOverrides={displayOverrides}/);
+  assert.match(source, /disabled={!selectedRegionAtoms.length}/);
+  assert.doesNotMatch(source, /setSelectedResidues/);
 });
 
 test('authoritative heterogroup identities remain unique for repeated ion types', () => {
@@ -491,6 +499,15 @@ test('centroid and fit-to-selection calculations are deterministic', () => {
   });
   assert.equal(module.fitBoxToAtoms([], 3), null);
   assert.equal(module.fitBoxToAtoms(atoms, -1), null);
+});
+
+test('bound-ligand and selected-region fitting are geometrically equivalent for the same atoms and padding', () => {
+  const ligandAtoms = [{ x: -2, y: 4, z: 1 }, { x: 6, y: 8, z: 9 }];
+  const selectedRegionAtoms = [...ligandAtoms];
+  assert.deepEqual(module.fitBoxToAtoms(ligandAtoms, 4), module.fitBoxToAtoms(selectedRegionAtoms, 4));
+  assert.deepEqual(module.fitBoxToAtoms(selectedRegionAtoms, 4), {
+    centerX: '2', centerY: '6', centerZ: '5', sizeX: '16', sizeY: '12', sizeZ: '16',
+  });
 });
 
 test('docking readiness fails closed until PDBQT, center, and positive dimensions exist', () => {

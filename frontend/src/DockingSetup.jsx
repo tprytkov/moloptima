@@ -6,9 +6,15 @@ import {
 } from '@mui/material';
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
 import ModuleConfigurationSummary from './ModuleConfigurationSummary.jsx';
+import MolecularSelectionPanel from './MolecularSelectionPanel.jsx';
 import ReceptorViewer from './ReceptorViewer.jsx';
 import ScientificSetupDialog from './ScientificSetupDialog.jsx';
 import { createScientificSetupState, scientificSetupReducer } from './scientificSetupState.js';
+import {
+  applyAtomSelection, atomsForCommand, atomsForPick, displayOverridesFromState,
+  matchingDetectedLigand, molecularCommandHelp, parseMolecularCommand, residueKey,
+  selectionSummary, uniqueResidues, updateDisplayState,
+} from './molecularSelection.js';
 
 export const DEFAULT_VINA_SETTINGS = Object.freeze({
   exhaustiveness: '8', numModes: '9', energyRange: '', seed: '2025', workerCount: '4',
@@ -411,7 +417,12 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed, onRunDocking, ru
   const [preparationRuntime, setPreparationRuntime] = useState(null);
   const [showBox, setShowBox] = useState(true);
   const [selectedAtom, setSelectedAtom] = useState(null);
-  const [selectedResidues, setSelectedResidues] = useState([]);
+  const [selectionAtoms, setSelectionAtoms] = useState([]);
+  const [pickMode, setPickMode] = useState('residue');
+  const [selectionAction, setSelectionAction] = useState('replace');
+  const [representation, setRepresentation] = useState('sticks');
+  const [selectionColor, setSelectionColor] = useState('cpk');
+  const [displayState, setDisplayState] = useState({});
   const [confirmed, setConfirmed] = useState(null);
   const [setup, dispatchSetup] = useReducer(
     scientificSetupReducer,
@@ -444,11 +455,13 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed, onRunDocking, ru
   const draftSearchSpace = searchSpacePresentation(draftState.box);
   const readiness = dockingReadiness(receptor, appliedState.box);
   const ready = Object.values(readiness).every(Boolean);
-  const selectedRegionAtoms = useMemo(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) return [];
-    return selectedResidues.flatMap((residue) => viewer.selectedAtoms({ chain: residue.chain, resi: residue.residueNumber, resn: residue.residueName }));
-  }, [selectedResidues]);
+  const selectedResidues = useMemo(() => uniqueResidues(selectionAtoms), [selectionAtoms]);
+  const selectedRegionAtoms = selectionAtoms;
+  const displayOverrides = useMemo(() => displayOverridesFromState(displayState), [displayState]);
+  const detectedSelectionLigand = useMemo(
+    () => matchingDetectedLigand(selectionAtoms, boundLigands),
+    [selectionAtoms, boundLigands],
+  );
 
   useEffect(() => {
     let active = true;
@@ -497,7 +510,10 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed, onRunDocking, ru
     setReceptor(metadata);
     setStructure(nextStructure);
     setSelectedAtom(null);
-    setSelectedResidues([]);
+    setSelectionAtoms([]);
+    setDisplayState({});
+    setPickMode('residue');
+    setSelectionAction('replace');
     setConfirmed(null);
   }
 
@@ -666,22 +682,50 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed, onRunDocking, ru
     } finally { setConfiguring(false); }
   }
 
-  function openBindingFromAtom() {
+  function useSelectionForBindingSite() {
+    if (!selectionAtoms.length) return;
     openSetup('binding');
-    updateDraftReceptor({
-      method: 'selected_atom',
-      box: {
-        ...setupRef.current.appliedConfiguration.receptor.box,
-        centerX: formatCoordinate(selectedAtom.x), centerY: formatCoordinate(selectedAtom.y), centerZ: formatCoordinate(selectedAtom.z),
-      },
-    });
+    updateDraftReceptor({ method: 'selected_region' });
   }
 
-  function addSelectedResidue() {
-    if (!selectedAtom) return;
-    const key = `${selectedAtom.chain}:${selectedAtom.residueName}:${selectedAtom.residueNumber}`;
-    setSelectedResidues((current) => current.some((item) => item.key === key) ? current
-      : [...current, { key, chain: selectedAtom.chain, residueName: selectedAtom.residueName, residueNumber: selectedAtom.residueNumber }]);
+  function handleAtomPick(atom) {
+    const viewer = viewerRef.current;
+    const allAtoms = viewer?.selectedAtoms({}) ?? [];
+    const candidates = atomsForPick(allAtoms, atom, pickMode);
+    setSelectedAtom(atom);
+    setSelectionAtoms((current) => applyAtomSelection(current, candidates, selectionAction));
+  }
+
+  function removeSelectedResidue(key) {
+    setSelectionAtoms((current) => current.filter((atom) => residueKey(atom) !== key));
+  }
+
+  function selectAllViewerAtoms() {
+    setSelectionAtoms(viewerRef.current?.selectedAtoms({}) ?? []);
+  }
+
+  function applyDisplayPatch(patch) {
+    if (!selectionAtoms.length) return;
+    setDisplayState((current) => updateDisplayState(current, selectionAtoms, patch));
+  }
+
+  function executeMolecularCommand(command) {
+    const parsed = parseMolecularCommand(command);
+    if (parsed.type === 'error') return parsed.message;
+    if (parsed.type === 'help') return molecularCommandHelp(parsed.topic);
+    if (parsed.type === 'display') {
+      if (!selectionAtoms.length) return 'No active molecular selection. Select atoms or residues first.';
+      applyDisplayPatch(parsed.patch);
+      return `${parsed.label} applied to ${selectionAtoms.length} selected atoms.`;
+    }
+    const allAtoms = viewerRef.current?.selectedAtoms({}) ?? [];
+    if (parsed.query.kind === 'none') {
+      setSelectionAtoms([]); setSelectedAtom(null);
+      return 'Selection cleared.';
+    }
+    const candidates = atomsForCommand(allAtoms, parsed.query);
+    setSelectionAtoms((current) => applyAtomSelection(current, candidates, parsed.action));
+    return `${candidates.length} atoms matched; selection action ${parsed.action}.`;
   }
 
   const keptCount = (inventory?.hetero_groups ?? []).filter((group) => appliedState.heteroChoices[group.group_id] === 'keep').length;
@@ -721,11 +765,8 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed, onRunDocking, ru
             <Box><Typography variant="h2">Receptor, ligand, and search-box viewer</Typography><Typography variant="caption" color="text.secondary">The viewer shows only applied receptor and binding-site configuration.</Typography></Box>
             <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap"><Button size="small" variant="outlined" aria-pressed={showBox} onClick={() => setShowBox((current) => !current)}>{showBox ? 'Hide search box' : 'Show search box'}</Button><Button size="small" variant="outlined" disabled={!structure || appliedSearchSpace.status !== 'valid'} onClick={() => viewerRef.current?.focusBox()}>Focus search box</Button><Button size="small" variant="outlined" disabled={!structure} onClick={() => viewerRef.current?.resetView()}>Reset view</Button></Stack>
           </Stack>
-          <ReceptorViewer ref={viewerRef} structure={structure} box={appliedState.box} showBox={showBox} selectedResidues={selectedResidues} selectedLigand={selectedLigand} onAtomSelect={(atom) => setSelectedAtom(atomDetails(atom))} onError={(viewerError) => setError(`Interactive receptor viewer unavailable: ${viewerError.message ?? viewerError}`)} />
-          <Box sx={{ px: 1.25, py: 1, bgcolor: '#f7f9fb', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}><Typography variant="subtitle2">Selected atom / pocket region</Typography>
-            {selectedAtom ? <><Typography variant="body2">Chain {selectedAtom.chain || '–'} · {selectedAtom.residueName || '–'} {selectedAtom.residueNumber || '–'} · {selectedAtom.atomName || '–'} · x {formatCoordinate(selectedAtom.x)} · y {formatCoordinate(selectedAtom.y)} · z {formatCoordinate(selectedAtom.z)}</Typography><Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap"><Button size="small" variant="outlined" onClick={openBindingFromAtom}>Configure box from atom</Button><Button size="small" variant="outlined" onClick={addSelectedResidue}>Add residue</Button><Button size="small" variant="text" onClick={() => setSelectedAtom(null)}>Clear</Button></Stack></> : <Typography variant="caption" color="text.secondary">Click an atom to inspect its authoritative identity and coordinates.</Typography>}
-            {selectedResidues.length ? <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>{selectedResidues.map((residue) => <Chip size="small" key={residue.key} label={`${residue.chain || '–'} ${residue.residueName} ${residue.residueNumber}`} onDelete={() => setSelectedResidues((current) => current.filter((item) => item.key !== residue.key))} />)}<Button size="small" variant="text" onClick={() => setSelectedResidues([])}>Clear pocket selection</Button></Stack> : null}
-          </Box>
+          <ReceptorViewer ref={viewerRef} structure={structure} box={appliedState.box} showBox={showBox} selectedLigand={selectedLigand} displayOverrides={displayOverrides} onAtomSelect={handleAtomPick} onError={(viewerError) => setError(`Interactive receptor viewer unavailable: ${viewerError.message ?? viewerError}`)} />
+          <MolecularSelectionPanel key={receptorArtifactIdentity(receptor)} selectionAtoms={selectionAtoms} clickedAtom={selectedAtom} pickMode={pickMode} selectionAction={selectionAction} representation={representation} color={selectionColor} detectedLigand={detectedSelectionLigand} onPickModeChange={setPickMode} onSelectionActionChange={setSelectionAction} onClear={() => { setSelectionAtoms([]); setSelectedAtom(null); }} onSelectAll={selectAllViewerAtoms} onRemoveResidue={removeSelectedResidue} onRepresentationChange={setRepresentation} onColorChange={setSelectionColor} onApplyRepresentation={() => applyDisplayPatch({ representation })} onApplyColor={() => applyDisplayPatch({ color: selectionColor })} onResetDisplay={() => setDisplayState({})} onFocusSelection={() => viewerRef.current?.focusAtoms(selectionAtoms)} onUseForBindingSite={useSelectionForBindingSite} onCommand={executeMolecularCommand} />
         </Stack>
       </Paper>
 
@@ -742,7 +783,8 @@ export default function DockingSetup({ apiBaseUrl, onConfirmed, onRunDocking, ru
       </ScientificSetupDialog>
 
       <ScientificSetupDialog open={activeDialog === 'binding'} title="Configure Binding Site" context="Configure the applied Vina search box. Draft values are not rendered in the main viewer until Apply." sections={[{ id: 'method', label: 'Pocket method' }, { id: 'box', label: 'Search box' }]} dirty={setup.dirty} validationErrors={setup.validationErrors} onCancel={cancelSetup} onApply={applyBindingSite} restoreFocusRef={bindingButtonRef}>
-        <FormControl><FormLabel>How do you want to define the docking pocket?</FormLabel><RadioGroup value={draftState.method} onChange={(event) => updateDraftReceptor({ method: event.target.value })}><FormControlLabel value="reference_ligand" control={<Radio size="small" />} label="Bound reference ligand" disabled={!boundLigands.length} /><FormControlLabel value="manual" control={<Radio size="small" />} label="Manual box coordinates" /></RadioGroup></FormControl>
+        <FormControl><FormLabel>How do you want to define the docking pocket?</FormLabel><RadioGroup value={draftState.method} onChange={(event) => updateDraftReceptor({ method: event.target.value })}><FormControlLabel value="reference_ligand" control={<Radio size="small" />} label="Bound reference ligand" disabled={!boundLigands.length} /><FormControlLabel value="selected_region" control={<Radio size="small" />} label="Selected region" /><FormControlLabel value="manual" control={<Radio size="small" />} label="Manual box coordinates" /></RadioGroup></FormControl>
+        {draftState.method === 'selected_region' ? <Box sx={{ p: 1.25, bgcolor: '#f7f9fb', borderRadius: 1 }}><Typography variant="subtitle2">Selected region</Typography>{selectedRegionAtoms.length ? <><Typography variant="body2">{selectionSummary(selectedRegionAtoms).residueCount} residues · {selectedRegionAtoms.length} atoms</Typography><Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>{selectedResidues.map((residue) => <Chip size="small" key={residue.key} label={`${residue.residueName}${residue.residueNumber}:${residue.chain || '(blank)'}`} onDelete={() => removeSelectedResidue(residue.key)} />)}</Stack></> : <Typography variant="body2" color="text.secondary">Select one or more atoms or residues in the receptor viewer first.</Typography>}</Box> : null}
         {boundLigands.length ? <TextField select size="small" label="Detected bound ligand" value={draftState.selectedLigandId} onChange={(event) => selectDraftLigand(selectedLigandForId(boundLigands, event.target.value))}><MenuItem value=""><em>Select a ligand</em></MenuItem>{boundLigands.map((ligand) => <MenuItem key={ligand.ligand_id} value={ligand.ligand_id}>{ligand.residue_name} {ligand.chain || '–'} {ligand.residue_number}{ligand.insertion_code || ''} ({ligand.atom_count} atoms)</MenuItem>)}</TextField> : <Alert severity="info">No plausible non-water bound ligand was identified.</Alert>}
         <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center"><TextField size="small" label="Fit padding (Å)" type="number" value={draft.padding} onChange={(event) => dispatchSetup({ type: 'change', patch: { padding: event.target.value } })} inputProps={{ min: 0, step: 0.5 }} sx={{ width: 150 }} /><Button size="small" variant="outlined" disabled={!draftLigand} onClick={() => { const viewer = viewerRef.current; fitDraftSelection(viewer && draftLigand ? viewer.selectedAtoms({ chain: draftLigand.chain, resi: draftLigand.residue_number, resn: draftLigand.residue_name }) : []); }}>Fit ligand + padding</Button><Button size="small" variant="outlined" disabled={!selectedRegionAtoms.length} onClick={() => { updateDraftReceptor({ method: 'selected_region' }); fitDraftSelection(selectedRegionAtoms); }}>Fit selected region</Button></Stack>
         {boundLigands.length ? <Box><Typography variant="subtitle2">Ligand copies removed before repair</Typography>{draftLigand ? <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap"><Button size="small" variant="outlined" onClick={() => updateDraftReceptor({ ligandRemovalIds: [draftLigand.ligand_id] })}>Selected copy only</Button><Button size="small" variant="outlined" onClick={() => updateDraftReceptor({ ligandRemovalIds: matchingDraftLigands.map((ligand) => ligand.ligand_id) })}>All {matchingDraftLigands.length} matching copies</Button></Stack> : null}<Stack direction="row" useFlexGap flexWrap="wrap">{boundLigands.map((ligand) => <FormControlLabel key={ligand.ligand_id} sx={{ mr: 1 }} control={<Checkbox size="small" checked={draftState.ligandRemovalIds.includes(ligand.ligand_id)} onChange={(event) => updateDraftReceptor({ ligandRemovalIds: event.target.checked ? [...new Set([...draftState.ligandRemovalIds, ligand.ligand_id])] : draftState.ligandRemovalIds.filter((id) => id !== ligand.ligand_id) })} />} label={ligand.ligand_id} />)}</Stack></Box> : null}

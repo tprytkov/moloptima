@@ -143,13 +143,29 @@ The conservative repair policy can reconstruct supported missing side-chain heav
 
 The original upload is never overwritten. Preparation records artifact identity, ligand-removal scope, repair decisions, added atoms, tool versions, hashes, and final PDBQT provenance.
 
-### 6.2 Binding site and docking box
+### 6.2 Interactive receptor inspection and molecular selection
 
-The binding site can begin from a selected bound reference ligand or explicit box coordinates. A ligand-derived box is a starting search region, not proof that the site or dimensions are biologically optimal. Manual centers may be negative or zero; all three box sizes must be positive.
+The receptor viewer supports transient atom-backed molecular selection. Click an atom to inspect its atom name, element, residue name and number, chain, serial or index where available, and Cartesian coordinates. The default **Click selects** mode selects the complete residue while retaining the exact clicked atom for inspection. **Atom** selects one atom, and **Molecule / ligand** selects the authoritative non-protein residue or component grouping available from the parsed structure.
+
+Use **Replace**, **Add**, or **Remove** to control how a click changes the current selection. **Select All** selects every displayed receptor atom for display manipulation. **Clear Selection** removes the current atom set and inspection identity without changing receptor coordinates, the Vina box, or persistent display overrides.
+
+Selection and display are separate. Selecting atoms does not automatically recolor or force a representation. After selecting, apply Lines/Wireframe, Sticks, Ball & Stick, Spacefill, Cartoon, or Hide, and choose element/CPK, chain, or a supported explicit color. Display overrides remain on those atoms while another group is inspected. **Reset Display** restores the default MolOptima receptor and ligand presentation without reloading the receptor or changing docking configuration. **Focus Selection** is the only selection action that intentionally changes the camera.
+
+The collapsible **Molecular Command Console** implements a strict RasMol-inspired subset, not full RasMol compatibility. Supported selection forms include `select all`, `select none`, `select ILE142`, `select A:142`, `select ILE142:A`, `select resi 140-150`, `select chain A`, `select resn ILE`, `select atom CB`, comma-separated residues, and `select add` or `select remove` before a supported expression. Display commands include `color` with the listed UI colors, `cpk`, `chain`, or `default`, plus `wireframe`, `sticks`, `spacefill`, `spacefill off`, `cartoon`, `hide`, and `show`. `help`, `help select`, `help color`, and `help spacefill` describe the subset. The console is not a shell, Python console, JavaScript console, or arbitrary evaluator.
+
+Crystallographic structures may contain several non-protein molecules such as waters, ions, cofactors, glycans, detergents, buffer components, or multiple ligand copies. MolOptima exposes parsed structural identity and whether a component matches its existing detected-bound-ligand inventory. It does not claim which molecule is biologically relevant, orthosteric, allosteric, or a crystallization artifact. Use literature knowledge and visual inspection.
+
+### 6.3 Binding site and docking box
+
+The binding site can begin from a detected **Bound reference ligand**, the current **Selected region**, or explicit **Manual box coordinates**. These methods remain distinct. A ligand-derived box uses the selected detected ligand. A selected-region box uses the exact currently selected atom coordinates. Neither method automatically claims that the chosen region is the biologically correct pocket.
+
+For **Selected region**, first select one or more atoms or residues in the viewer. Configure Binding Site shows the same residue membership. **Fit selected region** derives minimum and maximum X/Y/Z bounds and expands each dimension by twice the chosen padding. If the selected region and detected ligand contain the same atoms with the same padding, their fitted geometry is equivalent within normal floating-point tolerance.
+
+Viewer selection does not change any box. Fitting updates only draft center and size fields. The applied box and main viewer remain unchanged until **Apply** is used. Clearing a selection does not silently modify an already applied box. Manual centers may be negative or zero; all three box sizes must be positive.
 
 The translucent viewer box represents the exact Vina search space. A box that is too small can exclude poses. A very large box increases search cost. Box-only edits do not require rebuilding an otherwise unchanged receptor.
 
-### 6.3 Docking execution and interpretation
+### 6.4 Docking execution and interpretation
 
 Docking configuration includes exhaustiveness, worker count, number of modes, energy range, and random seed where exposed. Confirm setup before running the combined calculation workflow.
 
