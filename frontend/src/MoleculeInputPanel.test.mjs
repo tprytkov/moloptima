@@ -72,8 +72,8 @@ test('single-compound summary reports counts, preview provenance, and mode', () 
   assert.doesNotMatch(html, /[A-Za-z]:\\Users\\/);
 });
 
-test('valid molecule with one warning keeps Valid and exposes an explicit keyboard-reachable warning control', () => {
-  const warning = 'Original coordinates are preserved as provenance.';
+test('valid SDF coordinate provenance stays neutral and does not render an orange warning control', () => {
+  const warning = module.ROUTINE_COORDINATE_PROVENANCE_NOTICE;
   const html = render({
     filename: 'ethanol.sdf', submitted_count: 1, valid_count: 1, invalid_count: 0,
     unresolved_pdb_count: 0, duplicate_count: 0, ignored_file_count: 0,
@@ -81,17 +81,34 @@ test('valid molecule with one warning keeps Valid and exposes an explicit keyboa
     preview: [{
       molecule_id: 'ethanol', source_type: 'sdf', source_filename: 'ethanol.sdf',
       canonical_smiles: 'CCO', structure_status: 'validated', coordinate_status: '3d', validation_status: 'valid',
-      warnings: [warning], failure_reason: '',
+      input_has_3d: true, warnings: [warning], failure_reason: '',
     }],
   });
 
-  assert.match(html, new RegExp(`aria-label="1 import warning for ethanol: ${warning}`));
-  assert.match(html, /<button[^>]*aria-label="1 import warning for ethanol:/);
-  assert.match(html, />Warning<\/button>/);
+  assert.doesNotMatch(html, /import warning for ethanol/i);
+  assert.doesNotMatch(html, />Warning<\/button>/);
   assert.match(html, />Valid</);
+  assert.match(html, /Source 3D/);
+  assert.match(html, /Coordinate provenance/);
+  assert.match(html, /3D coordinates supplied by the uploaded SDF file/);
   assert.doesNotMatch(html, /<th[^>]*>warnings<\/th>/i);
-  assert.equal((html.match(new RegExp(warning, 'g')) ?? []).length, 2);
+  assert.equal((html.match(new RegExp(warning.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length, 1);
   assert.match(html, /VALIDATION \/ PROVENANCE/);
+  assert.match(html, /Import warnings \(0\)/);
+});
+
+test('routine provenance on a 2D SDF does not claim source 3D coordinates', () => {
+  const html = render({
+    filename: 'ethanol-2d.sdf', submitted_count: 1, valid_count: 1, invalid_count: 0,
+    analysis_mode: 'single_compound', preview: [{
+      molecule_id: 'ethanol-2d', source_type: 'sdf', source_filename: 'ethanol-2d.sdf',
+      canonical_smiles: 'CCO', structure_status: 'validated', coordinate_status: '2d', validation_status: 'valid',
+      input_has_3d: false, warnings: [module.ROUTINE_COORDINATE_PROVENANCE_NOTICE], failure_reason: '',
+    }],
+  });
+  assert.match(html, /Source coordinates supplied by the uploaded SDF file/);
+  assert.doesNotMatch(html, /Source 3D|3D coordinates supplied by the uploaded SDF file/);
+  assert.doesNotMatch(html, />Warning<\/button>/);
 });
 
 test('preview omits the warning control when no warning or failure exists', () => {
@@ -156,6 +173,19 @@ test('same-table mix distinguishes valid, valid-with-warning, and invalid withou
   assert.match(html, /rejected/);
   assert.match(html, />Invalid</);
   assert.doesNotMatch(html, /import warning for rejected/i);
+});
+
+test('actual invalid molecule remains clearly invalid and separate from provenance notices', () => {
+  const html = render({
+    upload_id: 'invalid-state', filename: 'invalid.sdf', submitted_count: 1,
+    valid_count: 0, invalid_count: 1, analysis_mode: 'unavailable', preview: [{
+      molecule_id: 'invalid-entry', source_type: 'sdf', input_smiles: 'bad',
+      coordinate_status: 'none', validation_status: 'invalid', warnings: [], failure_reason: 'Invalid molecule structure',
+    }],
+  });
+  assert.match(html, />Invalid</);
+  assert.match(html, /Invalid molecule structure/);
+  assert.doesNotMatch(html, /Coordinate provenance|Source 3D/);
 });
 
 test('library and multi-record rejection states are explicit', () => {

@@ -18,11 +18,24 @@ import {
 } from './moleculeSelection.js';
 
 const PDB_WARNING = 'SDF is preferred for small-molecule structure files because it preserves bond orders and formal charges more reliably than PDB.';
+export const ROUTINE_COORDINATE_PROVENANCE_NOTICE = 'Original structure coordinates are preserved as provenance; the qualified production ligand-preparation path currently regenerates docking coordinates from canonical SMILES.';
 
-export function moleculeImportWarnings(row) {
+export function moleculeImportMessages(row) {
   return (Array.isArray(row.warnings) ? row.warnings : [])
     .map((warning) => String(warning).trim())
     .filter(Boolean);
+}
+
+export function isRoutineCoordinateProvenanceNotice(message) {
+  return message === ROUTINE_COORDINATE_PROVENANCE_NOTICE;
+}
+
+export function moleculeImportWarnings(row) {
+  return moleculeImportMessages(row).filter((message) => !isRoutineCoordinateProvenanceNotice(message));
+}
+
+export function moleculeImportProvenanceNotices(row) {
+  return moleculeImportMessages(row).filter(isRoutineCoordinateProvenanceNotice);
 }
 
 export function moleculeImportWarning(row) {
@@ -33,6 +46,19 @@ export function analysisModeLabel(mode) {
   if (mode === 'single_compound') return 'Single Compound Analysis';
   if (mode === 'library') return 'Library Prioritization';
   return 'Not available';
+}
+
+export function coordinateProvenanceLabel(row) {
+  if (String(row?.source_type || '').toLowerCase() === 'sdf'
+    && (row?.input_has_3d || String(row?.coordinate_status || '').toLowerCase() === '3d')) return 'Source 3D';
+  if (String(row?.coordinate_status || '').toLowerCase() === '3d') return '3D';
+  return row?.coordinate_status || 'Not available';
+}
+
+export function coordinateProvenanceDescription(row) {
+  return coordinateProvenanceLabel(row) === 'Source 3D'
+    ? '3D coordinates supplied by the uploaded SDF file.'
+    : 'Source coordinates supplied by the uploaded SDF file.';
 }
 
 export function topLevelFolderFiles(fileList) {
@@ -106,6 +132,7 @@ function DetailField({ label, value, mono = false }) {
 
 function FocusedCompoundInspector({ row, uploadId }) {
   const warnings = moleculeImportWarnings(row);
+  const provenanceNotices = moleculeImportProvenanceNotices(row);
   return (
     <Box sx={{ borderTop: '1px solid', borderColor: 'divider', bgcolor: '#fbfcfd' }}>
       <Box sx={{ px: 1.5, py: 0.9, borderBottom: '1px solid', borderColor: 'divider' }}>
@@ -126,11 +153,12 @@ function FocusedCompoundInspector({ row, uploadId }) {
           <Box sx={{ mt: 0.75, display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 1 }}>
             <DetailField label="Source" value={[row.source_type, row.source_filename].filter(Boolean).join(' · ')} />
             <DetailField label="Structure status" value={row.structure_status} />
-            <DetailField label="Coordinates" value={row.coordinate_status} />
+            <DetailField label="Coordinates" value={coordinateProvenanceLabel(row)} />
             <DetailField label="Duplicate structure" value={row.duplicate_structure ? 'Yes' : 'No'} />
             <DetailField label="Upload ID" value={uploadId} mono />
             <DetailField label="Validation error" value={row.failure_reason || 'No validation error recorded'} />
             <Box sx={{ gridColumn: '1 / -1', minWidth: 0 }}>
+              {provenanceNotices.length ? <><Typography variant="caption" color="text.secondary">Coordinate provenance</Typography><Typography sx={{ mt: 0.15, mb: 0.75, fontSize: 12.5 }}>{coordinateProvenanceDescription(row)} {provenanceNotices.join(' ')}</Typography></> : null}
               <Typography variant="caption" color="text.secondary">Import warnings ({warnings.length})</Typography>
               {warnings.length ? <Box component="ul" sx={{ my: 0.35, pl: 2.25 }}>{warnings.map((warning) => <Typography component="li" key={warning} sx={{ fontSize: 12.5 }}>{warning}</Typography>)}</Box>
                 : <Typography sx={{ mt: 0.15, fontSize: 12.5 }}>No import warnings recorded</Typography>}
@@ -277,7 +305,7 @@ export default function MoleculeInputPanel({ uploadState, backendHealth, baseUrl
                 <TableCell sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.canonical_smiles || row.input_smiles || '—'}</TableCell>
                 <TableCell><ValidationState row={row} /></TableCell>
                 <TableCell sx={{ overflowWrap: 'anywhere' }}><Typography variant="caption" sx={{ display: 'block', fontWeight: 700 }}>{row.source_type || 'Not available'}</Typography><Typography variant="caption" color="text.secondary">{row.source_filename || '—'}</Typography></TableCell>
-                <TableCell>{row.coordinate_status}</TableCell>
+                <TableCell>{coordinateProvenanceLabel(row)}</TableCell>
               </TableRow>;
             })}</TableBody></Table>
             </Box>

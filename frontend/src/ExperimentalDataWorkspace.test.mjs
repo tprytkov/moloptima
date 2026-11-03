@@ -124,8 +124,23 @@ test('calculation evidence stays source-specific and keeps exact and analog owne
 test('fresh start does not auto-open historical evidence and exposes an explicit neutral state', () => {
   const html = renderToStaticMarkup(React.createElement(module.default, { upload: null, activeJob: null, calculationResult: null }));
   assert.match(html, /No active calculation/);
-  assert.match(html, /Open a previous calculation or run a new calculation/);
+  assert.match(html, /Start a new calculation or open a previous calculation/);
   assert.doesNotMatch(html, /Candidate Evidence/);
+});
+
+test('new calculation upload without activeJob is labeled not yet run without changing lifecycle semantics', () => {
+  const upload = { upload_id: 'c'.repeat(32), valid_count: 2 };
+  const evidenceHtml = renderToStaticMarkup(React.createElement(module.default, {
+    upload, activeJob: null, calculationResult: null,
+  }));
+  const measurementsHtml = renderToStaticMarkup(React.createElement(module.default, {
+    upload, activeJob: null, calculationResult: null, initialWorkspaceTab: 1,
+  }));
+  assert.match(evidenceHtml, /New calculation — not yet run/);
+  assert.match(evidenceHtml, /Calculation evidence becomes available after this calculation is run/);
+  assert.doesNotMatch(evidenceHtml, /No active calculation/);
+  assert.match(measurementsHtml, /Imported experimental measurements remain separate/);
+  assert.match(measurementsHtml, /Choose CSV \/ TSV/);
 });
 
 test('external ChEMBL is the only independent public lookup and keeps the selected molecule explicit', () => {

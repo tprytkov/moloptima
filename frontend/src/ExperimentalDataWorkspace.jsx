@@ -350,6 +350,10 @@ export default function ExperimentalDataWorkspace({
     'target_name', 'target_gene_symbol', 'target_uniprot_id', 'target_chembl_id', 'organism',
   ].map((key) => [key, calculationResult?.[key] ?? activeJob?.[key] ?? targetContext?.[key] ?? '']));
   const hasActiveCalculation = Boolean(activeJob?.job_id);
+  const hasNewCalculationContext = !hasActiveCalculation && Boolean(upload?.upload_id);
+  const calculationStatus = hasActiveCalculation
+    ? (calculationRows.length ? 'Available' : present(activeJob?.status, 'Not available'))
+    : hasNewCalculationContext ? 'New calculation — not yet run' : 'No active calculation';
   const selectedAvailability = selectedRow ? calculationEvidenceAvailability(selectedRow, targetReferences) : null;
 
   useEffect(() => {
@@ -400,9 +404,9 @@ export default function ExperimentalDataWorkspace({
 
       <ModuleConfigurationSummary
         title="Experimental Data"
-        status={hasActiveCalculation ? (calculationRows.length ? 'Available' : present(activeJob?.status, 'Not available')) : 'No active calculation'}
+        status={calculationStatus}
         items={[
-          { label: 'Calculation Context', value: hasActiveCalculation ? (openedHistorical ? 'Opened saved calculation' : 'Current calculation') : 'Not selected' },
+          { label: 'Calculation Context', value: hasActiveCalculation ? (openedHistorical ? 'Opened saved calculation' : 'Current calculation') : hasNewCalculationContext ? 'New calculation — not yet run' : 'Not selected' },
           { label: 'Molecule Scope', value: calculationRows.length ? `${calculationRows.length} candidates in this calculation` : 'Not available' },
           { label: 'Target Context', value: persistedTargetContext.target_name || 'Not configured' },
           { label: 'Imported Dataset', value: datasetId ? 'Finalized' : payload?.status === 'preview' ? 'Validation preview' : 'Not loaded' },
@@ -433,7 +437,7 @@ export default function ExperimentalDataWorkspace({
         </Tabs>
 
         {workspaceTab === 0 ? <Stack spacing={2} sx={{ p: { xs: 2, md: 3 } }}>
-          {!hasActiveCalculation ? <Alert severity="info">No active calculation. Open a previous calculation or run a new calculation to inspect its persisted public evidence.</Alert> : null}
+          {!hasActiveCalculation ? <Alert severity="info">{hasNewCalculationContext ? 'Calculation evidence becomes available after this calculation is run. You can also open a previous calculation to inspect its persisted evidence.' : 'No active calculation. Start a new calculation or open a previous calculation to inspect persisted evidence.'}</Alert> : null}
           {hasActiveCalculation && !calculationRows.length ? <Alert severity="info">This calculation has no persisted candidate evidence to inspect. Evidence was not inferred or refreshed.</Alert> : null}
           {selectedRow ? <>
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={1.5} alignItems={{ md: 'center' }}>
